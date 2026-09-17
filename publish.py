@@ -189,6 +189,66 @@ def emit_screens(p):
     return out
 
 
+class Inconsistent(Exception):
+    """產出的內容自相矛盾，不該發佈。"""
+
+
+def selfcheck(p, funnel_data, screens_data):
+    """寫檔前的後置檢查：產出的東西站不站得住腳。
+
+    這個專案反覆出現同一種失敗 —— <b>某一層安靜地失效，頁面照樣顯示</b>：
+
+      月營收沒帶進 CI      -> L3 刷掉 0 檔，名單 221 變 263
+      pandas 解析度不一致  -> 同上，但原因完全不同
+      run_screen 少了分支  -> 三個榜單變成 0 筆
+      TWSE 資料源發布時差  -> 殖利率層刷掉 0 檔，名單虛胖近一倍
+
+    每一次的共通點都是「沒有任何錯誤訊息」，而且都是靠人工對照數字才發現的。
+    與其逐一堵住每個入口，不如在出口設一道檢查：<b>只要有任何一層的輸入
+    整欄都是缺值，或任何榜單是空的，就拒絕產出</b>。
+
+    寧可 CI 紅燈，也不要發佈一份看起來正常、實際上少一層篩選的名單。
+    """
+    bad = []
+    day = p[p["date"] == p["date"].max()]
+
+    # 1. 漏斗每一層的輸入欄位要真的有值
+    need = {"amt20": "流動性", "div_yield": "殖利率", "pos252": "價格位置",
+            "yoy": "月營收"}
+    for col, label in need.items():
+        if col not in day.columns:
+            bad.append("{}：欄位 {} 根本不存在".format(label, col))
+        elif not int(day[col].notna().sum()):
+            bad.append("{}：最新一日整欄都是缺值，該層會刷掉 0 檔".format(label))
+
+    # 2. 漏斗層數與刷除數
+    steps = funnel_data["steps"]
+    if len(steps) != len(funnel.LAYERS):
+        bad.append("漏斗層數 {} 與定義的 {} 不符".format(len(steps), len(funnel.LAYERS)))
+    for st in steps[1:]:
+        # L1b（當天鎖漲跌停）本來就常常是 0，不算異常
+        if st["key"] != "L1b" and not st["removed"]:
+            bad.append("{}：刷掉 0 檔（這層可能失效了）".format(st["name"]))
+    if not funnel_data["passed"]:
+        bad.append("候選名單是空的")
+    if funnel_data["passed"] == funnel_data["total"]:
+        bad.append("候選名單等於全宇宙，等於沒有篩選")
+
+    # 3. 每個榜單都要有內容
+    for k, v in screens_data.items():
+        if v.get("error"):
+            bad.append("榜單 {} 產生失敗：{}".format(k, v["error"][:60]))
+        elif not v["rows"] and k != "exdiv":     # 除權息可能真的沒有事件
+            bad.append("榜單 {} 是空的".format(k))
+
+    if bad:
+        raise Inconsistent(
+            "產出內容未通過自我檢查，已中止（沒有寫出任何檔案）：\n  - "
+            + "\n  - ".join(bad))
+    print("自我檢查通過：{} 層漏斗、{} 個榜單、候選 {} 檔".format(
+        len(steps), len(screens_data), funnel_data["passed"]), flush=True)
+
+
 def emit_stock(code, name, cat, pan):
     """單檔的完整內容。回傳 None 代表這檔不在可分析範圍。"""
     sub = factors.ETF_SUBCATS if cat == "etf" else None
@@ -224,9 +284,6 @@ def emit_stock(code, name, cat, pan):
 def build(limit=None, out=SITE):
     t0 = time.time()
     data = out / "data"
-    if data.exists():
-        shutil.rmtree(data)
-    data.mkdir(parents=True)
 
     print("載入面板…", flush=True)
     p_common = server.panel("common")
@@ -234,14 +291,22 @@ def build(limit=None, out=SITE):
     p_full = server.panel("common", full=True)
     day_date = p_common["date"].max()
 
+    # 先全部算出來、檢查過，才動既有的 data/。
+    # 順序很重要：原本是一開始就把 data/ 砍掉，中途失敗會留下一個空站。
+    print("漏斗…", flush=True)
+    fn = emit_funnel(p_full)
+    print("榜單…", flush=True)
+    sc = emit_screens(p_common)
+    selfcheck(p_common, fn, sc)
+
+    if data.exists():
+        shutil.rmtree(data)
+    data.mkdir(parents=True)
+
     sizes = {}
     sizes["meta"] = write(data / "meta.json", emit_meta(p_common, day_date))
     sizes["universe"] = write(data / "universe.json", emit_universe())
-    print("漏斗…", flush=True)
-    sizes["funnel"] = write(data / "funnel.json", emit_funnel(p_full))
-
-    print("榜單…", flush=True)
-    sc = emit_screens(p_common)
+    sizes["funnel"] = write(data / "funnel.json", fn)
     tot = 0
     for k, v in sc.items():
         tot += write(data / "screens" / "{}.json".format(k), v)

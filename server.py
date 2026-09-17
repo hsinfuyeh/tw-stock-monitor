@@ -107,7 +107,14 @@ def panel(kind="common", full=False):
                     [np.inf, -np.inf], np.nan)
                 d["外資買超"] = (d["foreign_net"] / d["vol20"]).replace(
                     [np.inf, -np.inf], np.nan)
-            except Exception:
+            except Exception as e:
+                # 出聲。這裡靜默的話，法人買超／賣超兩個榜單會變成空的，
+                # 而畫面上只會顯示「今天沒有符合條件的標的」—— 看起來像
+                # 市場沒動靜，實際上是資料沒接上。
+                import traceback
+                print("::error::三大法人資料載入失敗，相關榜單會是空的：{}".format(e),
+                      flush=True)
+                traceback.print_exc()
                 d["法人買超"] = np.nan
                 d["外資買超"] = np.nan
             # 併入估值 + 計算一年價格位置。
@@ -119,7 +126,15 @@ def panel(kind="common", full=False):
                 v = store.q("SELECT date, code, pe, pb, div_yield FROM valuation")
                 v["date"] = pd.to_datetime(v["date"])
                 d = d.merge(v, on=["date", "code"], how="left")
-            except Exception:
+            except Exception as e:
+                # 這是整個系統最不能靜默的地方。div_yield 全缺值 -> ypct 全缺值
+                # -> 漏斗的「殖利率位階過低」那層刷掉 0 檔 -> 候選名單暴增，
+                # 而且畫面上完全看不出異常。月營收那次就是這個劇本，
+                # 只是從另一個入口進來的。
+                import traceback
+                print("::error::估值資料載入失敗，殖利率排除規則會整層失效：{}"
+                      .format(e), flush=True)
+                traceback.print_exc()
                 d["pe"] = d["pb"] = d["div_yield"] = np.nan
             gg = d.sort_values(["code", "date"]).groupby("code", sort=False)
             hi = gg["high"].transform(
