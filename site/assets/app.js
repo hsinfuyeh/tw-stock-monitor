@@ -51,10 +51,13 @@
   }
 
   /* ---------- 外框 ---------- */
+  /* 除權息拿掉：它只是 14 個榜單裡的一個，沒有驗證支撐，不該佔第一層。
+     換上「訊號」—— 指向三個通過 t>3.0 的榜單，那是整個系統唯一測得出
+     東西的地方，本來被埋在 14 個分頁裡。 */
   var NAV = [
     ['funnel.html', '選股', 'funnel'],
-    ['lists.html', '盤後', 'lists'],
-    ['lists.html?s=exdiv', '除權息', 'exdiv']
+    ['lists.html?s=sue', '訊號', 'signal'],
+    ['lists.html?s=amount', '盤後', 'lists']
   ];
 
   function shell(active, q) {

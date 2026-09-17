@@ -60,12 +60,11 @@ App.boot(null, function (meta) {
   var info = {};
   (meta.screens || []).forEach(function (s) { info[s.key] = s; });
 
-  // 導覽列的「盤後 / 除權息」要跟著目前分頁亮
-  var nav = key === 'exdiv' ? 'exdiv' : 'lists';
+  // 導覽列高亮：已驗證那三個榜單歸「訊號」，其餘歸「盤後」
+  var SIGNAL = ['sue', 'pos', 'rev'];
+  var want = SIGNAL.indexOf(key) >= 0 ? 's=sue' : 's=amount';
   document.querySelectorAll('.navlink').forEach(function (a) {
-    a.classList.toggle('on', a.getAttribute('href').indexOf(
-      nav === 'exdiv' ? 's=exdiv' : 'lists.html') >= 0 &&
-      (nav === 'exdiv') === (a.getAttribute('href').indexOf('s=exdiv') >= 0));
+    a.classList.toggle('on', a.getAttribute('href').indexOf(want) >= 0);
   });
 
   var tabs = GROUPS.map(function (g) {

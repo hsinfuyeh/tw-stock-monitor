@@ -734,6 +734,9 @@ def stock(code):
 #   成交額   +0.62 (t=2.55)   跌幅   +0.35 (t=2.07)   法人買 +0.30 (t=2.23)
 #   漲幅 +0.26  創新高 +0.20  爆量 +0.14  法人賣 -0.14  低波動 -0.34  <- 都不顯著
 #   創新低   -0.39 (t=-2.89)  綜合評分 -0.07           <- 反指標那一組
+# 通過 t>3.0 的榜單。導覽列的「訊號」指向這一組。
+SIGNAL_KEYS = ("sue", "pos", "rev")
+
 TAB_GROUPS_SPEC = [
     ("已驗證", ["sue", "pos", "rev"]),
     ("今日事實", ["amount", "gain", "loss", "volume", "high"]),
@@ -943,8 +946,9 @@ def lists(key="amount"):
                  title=html.escape(title), desc=html.escape(desc), inner=inner,
                  note=('<p class="note" style="margin-top:12px">{}</p>'.format(note)
                        if note else ""))
-    return page(h1 if key == "exdiv" else "盤後 · " + title, body,
-                      nav=("exdiv" if key == "exdiv" else "lists"))
+    # 導覽列高亮：已驗證那三個榜單歸「訊號」，其餘歸「盤後」
+    nav = "signal" if key in SIGNAL_KEYS else "lists"
+    return page(h1 if key == "exdiv" else "盤後 · " + title, body, nav=nav)
 
 
 # --------------------------------------------------------------------- 漏斗
