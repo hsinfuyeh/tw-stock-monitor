@@ -136,6 +136,11 @@ def panel(kind="common", full=False):
             # 歷史勝率等級：只用對勝率有實證貢獻的兩個成分等權合成。
             # 等級 1→5 的歷史勝率 46.2% → 53.6%（10 日，t=4.40，五級全單調）。
             # 月營收（point-in-time：依法規公布期限對齊，不會偷看未來）
+            #
+            # 這裡的例外一定要出聲。原本是靜靜地把 yoy 設成缺值，結果第一次
+            # 部署到 CI 時 revenue.load() 失敗，漏斗的 L3 營收層整層失效，
+            # 候選名單從 221 檔虛胖成 263 檔 —— 而唯一的線索是網頁上那個
+            # 「刷掉 0 檔」，沒有任何錯誤訊息，花了兩輪才找到。
             try:
                 import revenue
                 rv = revenue.load()
@@ -143,9 +148,21 @@ def panel(kind="common", full=False):
                     pit = revenue.as_of_panel(rv, d["date"].unique())
                     d = d.merge(pit[["date", "code", "yoy", "yoy_3m"]],
                                 on=["date", "code"], how="left")
+                    n = int(d["yoy"].notna().sum())
+                    print("  月營收：{:,} 筆原始、面板覆蓋 {:,} 列".format(len(rv), n),
+                          flush=True)
+                    if not n:
+                        print("::warning::月營收讀到了但一列都對不上面板 —— "
+                              "L3 營收層會整層失效。", flush=True)
                 else:
+                    print("::warning::revenue.load() 回傳空的，L3 營收層將失效。",
+                          flush=True)
                     d["yoy"] = d["yoy_3m"] = np.nan
-            except Exception:
+            except Exception as e:
+                import traceback
+                print("::error::月營收載入失敗，L3 營收層將失效：{}".format(e),
+                      flush=True)
+                traceback.print_exc()
                 d["yoy"] = d["yoy_3m"] = np.nan
             d["L"] = likelihood.score(d)
             d["tier"] = d.groupby("date")["L"].transform(
