@@ -56,11 +56,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p data
-          if gh release download warehouse-seed --pattern 'twse.duckdb*' --dir data --clobber 2>/dev/null; then
-            [ -f data/twse.duckdb.gz ] && gunzip -f data/twse.duckdb.gz
-            echo "已從 Release 取得種子倉儲"
+          if gh release download warehouse-seed --pattern 'seed.tar.gz' --dir . --clobber 2>/dev/null; then
+            tar xzf seed.tar.gz && rm seed.tar.gz
+            echo "已從 Release 取得種子（倉儲 + 月營收）"
             ls -lh data/
+            echo "月營收 $(ls raw/revenue | wc -l) 檔"
           else
             echo "::error::找不到倉儲快取，也沒有 warehouse-seed 這個 Release。"
             echo "::error::請先在本機執行 python seed.py 上傳種子（見 README）。"

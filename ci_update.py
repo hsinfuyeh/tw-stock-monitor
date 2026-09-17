@@ -70,7 +70,41 @@ def usable_last_date():
         return None
 
 
+def check_revenue():
+    """月營收資料在不在。
+
+    這一項不在上面的三張表裡：月營收是 publish 時由 revenue.load() 從
+    raw/revenue/ 直接讀的，不進 DuckDB。所以倉儲看起來完全正常，
+    但只要那個資料夾沒跟著過來，yoy 就全是缺值，漏斗的 L3 營收層
+    <b>整層失效</b> —— 候選名單從 221 檔虛胖成 263 檔，沒有任何錯誤訊息。
+
+    第一次部署上線就是這樣中的：閘門只檢查三個 TWSE 資料源，
+    完全沒察覺少了一整層。所以把它也納入檢查。
+    """
+    from config import RAW
+    rev = RAW / "revenue"
+    return len(list(rev.glob("*.json.gz"))) if rev.exists() else 0
+
+
 def main(ignore_gate=False):
+    n_rev = check_revenue()
+    log("月營收資料: {} 檔".format(n_rev))
+    if not n_rev and not ignore_gate:
+        write_summary([
+            "### 沒有發佈",
+            "",
+            "**找不到月營收資料**（`raw/revenue/`）。",
+            "",
+            "月營收不在 DuckDB 裡，是 publish 時直接從原始檔讀的。少了它，",
+            "漏斗的 L3 營收層會整層失效 —— 候選名單會虛胖將近兩成，",
+            "而且不會有任何錯誤訊息。",
+            "",
+            "多半是種子檔沒有包含 `raw/revenue/`。在本機重跑 `python seed.py` 即可。",
+        ])
+        set_output("publish", "false")
+        log("::error::缺少月營收資料，不發佈。")
+        return 0
+
     last_ok = usable_last_date()
     log("倉儲目前最新（三表齊備）: {}".format(_d(last_ok)))
 

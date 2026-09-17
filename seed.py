@@ -8,11 +8,18 @@
 
     所以把壓實後的倉儲放一份在 Release 上。冷啟動就下載它，之後只補當天。
 
-為什麼是倉儲而不是原始檔 ——
+種子裡有什麼 ——
 
-    raw/ 有 8,071 個檔案共 626 MB，倉儲壓實後只有 148 MB。
-    CI 只負責「產出當日網站」，不需要重跑解析；真要改解析邏輯，
-    在本機重建再重新種一次即可。
+    data/twse.duckdb   壓實後約 148 MB。TWSE 那四個資料源都在裡面。
+    raw/revenue/       月營收，570 個檔案、2.3 MB。
+
+    月營收必須一起帶。它不在 DuckDB 裡（publish 時才由 revenue.load()
+    從原始檔讀），CI 沒有它的話 yoy 全是缺值，漏斗的 L3 營收層會整層失效
+    —— 候選名單從 221 檔虛胖成 263 檔，而且不會有任何錯誤訊息。
+    第一次上線就是這樣中的。
+
+    raw/ 其餘部分（8,071 個檔案共 626 MB）不帶：CI 只負責產出當日網站，
+    不需要重跑解析。真要改解析邏輯，在本機重建再種一次即可。
 
 跑法：
     python seed.py            上傳／更新種子
@@ -20,11 +27,14 @@
 """
 import subprocess
 import sys
+import tarfile
+import tempfile
 from pathlib import Path
 
-from config import DB
+from config import DB, RAW
 
 TAG = "warehouse-seed"
+ASSET = "seed.tar.gz"
 ROOT = Path(__file__).resolve().parent
 
 
@@ -56,6 +66,13 @@ def main(check_only=False):
     if check_only:
         return
 
+    rev = RAW / "revenue"
+    n_rev = len(list(rev.glob("*.json.gz"))) if rev.exists() else 0
+    print("月營收   {} 檔".format(n_rev))
+    if not n_rev:
+        sys.exit("找不到月營收資料。沒有它，CI 產出的漏斗會少一整層而且"
+                 "不會報錯 —— 先跑 python revenue.py")
+
     if mb > 1900:
         sys.exit("倉儲 {:.0f} MB 超過 Release 單檔 2 GB 上限。".format(mb))
 
@@ -69,10 +86,17 @@ def main(check_only=False):
         if r.returncode:
             sys.exit("建立失敗：\n" + r.stderr.strip())
 
-    print("上傳 {:.0f} MB（會覆蓋舊的）…".format(mb))
-    r = sh("gh", "release", "upload", TAG, str(DB), "--clobber")
-    if r.returncode:
-        sys.exit("上傳失敗：\n" + r.stderr.strip())
+    with tempfile.TemporaryDirectory() as tmp:
+        tar = Path(tmp) / ASSET
+        print("打包…")
+        with tarfile.open(tar, "w:gz") as t:
+            t.add(str(DB), arcname="data/" + DB.name)
+            t.add(str(rev), arcname="raw/revenue")
+        size = tar.stat().st_size / 1e6
+        print("上傳 {:.0f} MB（會覆蓋舊的）…".format(size))
+        r = sh("gh", "release", "upload", TAG, str(tar), "--clobber")
+        if r.returncode:
+            sys.exit("上傳失敗：\n" + r.stderr.strip())
     print("完成。CI 冷啟動時會自動抓這一份。")
 
 
