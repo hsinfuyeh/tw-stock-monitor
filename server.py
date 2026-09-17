@@ -151,7 +151,9 @@ def panel(kind="common", full=False):
                     n = int(d["yoy"].notna().sum())
                     print("  月營收：{:,} 筆原始、面板覆蓋 {:,} 列".format(len(rv), n),
                           flush=True)
-                    if not n:
+                    # ETF 沒有月營收，覆蓋 0 列是正常的，不該報警 ——
+                    # 會誤報的警告最後只會訓練人忽略所有警告。
+                    if not n and kind == "common":
                         print("::warning::月營收讀到了但一列都對不上面板 —— "
                               "L3 營收層會整層失效。", flush=True)
                 else:
