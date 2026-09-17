@@ -397,6 +397,14 @@ border-radius:var(--pill);margin-left:6px;white-space:nowrap;cursor:help;
 letter-spacing:.04em;color:var(--warn);border:1px solid var(--warn)}
 .flag.bad{color:var(--up);border-color:var(--up)}
 
+/* ---------- 產出時間戳 ---------- */
+/* GitHub Pages 有 10 分鐘快取，沒有這個就分不出「今天還沒更新」
+   跟「更新了但我看到的是快取」。 */
+.bstamp{margin-top:36px;padding-top:16px;border-top:1px solid var(--line);
+font-size:12px;color:var(--faint);letter-spacing:.02em;font-weight:300}
+.bstamp .reload{cursor:pointer;border-bottom:1px solid var(--hair)}
+.bstamp .reload:hover{color:var(--fg);border-bottom-color:var(--fg)}
+
 /* ---------- 名詞解釋 ---------- */
 .tip{border-bottom:1px dotted var(--hair);cursor:help}
 .tip:hover{border-bottom-color:var(--fg)}

@@ -9,16 +9,38 @@
 
   var DATA = 'data/';
   var cache = {};
+  var STAMP = '';        // 由 meta.json 的 built_at 決定，見下方說明
 
-  /* ---------- 取資料 ---------- */
+  /* ---------- 取資料 ----------
+   * GitHub Pages 對所有檔案送 Cache-Control: max-age=600，也就是部署完之後
+   * 瀏覽器與 CDN 最多還會供應 10 分鐘的舊版本 —— 而頁面上看不出來。
+   * 對一個每天更新名單的工具來說，那代表你可能盯著昨天的資料做決定。
+   *
+   * 解法分兩層：
+   *   meta.json  用 no-cache 強制向伺服器驗證（只有 13 KB，ETag 命中時不傳內容）
+   *   其餘檔案   用 meta 的 built_at 當版本參數 —— 同一次部署內正常快取，
+   *              部署一換就自動全部失效
+   */
   function get(path) {
     if (!cache[path]) {
-      cache[path] = fetch(DATA + path).then(function (r) {
+      var url = DATA + path + (STAMP ? '?v=' + encodeURIComponent(STAMP) : '');
+      cache[path] = fetch(url).then(function (r) {
         if (!r.ok) throw new Error(path + ' ' + r.status);
         return r.json();
       });
     }
     return cache[path];
+  }
+
+  function getMeta() {
+    return fetch(DATA + 'meta.json', { cache: 'no-cache' }).then(function (r) {
+      if (!r.ok) throw new Error('meta.json ' + r.status);
+      return r.json();
+    }).then(function (m) {
+      STAMP = m.built_at || '';
+      cache['meta.json'] = Promise.resolve(m);
+      return m;
+    });
   }
 
   /* ---------- 小工具 ---------- */
@@ -320,16 +342,34 @@
     });
   }
 
+  /* 頁尾標示這份內容是什麼時候產出的。
+     GitHub Pages 有 10 分鐘快取，沒有這個就無法分辨「今天還沒更新」
+     和「更新了但我看到的是快取」。 */
+  function buildStamp(meta) {
+    if (document.getElementById('bstamp')) return;
+    var d = document.createElement('div');
+    d.id = 'bstamp';
+    d.className = 'bstamp';
+    d.innerHTML = '資料 ' + esc(meta.data_date) + '　·　產出 ' +
+      esc(String(meta.built_at || '').replace('T', ' ')) +
+      '　·　<span class="reload">重新載入</span>';
+    (document.querySelector('.wrap') || document.body).appendChild(d);
+    d.querySelector('.reload').addEventListener('click', function () {
+      location.reload();
+    });
+  }
+
   /* ---------- 啟動 ---------- */
   function boot(active, render) {
     document.body.insertAdjacentHTML('afterbegin', shell(active, qs('c') || ''));
     theme();
     tooltips();
     initSearch();
-    get('meta.json').then(function (meta) {
+    getMeta().then(function (meta) {
       GLOSSARY = meta.glossary || {};
       staleBanner(meta);
-      return render(meta);
+      var r = render(meta);
+      return Promise.resolve(r).then(function () { buildStamp(meta); });
     }).then(function () {
       initSearch();          // 頁面渲染後才存在的搜尋框（首頁大框）要補綁
     }).catch(function (e) {

@@ -11,19 +11,9 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <div class="wrap" id="app"></div>
 <script src="assets/app.js"></script>
 <script>
-/* 分組依「這份清單的證據等級」，不是依主題。
-   實測過每個榜單前 40 檔持有 10 日相對市場的超額（148 個非重疊日期）：
-     價格位置 +0.78 (t=3.79)   月營收 +0.48 (t=3.28)  <- 通過 Bonferroni
-     成交額 +0.62  跌幅 +0.35  法人買 +0.30           <- 校正後不算數
-     創新低 -0.39 (t=-2.89)                           <- 反指標 */
-var GROUPS = [
-  ['已驗證',   ['pos','rev']],
-  ['今日事實', ['amount','gain','loss','volume','high']],
-  ['風險',     ['calm']],
-  ['籌碼',     ['inst','instout']],
-  ['事件',     ['exdiv']],
-  ['反指標',   ['low','score']]
-];
+/* 分組與「訊號」歸類都從 meta.json 讀，不在這裡維護第二份。
+   原本這裡抄了一份 GROUPS，新增榜單時只改到 Python 那邊，
+   靜態站的分頁就少一個 —— 而且不會報錯，只是那個榜單消失。 */
 
 /* 表格產生抽成函式：綜合評分要畫兩張（分數最高 / 最低 25 名），
    兩張欄位完全一樣，複製一份遲早會有人只改到其中一張。 */
@@ -61,12 +51,13 @@ App.boot(null, function (meta) {
   (meta.screens || []).forEach(function (s) { info[s.key] = s; });
 
   // 導覽列高亮：已驗證那三個榜單歸「訊號」，其餘歸「盤後」
-  var SIGNAL = ['sue', 'pos', 'rev'];
+  var SIGNAL = meta.signal_keys || [];
   var want = SIGNAL.indexOf(key) >= 0 ? 's=sue' : 's=amount';
   document.querySelectorAll('.navlink').forEach(function (a) {
     a.classList.toggle('on', a.getAttribute('href').indexOf(want) >= 0);
   });
 
+  var GROUPS = (meta.tab_groups || []).map(function (g) { return [g.label, g.keys]; });
   var tabs = GROUPS.map(function (g) {
     var inner = g[1].map(function (k) {
       var s = info[k]; if (!s) return '';

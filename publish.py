@@ -104,6 +104,11 @@ def emit_meta(p, day_date):
         screens=[dict(key=k, title=t, desc=d, cat=c,
                       tab=screens.TAB_LABEL.get(k, t))
                  for k, t, d, c in screens.SCREENS],
+        # 分組與「訊號」歸類一起吐出去。原本靜態站自己抄了一份 GROUPS，
+        # 結果新增營收榜單時只改到 server.py，靜態站的分頁就少一個 ——
+        # 而且不會報錯，只是那個榜單在畫面上消失。
+        tab_groups=[dict(label=g, keys=ks) for g, ks in server.TAB_GROUPS_SPEC],
+        signal_keys=list(server.SIGNAL_KEYS),
         glossary=webui.GLOSSARY,
     )
 
