@@ -1,0 +1,45 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script>/* 在 body 渲染前就套用主題，避免切換時閃一下白底 */
+(function(){try{var t=localStorage.getItem('theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:wght@400;500&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<title>台股觀測</title></head><body>
+<div class="wrap" id="app"></div>
+<script src="assets/app.js"></script>
+<script>
+App.boot(null, function (meta) {
+  var el = document.getElementById('app');
+  el.innerHTML =
+    '<div class="homehero">' +
+      '<span class="eyebrow">個股查詢</span>' +
+      '<h1>查一檔股票</h1>' +
+      App.searchbox('', true) +
+      '<div class="hint">輸入代號或名稱，例如 <strong>2330</strong> 或 <strong>台積電</strong>。' +
+      '任何時候按 <kbd>/</kbd> 都會跳回這個框。</div>' +
+      '<div class="chips" id="pop"></div>' +
+    '</div>' +
+    '<div class="card"><h2>這個工具能做什麼</h2>' +
+      '<p class="lead">資料截止 ' + App.esc(meta.data_date) + '</p>' +
+      '<ul class="note">' +
+      '<li><strong>能做：</strong>把進場前該確認的事實攤開 —— 流動性夠不夠你的部位、' +
+      '波動你能不能承受、近期有沒有漲跌停、有沒有除權息、價格在什麼位置。</li>' +
+      '<li><strong>能做：</strong>誠實回答「常見的技術型態在這檔股票上有沒有用」。</li>' +
+      '<li><strong>不能做：</strong>預測漲跌、告訴你該買什麼。這不是保守的說法 ——' +
+      '是這套系統用 1,869 個交易日的真實資料驗證後的結果。</li></ul></div>' +
+    '<div class="card"><h2>已經驗證過的事</h2><ul class="note">' +
+      '<li>六種常見 K 線型態（長紅、長黑、十字、爆量、突破、跌破）的預測力接近零，' +
+      '訊號強度小於 0.6% 的來回交易成本。</li>' +
+      '<li>因子合成的「綜合評分」是<strong>反指標</strong>：分數越高，後續表現越差' +
+      '（十分位單調性 −0.61，t = −4.44）。</li>' +
+      '<li>法人買超是唯一通過驗證的真訊號，但效果小於交易成本。</li></ul></div>';
+  var pop = ['2330','2317','2454','2308','0050','0056','2412','1101'];
+  document.getElementById('pop').innerHTML = pop.map(function (c) {
+    return '<a class="chip" href="stock.html?c=' + c + '">' + c + '</a>';
+  }).join('');
+});
+</script>
+</body></html>

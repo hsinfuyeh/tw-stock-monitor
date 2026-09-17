@@ -831,28 +831,8 @@ def lists(key="amount"):
                 "後面的功課一樣都不能少。"
                 .format(n0, int(keep.sum()), (1 - keep.sum() / max(n0, 1)) * 100))
 
-    elif key in ("inst", "instout"):
-        day, dt_ = screens._latest(p)
-        prev = screens._prev_close(p, dt_)
-        day["prev"] = day["code"].map(prev)
-        day["chg_pct"] = (day["close"] / day["prev"] - 1) * 100
-        day = day[(day["amt20"] >= 2e7) & day["法人買超"].notna()]
-        asc = key == "instout"
-        rows = day.sort_values("法人買超", ascending=asc).head(40)
-        f = lambda v: "{:+.1f}%".format(float(v) * 100)
-        inner = _table(rows, "法人買超", "法人買超", f)
-        note = None
-
     elif key == "score":
-        use = [f for f in CORE if f in p.columns]
-        score, _ = rankmod.composite(p, use)
-        day = p.assign(_s=score)
-        day = day[day["date"] == day["date"].max()].dropna(subset=["_s"])
-        prev = screens._prev_close(p, day["date"].iloc[0])
-        day["prev"] = day["code"].map(prev)
-        day["chg_pct"] = (day["close"] / day["prev"] - 1) * 100
-        top = day.sort_values("_s", ascending=False).head(25)
-        bot = day.sort_values("_s").head(25)
+        top, bot = screens.score_rows(p)
         f = lambda v: "{:+.2f}".format(float(v))
         inner = ("<h3 style=\"font-size:14px;margin:18px 0 8px\">分數最高 25 名</h3>"
                  + _table(top, "綜合分數", "_s", f)
@@ -874,72 +854,18 @@ def lists(key="amount"):
             f = lambda v: "{:.0f}%".format(float(v))
         elif ek == "yoy":
             f = lambda v: "{:+.1f}%".format(float(v))
+        elif ek == "法人買超":
+            f = lambda v: "{:+.1f}%".format(float(v) * 100)
         else:
             f = lambda v: str(v)
         inner = _table(rows, et, ek, f)
         note = None
 
+    # 警語文字統一放在 screens.NOTES，本機版與靜態站共用同一份。
+    # 寫死在這裡的話，靜態站只能各抄一份，兩邊遲早漂移。
     warn = ""
-    if key == "score":
-        warn = webui.statusbar(
-            "bad", "<b>這份名單已驗證為反指標，不要照著買。</b>",
-            "用 2019–2026 共 1,869 個交易日回測：<b>分數越高的股票，後續表現越差</b>"
-            "（十分位單調性 −0.61，t = −4.44，扣成本後年化 −32%）。"
-            "這不是「效果不明顯」，是方向相反。<br><br>"
-            "放在這裡是因為藏起來不代表它不存在。它目前唯一誠實的用途是提醒你："
-            "<b>這種「AI 選股名單」看起來多有說服力，實際上可能完全是反的</b>。<br><br>"
-            "問題出在因子選擇，不是資料或計算 —— 計算層有 29 項對照已知答案的驗證。")
-    elif key == "low":
-        warn = webui.statusbar(
-            "bad", "<b>這份名單實測為反指標</b>，跌破 20 日低之後的表現顯著落後市場。",
-            "用 148 個非重疊日期實測：取這份榜單的前 40 檔持有 10 日，"
-            "<b>相對市場超額 −0.39%（t = −2.89）</b> —— "
-            "在所有事實型榜單裡是唯一顯著落後的。<br><br>"
-            "這跟個股頁測到的「跌破前 20 日低」型態一致（該型態的資訊量 −1.29%，"
-            "是六種 K 線型態裡唯一超過交易成本的，但方向是負的）。<br><br>"
-            "放在這裡是因為<b>「哪些不要碰」本身就是有用的資訊</b>，"
-            "而且藏起來不代表它不存在。要靠它獲利必須放空，"
-            "但台股放空受限（平盤下不得放空、借券成本、回補風險），實務上很難執行。")
-    elif key in ("pos", "rev"):
-        warn = webui.statusbar(
-            "ok", "這是<b>唯二通過多重檢定校正</b>的兩份榜單。",
-            "把畫面上 15 種排序方式全部用同一把尺量過（148 個非重疊日期，"
-            "取前 40 檔持有 10 日，減掉當日全市場平均）：<br><br>"
-            "<b>價格位置 +0.78%（t = 3.79）</b> —— 唯一超過 0.6% 來回成本的。"
-            "對應金融學的 52 週高點動能異常（George &amp; Hwang, 2004）。<br>"
-            "<b>月營收年增 +0.48%（t = 3.28）</b> —— 方向確定，但仍小於成本。"
-            "另外實測過 3 個月合計年增（平滑單月波動）反而較差"
-            "（+0.34%，t = 2.26），所以維持用單月。<br><br>"
-            "15 次檢定的 Bonferroni 門檻是 |t| &gt; 2.94，只有這兩個過關。"
-            "成交額（t = 2.55）、法人買（t = 2.23）、跌幅（t = 2.07）看起來有效，"
-            "但在校正後都不算數。<br><br>"
-            "<b>為什麼沒有高殖利率榜</b>：殖利率是全系統 IC 最高的訊號，"
-            "但實測取殖利率最高的前 40 檔，超額是 <b>−0.10%（t = −0.60）</b>。"
-            "它的資訊全在「排除最低的那一端」，不在「買最高的那一端」—— "
-            "排除有效不等於選擇有效。")
-    elif key == "screen":
-        warn = webui.statusbar(
-            "ok", "這兩條排除規則是系統中<b>唯一通過多重檢定校正</b>的發現。",
-            "<b>規則一：排除殖利率最低 40%</b> —— 剩餘池子的<b>中位數</b>報酬 "
-            "+5.49%/年（t = 4.69，p &lt; 0.0001）。注意是中位數不是平均數："
-            "低殖利率股贏的次數少但偶爾大贏，平均被肥尾拉平，"
-            "但你不會持有夠多檔去捕捉那條尾巴。<br><br>"
-            "<b>規則二：排除價格位置最低 30%</b> —— 剩餘池子的<b>平均</b>報酬 "
-            "+2.93%/年（t = 2.96）。四段樣本全部同向，5/10/20 日持有都成立，"
-            "對應金融學的 52 週高點動能異常（George &amp; Hwang, 2004）。<br><br>"
-            "<b>為什麼排除比選擇容易</b>：選擇要先跨過 0.6% 的來回交易成本，"
-            "排除的成本門檻是 0 —— 不買某檔不用付任何錢。<br><br>"
-            "<b>但這不是買進清單。</b>它只告訴你「這些沒被刷掉」，"
-            "接下來該做的功課一樣都不能少。")
-    elif key in ("inst", "instout"):
-        warn = webui.statusbar(
-            "warn", "法人買超是<b>目前唯一通過驗證的真訊號</b>，但效果小於交易成本。",
-            "十分位剖面單調遞增（單調性 +0.88），樣本外毛價差仍為正（+0.23%/5 日）——"
-            "這在本系統測過的所有訊號裡是獨一無二的，其他不是雜訊就是反指標。<br><br>"
-            "<b>但是</b>：5 日換倉的來回成本約 0.97%，而訊號強度只有 0.23%。"
-            "扣完成本年化 −32%。<br><br>"
-            "所以它的正確用途是<b>當作參考資訊</b>（「今天法人在買這檔」是真的有意義的事實），"
-            "而不是拿來當進出訊號。")
+    if key in screens.NOTES:
+        warn = webui.statusbar(*screens.NOTES[key])
 
     # 標題跟著內容走：除權息是「接下來要發生的事」，不是「今天收盤的結果」。
     # 導覽列寫除權息、頁面標題卻寫今日盤後，讀起來像點錯頁。

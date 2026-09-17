@@ -1,0 +1,94 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script>/* 在 body 渲染前就套用主題，避免切換時閃一下白底 */
+(function(){try{var t=localStorage.getItem('theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:wght@400;500&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<title>選股 · 候選名單</title></head><body>
+<div class="wrap" id="app"></div>
+<script src="assets/app.js"></script>
+<script>
+var SHORT = {L0:'上市普通股',L1:'均額 < 2,000 萬',L1b:'開高低收同價',
+             L2a:'全市場後 40%',L2b:'一年區間後 30%',L3:'年增率 < 0'};
+
+App.boot('funnel', function (meta) {
+  return App.get('funnel.json').then(function (f) {
+    var EV = meta.evidence_labels || {};
+    var total = f.total || 1;
+
+    /* 條件 chips：每個條件標示自己刷掉幾檔（篩選器介面的通用慣例） */
+    var chips = f.steps.slice(1).map(function (s) {
+      var tipTxt = s.name + '｜' + (SHORT[s.key] || s.rule) + '<br><br>' + s.detail;
+      return '<span class="fchip tip' + (s.removed ? '' : ' off') +
+        '" tabindex="0" data-tip="' + App.esc(tipTxt) + '">' +
+        '<span class="dot ' + s.evidence + '"></span>' +
+        '<span class="lbl">' + App.esc(s.name) + '</span>' +
+        '<span class="cnt' + (s.removed ? '' : ' zero') + '">−' +
+        s.removed.toLocaleString() + '</span></span>';
+    }).join('');
+
+    /* 瀑布圖：墨色是留下的，斜線影是這層刷掉的。左對齊同一基準尺規，
+       所以長度差直接對應檔數差。當初用漏斗圖，某層只刷掉 1 檔時
+       形狀變化肉眼完全看不出來。 */
+    var wf = f.steps.map(function (s, i) {
+      var keep = s.after / total * 100, drop = s.removed / total * 100;
+      var last = i === f.steps.length - 1;
+      var badge = i ? '<span class="tip evb ' + s.evidence + '" tabindex="0" data-tip="' +
+        App.esc(s.detail) + '">' + App.esc(EV[s.evidence] || s.evidence) + '</span>' : '';
+      var dlt = s.removed
+        ? '<span class="d">−' + s.removed.toLocaleString() + '</span>'
+        : '<span class="d zero">' + (i ? '0' : '起點') + '</span>';
+      return '<div class="wfrow' + (last ? ' total' : '') + '">' +
+        '<div class="wfname">' + App.esc(s.name) + badge + '</div>' +
+        '<div class="wfbar">' +
+        '<div class="wfkeep' + (last ? ' final' : '') + '" style="width:' + keep.toFixed(2) + '%"></div>' +
+        '<div class="wfdrop" style="left:' + keep.toFixed(2) + '%;width:' + drop.toFixed(2) + '%"></div>' +
+        '</div><div class="wfval"><span class="n">' + s.after.toLocaleString() + '</span>' +
+        dlt + '</div></div>';
+    }).join('');
+
+    var body = f.rows.map(function (r) {
+      var flags = (r.flags || []).map(function (x) {
+        return '<span class="flag tip ' + x.level + '" tabindex="0" data-tip="' +
+          App.esc('<b>' + x.title + '</b><br>' + x.detail) + '">' +
+          App.esc(x.title) + '</span>';
+      }).join('');
+      return '<tr><td><a href="stock.html?c=' + r.code + '"><strong>' + r.code +
+        '</strong></a></td><td><a href="stock.html?c=' + r.code + '">' +
+        App.esc(r.name) + '</a>' + flags + '</td>' +
+        '<td class="sorted">' + (r.tier || 0) + ' / 5</td>' +
+        '<td>' + App.num(r.close) + '</td><td>' + App.pct(r.chg_pct) + '</td>' +
+        '<td>' + (r.div_yield == null ? '—' : App.num(r.div_yield) + '%') + '</td>' +
+        '<td>' + App.pct(r.yoy, 1) + '</td>' +
+        '<td>' + (r['法人買超'] == null ? '—' :
+          App.pct(r['法人買超'] * 100, 0)) + '</td>' +
+        '<td class="mut">' + App.yi(r.amt20) + '</td></tr>';
+    }).join('');
+
+    document.getElementById('app').innerHTML =
+      '<div class="fnhero">' +
+        '<span class="eyebrow">層層剔除 &middot; ' + App.esc(f.date) + ' 收盤</span>' +
+        '<span class="big">' + f.passed.toLocaleString() +
+        '<span class="unit">檔通過</span></span>' +
+        '<div class="sub">自 <b>' + total.toLocaleString() +
+        '</b> 檔上市普通股逐層剔除<span class="sep">&middot;</span>淘汰 <b>' +
+        ((1 - f.passed / total) * 100).toFixed(0) +
+        '%</b><span class="sep">&middot;</span>剩下的由你自己判斷要不要進場</div></div>' +
+      '<div class="fchips">' + chips + '</div>' +
+      '<div class="card"><div class="wf">' + wf + '</div></div>' +
+      '<div class="card"><h2>候選名單</h2>' +
+      '<p class="lead">依歷史勝率等級排序。名稱旁的標籤是<strong>來源之間的矛盾</strong>，滑過看細節。</p>' +
+      '<div class="scroll"><table><thead><tr><th>代號</th><th>名稱</th>' +
+      '<th class="sorted">' + App.tip('歷史勝率等級') + '</th><th>' + App.tip('收盤') +
+      '</th><th>' + App.tip('今日') + '</th><th>' + App.tip('殖利率位階','殖利率位階') +
+      '</th><th>' + App.tip('月營收年增') + '</th><th>' + App.tip('法人買超') +
+      '</th><th>' + App.tip('20日均額') + '</th></tr></thead><tbody>' + body +
+      '</tbody></table></div></div>';
+    App.pager(document.getElementById('app'));
+  });
+});
+</script>
+</body></html>

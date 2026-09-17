@@ -1,0 +1,112 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script>/* 在 body 渲染前就套用主題，避免切換時閃一下白底 */
+(function(){try{var t=localStorage.getItem('theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:wght@400;500&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<title>個股</title></head><body>
+<div class="wrap" id="app"></div>
+<script src="assets/app.js"></script>
+<script>
+var ICO = {ok:'✓', warn:'!', bad:'✕'};
+
+App.boot(null, function (meta) {
+  var code = (App.qs('c') || '').trim().toUpperCase();
+  var app = document.getElementById('app');
+  if (!code) { app.innerHTML = '<div class="empty"><h2>沒有指定代號</h2>' +
+    '<div class="note">在上面搜尋股票代號或名稱。</div></div>'; return; }
+
+  return App.get('stocks/' + code + '.json').then(function (d) {
+    document.title = d.code + ' ' + d.name;
+
+    var chk = '<ul class="chk">' + d.checklist.map(function (c) {
+      return '<li><span class="ico ' + c.level + '">' + (ICO[c.level] || '?') +
+        '</span><div class="body"><div class="t">' +
+        (c.key ? App.tip(c.title, c.key) : App.esc(c.title)) +
+        '</div><div class="s">' + c.desc + '</div></div></li>';
+    }).join('') + '</ul>';
+
+    /* 訊號條：以 0 為中線左右發散，並標出交易成本參考線。
+       長條沒有超過黃線就代表沒有可操作性。 */
+    var cost = d.cost_pct;
+    var span = Math.max.apply(null, d.signals.map(function (s) {
+      return Math.abs(s.value); }).concat([cost * 1.4]));
+    var bars = '<div class="sig">' + d.signals.map(function (s) {
+      var half = Math.abs(s.value) / span * 50;
+      var style = s.value > 0
+        ? 'left:50%;width:' + half.toFixed(1) + '%'
+        : 'right:50%;width:' + half.toFixed(1) + '%';
+      return '<div class="row"><div class="nm">' + App.esc(s.name) + '</div>' +
+        '<div class="track"><div class="zero"></div>' +
+        '<div class="costline" style="left:' + (50 - cost / span * 50).toFixed(1) + '%"></div>' +
+        '<div class="costline" style="left:' + (50 + cost / span * 50).toFixed(1) + '%"></div>' +
+        '<div class="fill" style="' + style + ';background:var(--' +
+        (s.value > 0 ? 'up' : 'dn') + ')"></div></div>' +
+        '<div class="val ' + App.cls(s.value) + '">' + App.num(s.value, 2, true) +
+        '%</div></div>';
+    }).join('') + '</div>';
+
+    var strongest = d.signals.slice().sort(function (a, b) {
+      return Math.abs(b.value) - Math.abs(a.value); })[0];
+    var verdict;
+    if (!strongest || Math.abs(strongest.value) < cost) {
+      verdict = '<strong>這些型態在這檔股票上沒有可用的預測力。</strong>最強的訊號也只有 ' +
+        App.num(Math.abs(strongest ? strongest.value : 0)) + '%，小於來回交易成本 ' +
+        App.num(cost, 1) + '%（圖上的黃線）—— 就算方向猜對，也賺不回手續費和證交稅。';
+    } else if (strongest.value < 0) {
+      verdict = '唯一超過交易成本的是<strong>「' + App.esc(strongest.name) +
+        '」，而且是負的（' + App.num(strongest.value) + '%）</strong>—— 意思是這個型態出現後，' +
+        '這檔股票的表現反而比平常差。要靠它獲利必須放空，但台股放空受限' +
+        '（平盤下不得放空、借券成本、回補風險），實務上很難執行。而且只有 ' +
+        strongest.n + ' 次樣本，不足以當作依據。';
+    } else {
+      verdict = '最強的是<strong>「' + App.esc(strongest.name) + '」' +
+        App.num(strongest.value, 2, true) + '%</strong>，略高於交易成本 ' +
+        App.num(cost, 1) + '%。但這只有 ' + strongest.n +
+        ' 次樣本，而且是單一股票上的結果 —— 樣本數這麼少時，這種幅度很可能只是運氣。';
+    }
+
+    var tierBlock = '';
+    if (d.tier && d.tier_text) {
+      var stars = '●'.repeat(d.tier) + '○'.repeat(5 - d.tier);
+      tierBlock = '<div class="statusbar ' + d.tier_text[0] + '"><span class="txt">' +
+        App.tip('歷史勝率等級','歷史勝率等級') + ' <b>' + d.tier + ' / 5</b>　' +
+        stars + '　—　' + d.tier_text[1] + '。</span></div>';
+    }
+
+    app.innerHTML =
+      '<div class="hero"><h1>' + App.esc(d.name) +
+      ' <span class="code">' + d.code + '</span></h1>' +
+      '<div class="px"><div class="v">' + Number(d.close).toLocaleString(
+        undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</div>' +
+      '<div class="d ' + App.cls(d.chg) + '">' + App.num(d.chg, 2, true) +
+      ' (' + App.num(d.chg_pct, 2, true) + '%)</div></div></div>' +
+      '<div class="meta">' + App.esc(d.kind) + ' ｜ 資料截止 ' + App.esc(d.date) +
+      ' ｜ 統計樣本 ' + d.n_days.toLocaleString() + ' 個交易日</div>' +
+      '<div class="tiphint">💡 帶有<span class="mark">虛線底線</span>的名詞，' +
+      '滑鼠移上去（手機點一下）會顯示白話解釋。</div>' +
+      '<div class="statusbar"><span class="txt">這裡只呈現<b>已經發生的事實</b>，' +
+      '不預測未來、不給買賣建議。</span></div>' + tierBlock +
+      '<div class="card"><h2>進場前先確認這幾件事</h2>' +
+      '<p class="lead">這些是會實際影響你能否順利買賣、以及該放多大部位的事實。</p>' +
+      chk + '</div>' +
+      '<div class="card"><h2>最近 30 個交易日</h2>' +
+      '<p class="lead">K 線：紅漲綠跌。黃點代表當天出現了至少一種常見型態。</p>' +
+      d.chart_svg + '</div>' +
+      '<div class="card"><h2>那些技術型態，能告訴你什麼？</h2>' +
+      '<p class="lead">每種型態出現後 10 個交易日的表現，已經扣掉大盤漲跌，' +
+      '也扣掉這檔股票本身的漲跌趨勢。剩下的才是型態本身提供的資訊量。' +
+      '圖上兩條黃線是交易成本的位置，長條沒有超過黃線就代表沒有可操作性。</p>' +
+      bars + '<p class="note" style="margin-top:14px">' + verdict + '</p></div>';
+  }).catch(function () {
+    app.innerHTML = '<div class="empty"><h2>' + App.esc(code) + '</h2>' +
+      '<div class="note">這檔目前不在可分析範圍內。<br>' +
+      '常見原因：成交量太低未達流動性門檻、上市時間太短、或屬於已排除的' +
+      '槓桿／反向／債券／海外型 ETF。</div></div>';
+  });
+});
+</script>
+</body></html>

@@ -150,7 +150,26 @@ def emit_screens(p):
                              yield_pct=float(r["yield_pct"]))
                         for _, r in df.iterrows()]
                 out[key] = dict(key=key, title=title, desc=desc, cat=cat,
-                                extra=None, extra_title=None, rows=rows)
+                                extra=None, extra_title=None,
+                                note=screens.NOTES.get(key), rows=rows)
+                continue
+            if key == "score":
+                # run_screen 沒有 score 分支（會回傳空表），要走專用函式。
+                # 上一版就是漏了這個，靜態站產出一份 0 筆的綜合評分頁，
+                # 而且完全沒有錯誤訊息。
+                top, bot = screens.score_rows(p)
+                def _pack(df):
+                    rr = []
+                    for _, r in df.iterrows():
+                        d = _row_dict(r, LIST_COLS)
+                        d["code"] = str(r["code"]); d["name"] = str(r["name"])
+                        d["extra"] = r.get("_s")
+                        rr.append(d)
+                    return rr
+                out[key] = dict(key=key, title=title, desc=desc, cat=cat,
+                                extra="_s", extra_title="綜合分數",
+                                note=screens.NOTES.get(key),
+                                rows=_pack(top), rows_bottom=_pack(bot))
                 continue
             df, ek, et = screens.run_screen(p, key)
             rows = []
@@ -162,7 +181,8 @@ def emit_screens(p):
                     d["extra"] = r[ek]
                 rows.append(d)
             out[key] = dict(key=key, title=title, desc=desc, cat=cat,
-                            extra=ek, extra_title=et, rows=rows)
+                            extra=ek, extra_title=et,
+                            note=screens.NOTES.get(key), rows=rows)
         except Exception as e:                       # 單一榜單壞掉不該讓整批失敗
             out[key] = dict(key=key, title=title, desc=desc, cat=cat,
                             error=str(e)[:200], rows=[])
