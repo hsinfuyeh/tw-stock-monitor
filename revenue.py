@@ -170,7 +170,20 @@ def as_of_panel(rev, dates):
     if not len(rev):
         return pd.DataFrame()
     out = []
-    dates = pd.DatetimeIndex(sorted(pd.unique(dates)))
+    # 兩邊的時間解析度必須一致才能 merge_asof。
+    #
+    # pandas 2.x 之後 datetime64 可能是 ns 也可能是 us，取決於它是怎麼被
+    # 建出來的；同一份程式在不同 pandas 版本上會給出不同解析度。本機
+    # （pandas 2.3.3）兩邊剛好都是 ns 所以沒事，CI 上較新的版本一邊變成 us，
+    # merge_asof 就丟出 "incompatible merge keys ... must be the same type"。
+    #
+    # 那個例外原本被 server.panel 的 except 吞掉，只留下缺值 —— 表面上
+    # 漏斗照跑，實際上 L3 營收層整層失效，名單從 221 檔虛胖成 263 檔。
+    # 這裡統一轉成 ns，不要依賴版本預設。
+    NS = "datetime64[ns]"
+    dates = pd.DatetimeIndex(sorted(pd.unique(dates))).astype(NS)
+    rev = rev.copy()
+    rev["avail_date"] = rev["avail_date"].astype(NS)
     for code, g in rev.groupby("code", sort=False):
         g = g.sort_values("avail_date")
         left = pd.DataFrame({"date": dates})
