@@ -59,6 +59,27 @@ def build(datasets=None, verbose=True):
     # 0.093s vs 0.083s 在誤差內。
     # 合理：DuckDB 是欄式儲存且有 zone map，這裡的查詢又幾乎都是整表掃進
     # pandas，ART 索引只是白佔空間。
+    # 換檔前，把「不是 build 產生、但已經存在」的表搬過去。
+    # exrights 就是這種：它由除權息流程另外建立，不在 DATASETS 裡。
+    # 舊版是就地 DROP/CREATE，那些表自然會留著；改成換新檔之後如果不搬，
+    # 就會安靜地被丟掉 —— 個股頁的除權息檢查項會整個消失，而且只有在
+    # 有人打開個股頁時才會發現。
+    if full and DB.exists():
+        keep = set(TABLES.values())
+        old = duckdb.connect(str(DB), read_only=True)
+        try:
+            others = [r[0] for r in old.execute("SHOW TABLES").fetchall()
+                      if r[0] not in keep]
+        finally:
+            old.close()
+        if others:
+            src = str(DB).replace("\\", "/")
+            con.execute(f"ATTACH '{src}' AS _old (READ_ONLY)")
+            for t in others:
+                con.execute(f"CREATE TABLE {t} AS SELECT * FROM _old.{t}")
+            con.execute("DETACH _old")
+            if verbose:
+                print(f"  保留既有的表: {', '.join(others)}", flush=True)
     con.close()
     if full:
         import os
