@@ -1022,7 +1022,9 @@ def funnel_page():
     # 存活名單：依歷史勝率等級排，同級內依流動性。
     # 不再截斷 —— 這是「通過篩選的完整名單」，截掉一半就不是那個東西了。
     # 頁面長度由前端分頁處理（見 webui.JS），不是靠少給資料。
-    alive = alive.sort_values(["tier", "amt20"], ascending=False)
+    # 排序改用實測有鑑別力的合成分數。之前用 tier，實測 t=1.26 等於隨機。
+    alive = alive.assign(_rank=funnel.rank_candidates(alive))
+    alive = alive.sort_values(["_rank", "amt20"], ascending=False)
     body_rows = []
     for _, r in alive.iterrows():
         flags = funnel.evidence_row(r)
@@ -1073,14 +1075,17 @@ def funnel_page():
 </div>
 {chips}
 <div class="card">{wf}</div>
+{ordernote}
 <div class="card">
   <h2>候選名單</h2>
-  <p class="lead">依歷史勝率等級排序。名稱旁的標籤是<strong>來源之間的矛盾</strong>，滑過看細節。</p>
+  <p class="lead">依<strong>價格位置 + 月營收年增</strong>排序 —— 這是實測在池內仍有鑑別力的組合。
+  名稱旁的標籤是<strong>來源之間的矛盾</strong>，滑過看細節。</p>
   {tbl}
 </div>
 </div>""".format(total=total, fin=steps[-1]["after"], asof=dt_,
                  pct=(1 - steps[-1]["after"] / max(total, 1)) * 100,
-                 chips=_chips(steps), wf=_waterfall(steps, total), tbl=tbl)
+                 chips=_chips(steps), wf=_waterfall(steps, total), tbl=tbl,
+                 ordernote=webui.statusbar(*funnel.ORDER_NOTE))
 
     return page("選股 · 候選名單", body, nav="funnel")
 

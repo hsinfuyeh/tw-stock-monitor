@@ -120,7 +120,8 @@ def emit_funnel(pfull):
     day["prev"] = day["code"].map(prev)
     day["chg_pct"] = (day["close"] / day["prev"] - 1) * 100
     steps, alive = funnel.build(day)
-    alive = alive.sort_values(["tier", "amt20"], ascending=False)
+    alive = alive.assign(_rank=funnel.rank_candidates(alive))
+    alive = alive.sort_values(["_rank", "amt20"], ascending=False)
 
     rows = []
     for _, r in alive.iterrows():
@@ -132,7 +133,8 @@ def emit_funnel(pfull):
                       for c, t, x in funnel.evidence_row(r)]
         rows.append(d)
     return dict(date=str(dt_)[:10], steps=steps, total=steps[0]["after"],
-                passed=steps[-1]["after"], rows=rows)
+                passed=steps[-1]["after"], rows=rows,
+                order_note=funnel.ORDER_NOTE)
 
 
 def emit_screens(p):
