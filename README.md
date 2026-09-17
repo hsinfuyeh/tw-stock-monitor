@@ -1,4 +1,4 @@
-# 台股橫斷面量化倉儲與排序系統
+# 台股觀測 · tw-stock-monitor
 
 自用工具。從 TWSE 官方資料建立全市場面板，計算橫斷面因子，產出每日排序與**帶成績單的**看漲／看跌名單。
 
@@ -68,8 +68,8 @@ L6 rank.py      等權合成 + 每日排序
 要先把資料補起來。
 
 ```bash
-git clone https://github.com/hsinfuyeh/twse-quant.git
-cd twse-quant
+git clone https://github.com/hsinfuyeh/tw-stock-monitor.git
+cd tw-stock-monitor
 pip install -r requirements.txt
 
 # 從零回補。7,492 次請求、間隔 2.5 秒 -> 約 5.2 小時。
