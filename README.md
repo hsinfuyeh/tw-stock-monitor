@@ -61,6 +61,37 @@ L6 rank.py      等權合成 + 每日排序
 - **交易成本**：來回 0.6%（證交稅 0.3% + 手續費 2×0.1425%），十分位回測強制扣除。
 - **樣本門檻**：獨立期數 < 30 不報顯著性，< 100 標記「僅供參考」。
 
+## 在一台新電腦上開始
+
+版控裡<b>沒有</b> `data/` 與 `raw/`，因為兩者都是可重現的衍生物，而且 DuckDB
+單檔 873 MB 超過 GitHub 100 MB 的硬限制。所以剛 clone 下來的專案<b>還不能跑</b>，
+要先把資料補起來。
+
+```bash
+git clone https://github.com/hsinfuyeh/twse-quant.git
+cd twse-quant
+pip install -r requirements.txt
+
+# 從零回補。7,492 次請求、間隔 2.5 秒 -> 約 5.2 小時。
+# 冪等可中斷：斷了直接重跑，已經抓過的會跳過。
+python ingest.py
+
+python -c "import store; store.build()"
+```
+
+只想先跑起來看看的話，回補最近 300 個交易日就夠算出當日的所有因子
+（最深的回看視窗是 252 天），約 50 分鐘：
+
+```bash
+python ingest.py mi_index,bwibbu,t86,margin 300
+python -c "import store; store.build()"
+```
+
+差別在於：300 天版本足以產出當日名單，但<b>不足以重跑驗證</b> ——
+`validate.py` 的十分位回測與非重疊檢定需要完整的 1,873 天樣本。
+
+之後日常使用直接雙擊 `dashboard.bat`，資料會自己跟上，不需要再手動跑任何東西。
+
 ## 使用
 
 ```bash
