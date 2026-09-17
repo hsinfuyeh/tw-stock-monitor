@@ -1,0 +1,100 @@
+name: 更新資料並發佈
+
+# 只有手動觸發，沒有排程。
+# 要跑的時候到 Actions 分頁按 "Run workflow"，或用手機的 GitHub App，
+# 或在本機打 `gh workflow run update.yml`。
+on:
+  workflow_dispatch:
+    inputs:
+      ignore_gate:
+        description: "忽略資料齊備檢查（TWSE 還沒發完就強制發佈，除錯用）"
+        type: boolean
+        default: false
+
+# 同時只允許一個，避免兩次點擊打架把倉儲寫壞
+concurrency:
+  group: update
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # 倉儲快取。實測壓實後 148 MB（移除沒用的索引前是 873 MB），
+      # 帶著跑完全沒問題。key 每天換一把，restore-keys 讓它接續昨天那份。
+      - name: 還原倉儲快取
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            data
+            raw
+          key: warehouse-${{ github.run_id }}
+          restore-keys: warehouse-
+
+      # 冷啟動（快取過期或第一次跑）沒有倉儲可用。
+      # 從零回補要 7,492 次請求 × 2.5 秒 ≈ 5.2 小時，會超過 job 上限，
+      # 所以改成從 Release 下載種子檔。做法見 README。
+      - name: 沒有倉儲時下載種子
+        if: steps.cache.outputs.cache-matched-key == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p data
+          if gh release download warehouse-seed --pattern 'twse.duckdb*' --dir data --clobber 2>/dev/null; then
+            [ -f data/twse.duckdb.gz ] && gunzip -f data/twse.duckdb.gz
+            echo "已從 Release 取得種子倉儲"
+            ls -lh data/
+          else
+            echo "::error::找不到倉儲快取，也沒有 warehouse-seed 這個 Release。"
+            echo "::error::請先在本機執行 python seed.py 上傳種子（見 README）。"
+            exit 1
+          fi
+
+      - name: 抓取新資料
+        id: fetch
+        run: python ci_update.py ${{ inputs.ignore_gate && '--ignore-gate' || '' }}
+
+      # 閘門擋下時 publish=false，下面全部跳過。
+      # 用「跳過」而不是「失敗」：那不是錯誤，是刻意不發佈；
+      # 標成失敗會讓人開始習慣性忽略紅色叉叉。
+      - name: 產出網站
+        if: steps.fetch.outputs.publish == 'true'
+        run: python publish.py
+
+      - if: steps.fetch.outputs.publish == 'true'
+        uses: actions/configure-pages@v5
+      - if: steps.fetch.outputs.publish == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        if: steps.fetch.outputs.publish == 'true'
+        uses: actions/deploy-pages@v4
+
+      - name: 摘要
+        if: always()
+        run: |
+          {
+            echo "### 這次更新"
+            echo ""
+            cat ci_summary.md 2>/dev/null || echo "（沒有產生摘要，代表在抓資料那步就停了）"
+            echo ""
+            echo "網址: ${{ steps.deploy.outputs.page_url }}"
+          } >> "$GITHUB_STEP_SUMMARY"

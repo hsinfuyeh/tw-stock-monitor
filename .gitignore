@@ -28,3 +28,6 @@ __pycache__/
 # 部署走 actions/upload-pages-artifact，直接把產物丟給 Pages，不經過 repo。
 # site/ 底下的 HTML/CSS/JS 是要進版控的，只排除 data/。
 site/data/
+
+# CI 每次執行產生的摘要
+ci_summary.md

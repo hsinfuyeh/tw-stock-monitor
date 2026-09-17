@@ -13,9 +13,24 @@ TABLES = dict(mi_index="quotes", t86="inst", bwibbu="valuation", margin="margin"
 
 
 def build(datasets=None, verbose=True):
+    """從 raw/ 全量重建。
+
+    寫到暫存檔再原子換掉，不是就地 DROP/CREATE。兩個理由：
+
+    1. <b>DuckDB 不會就地回收空間</b>。反覆 DROP TABLE 再 CREATE TABLE，
+       檔案只會一直長 —— 實測同一份資料，就地重建過幾十次之後是 873 MB，
+       寫成新檔只有 143 MB，膨脹了 6 倍。
+    2. 重建到一半掛掉時，舊的資料庫還完好無損；換檔是一瞬間的事。
+
+    只重建部分資料集時不能換檔（會丟掉沒重建的表），那種情況退回就地更新。
+    """
     datasets = datasets or list(DATASETS)
     days = ingest.trading_calendar()
-    con = duckdb.connect(str(DB))
+    full = set(datasets) == set(DATASETS)
+    target = DB.with_suffix(".building.duckdb") if full else DB
+    if full and target.exists():
+        target.unlink()
+    con = duckdb.connect(str(target))
     for ds in datasets:
         rows, miss = [], 0
         t0 = time.time()
@@ -39,11 +54,17 @@ def build(datasets=None, verbose=True):
         if verbose:
             print(f"  {ds} -> {tbl}: {len(df):,} 列, {df.date.nunique()} 天, "
                   f"缺 {miss} 天, {time.time()-t0:.0f}s", flush=True)
-    # 索引
-    for t in ("quotes", "inst", "valuation", "margin"):
-        try: con.execute(f"CREATE INDEX IF NOT EXISTS ix_{t} ON {t}(date, code)")
-        except Exception: pass
+    # 刻意不建索引。實測這四個 (date, code) 索引佔掉 407 MB —— 整個檔案的 74% ——
+    # 而且沒有任何好處：全表掃描 1.53s（有索引時反而是 1.98s），單檔查詢
+    # 0.093s vs 0.083s 在誤差內。
+    # 合理：DuckDB 是欄式儲存且有 zone map，這裡的查詢又幾乎都是整表掃進
+    # pandas，ART 索引只是白佔空間。
     con.close()
+    if full:
+        import os
+        os.replace(str(target), str(DB))
+        if verbose:
+            print(f"  倉儲 {DB.stat().st_size/1e6:.0f} MB", flush=True)
 
 
 def q(sql, params=None):
