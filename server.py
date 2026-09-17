@@ -161,8 +161,9 @@ def panel(kind="common", full=False):
                 rv = revenue.load()
                 if len(rv):
                     pit = revenue.as_of_panel(rv, d["date"].unique())
-                    d = d.merge(pit[["date", "code", "yoy", "yoy_3m"]],
-                                on=["date", "code"], how="left")
+                    d = d.merge(
+                        pit[["date", "code", "yoy", "yoy_3m", "sue", "days_since"]],
+                        on=["date", "code"], how="left")
                     n = int(d["yoy"].notna().sum())
                     print("  月營收：{:,} 筆原始、面板覆蓋 {:,} 列".format(len(rv), n),
                           flush=True)
@@ -174,13 +175,13 @@ def panel(kind="common", full=False):
                 else:
                     print("::warning::revenue.load() 回傳空的，L3 營收層將失效。",
                           flush=True)
-                    d["yoy"] = d["yoy_3m"] = np.nan
+                    d["yoy"] = d["yoy_3m"] = d["sue"] = d["days_since"] = np.nan
             except Exception as e:
                 import traceback
                 print("::error::月營收載入失敗，L3 營收層將失效：{}".format(e),
                       flush=True)
                 traceback.print_exc()
-                d["yoy"] = d["yoy_3m"] = np.nan
+                d["yoy"] = d["yoy_3m"] = d["sue"] = d["days_since"] = np.nan
             d["L"] = likelihood.score(d)
             d["tier"] = d.groupby("date")["L"].transform(
                 lambda s: pd.qcut(s.rank(method="first"), 5,
@@ -734,7 +735,7 @@ def stock(code):
 #   漲幅 +0.26  創新高 +0.20  爆量 +0.14  法人賣 -0.14  低波動 -0.34  <- 都不顯著
 #   創新低   -0.39 (t=-2.89)  綜合評分 -0.07           <- 反指標那一組
 TAB_GROUPS_SPEC = [
-    ("已驗證", ["pos", "rev"]),
+    ("已驗證", ["sue", "pos", "rev"]),
     ("今日事實", ["amount", "gain", "loss", "volume", "high"]),
     ("風險", ["calm"]),
     ("籌碼", ["inst", "instout"]),
@@ -888,6 +889,8 @@ def lists(key="amount"):
             f = lambda v: "{:.0f}%".format(float(v))
         elif ek == "yoy":
             f = lambda v: "{:+.1f}%".format(float(v))
+        elif ek == "sue":
+            f = lambda v: "{:+.2f} 個標準差".format(float(v))
         elif ek == "法人買超":
             f = lambda v: "{:+.1f}%".format(float(v) * 100)
         else:

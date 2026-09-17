@@ -28,6 +28,7 @@ import json
 import os
 import time
 
+import numpy as np
 import pandas as pd
 import requests
 
@@ -158,7 +159,29 @@ def load(codes=None):
     r3 = d.groupby("code", sort=False)["revenue"].transform(
         lambda s: s.rolling(3).sum())
     d["yoy_3m"] = (r3 / r3.groupby(d["code"]).shift(12) - 1) * 100
-    return d[["code", "avail_date", "rev_month", "revenue", "yoy", "mom", "yoy_3m"]]
+
+    # SUE：標準化未預期營收。這是 PEAD（盈餘公布後漂移）的月頻版本。
+    #
+    # 跟 yoy 的差別很重要：yoy 是「成長得快不快」，SUE 是「比自己的常態好多少」。
+    # 一家連續三年年增 60% 的公司，這個月公布 40%，在年增率排行上仍然名列前茅，
+    # 但那是<b>負驚奇</b>，PEAD 說它接下來會弱。
+    #
+    #   預期 = 過去 12 個月 yoy 的平均（季節隨機漫步 + 漂移）
+    #   SUE  = (本月 yoy − 預期) / 過去 12 個月 yoy 的標準差
+    #
+    # 除以自己的波動，是為了讓「營收本來就穩定的公司出現 10% 落差」
+    # 比「營收本來就亂跳的公司出現 10% 落差」更有意義。
+    #
+    # 一律 shift(1)：預期只能用本月之前的資料算，否則是偷看。
+    gy = d.groupby("code", sort=False)["yoy"]
+    exp = gy.transform(lambda s: s.shift(1).rolling(12, min_periods=6).mean())
+    sd = gy.transform(lambda s: s.shift(1).rolling(12, min_periods=6).std())
+    # 用 np.nan 不是 pd.NA：pd.NA 會把整個 float 欄位轉成 object dtype，
+    # 之後 nlargest / 數值運算全部會壞，而 sort_values 剛好還能用 ——
+    # 也就是榜單看起來正常，問題在別的地方才爆出來。
+    d["sue"] = ((d["yoy"] - exp) / sd).replace([np.inf, -np.inf], np.nan)
+    return d[["code", "avail_date", "rev_month", "revenue", "yoy", "mom",
+              "yoy_3m", "sue"]]
 
 
 def as_of_panel(rev, dates):
@@ -187,15 +210,20 @@ def as_of_panel(rev, dates):
     for code, g in rev.groupby("code", sort=False):
         g = g.sort_values("avail_date")
         left = pd.DataFrame({"date": dates})
-        m = pd.merge_asof(left, g[["avail_date", "yoy", "yoy_3m", "mom", "rev_month"]],
-                          left_on="date", right_on="avail_date", direction="backward")
+        m = pd.merge_asof(
+            left, g[["avail_date", "yoy", "yoy_3m", "mom", "sue", "rev_month"]],
+            left_on="date", right_on="avail_date", direction="backward")
         m["code"] = code
         out.append(m)
     r = pd.concat(out, ignore_index=True)
     # 營收太舊（超過 75 天沒更新）視為缺值，避免停止公布的公司留著舊數字
     r.loc[(r["date"] - r["avail_date"]).dt.days > 75,
-          ["yoy", "yoy_3m", "mom"]] = pd.NA
-    return r[["date", "code", "yoy", "yoy_3m", "mom", "avail_date", "rev_month"]]
+          ["yoy", "yoy_3m", "mom", "sue"]] = pd.NA
+    # 距公布幾天 —— PEAD 是事件驅動的，訊號會隨時間衰減，
+    # 公布 3 天的股票跟公布 50 天的不是同一回事，畫面上要分得出來。
+    r["days_since"] = (r["date"] - r["avail_date"]).dt.days
+    return r[["date", "code", "yoy", "yoy_3m", "mom", "sue", "days_since",
+              "avail_date", "rev_month"]]
 
 
 if __name__ == "__main__":

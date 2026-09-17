@@ -41,6 +41,7 @@ function rowsTable(d, rows) {
          d.extra === 'vol_ratio' ? App.num(ex) + ' 倍' :
          d.extra === 'annvol' ? App.num(ex, 0) + '%' :
          d.extra === 'posv' ? App.num(ex, 0) + '%' :
+         d.extra === 'sue' ? App.num(ex, 2, true) + ' 個標準差' :
          d.extra === '_s' ? App.num(ex, 2, true) :
          d.extra === '法人買超' ? App.pct(ex * 100, 1) :
          App.pct(ex, d.extra === 'yoy' ? 1 : 2));
