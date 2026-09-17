@@ -1,0 +1,440 @@
+"""Anytype 風格樣式 —— 結構中性、編輯感排版、無品牌色。
+
+取自 anytype.design.md 的五個核心決定：
+
+  1. 沒有品牌主色。整個介面只有墨黑與白，互動元件靠對比與形狀建立權威，
+     不靠顏色。漲跌紅綠是唯一例外 —— 那是資料語意不是品牌色，拿掉會讓
+     數字不可讀（這點刻意偏離原規格，理由寫在這裡以免日後被當成疏漏）。
+  2. 二元圓角。內容卡片 0px（銳利、結構性），按鈕與分頁 9999px（全圓角、
+     人性尺度），輸入框 16px。中間值一律不用。
+  3. 沒有陰影。層次全部靠 1px 髮絲線邊框，唯一的「浮起」是深色藥丸分頁。
+  4. 襯線只給一個情緒瞬間。漏斗頁的最終檔數用 Playfair Display 顯示，
+     其餘全站是 Inter。襯線出現第二次就不特別了。
+  5. 粉彩漸層只當背景。cream / rose / mint / sky / lavender 只出現在
+     漏斗頁 hero 的底層，絕不碰文字層與邊框層。
+
+明暗模式：原規格沒有深色版（它自己的 Known Gaps 有寫）。這裡推導一組
+對偶值 —— 畫布與墨色互換，其餘結構紀律不變。
+
+CSS 變數名沿用舊的（--bg / --fg / --line / --accent…），因為 server.py 與
+index_page.py 有內嵌樣式直接引用；只換值不換名，避免改一個檔案弄壞另一個。
+"""
+
+CSS = """
+/* ===== 淺色（預設）===== */
+:root{
+/* 畫布與墨 */
+--bg:#ffffff; --card:#ffffff; --sunk:#f5f5f5;
+--fg:#000000; --mut:#5b5b5b; --faint:#808080;
+/* 髮絲線：--line2 是結構性的實心墨線，--line 是表格列的細分隔 */
+--line:rgba(0,0,0,.13); --line2:#000000; --hair:rgba(0,0,0,.30);
+/* 深色藥丸（全站唯一的「浮起」）*/
+--pillbg:#3c3c3c; --pillfg:#ffffff;
+/* 資料語意色 —— 刻意偏離原規格，理由見模組說明 */
+--up:#c2362e; --dn:#0d7a52; --warn:#96690c; --ok:#0f8f73;
+/* 痕跡等級的口音色。只出現在：最終通過數的長條、已驗證標記的圓點。*/
+--mint:#3cd9b3;
+/* --accent 在舊程式碼裡等同「可點擊」，這裡指向墨色而非藍色 */
+--accent:#000000;
+--chipbg:transparent;
+--washop:1;
+--r:0px; --rin:16px; --pill:9999px;
+--sans:Inter,-apple-system,"Segoe UI","Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
+--serif:"Playfair Display","Noto Serif TC",Georgia,"Times New Roman",serif;
+}
+/* ===== 深夜（跟隨系統）===== */
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+  --bg:#0b0b0c; --card:#0b0b0c; --sunk:#17171a;
+  --fg:#f2f2f2; --mut:#9b9b9b; --faint:#787878;
+  --line:rgba(255,255,255,.14); --line2:#4a4a4e; --hair:rgba(255,255,255,.32);
+  --pillbg:#ededed; --pillfg:#0b0b0c;
+  --up:#ff6f66; --dn:#3fc48f; --warn:#d8a72e; --ok:#3fc48f;
+  --mint:#3cd9b3; --accent:#f2f2f2;
+  --washop:.26;
+  }
+}
+/* ===== 深夜（手動切換）===== */
+:root[data-theme="dark"]{
+--bg:#0b0b0c; --card:#0b0b0c; --sunk:#17171a;
+--fg:#f2f2f2; --mut:#9b9b9b; --faint:#787878;
+--line:rgba(255,255,255,.14); --line2:#4a4a4e; --hair:rgba(255,255,255,.32);
+--pillbg:#ededed; --pillfg:#0b0b0c;
+--up:#ff6f66; --dn:#3fc48f; --warn:#d8a72e; --ok:#3fc48f;
+--mint:#3cd9b3; --accent:#f2f2f2;
+--washop:.26;
+}
+
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);
+font-size:16px;line-height:1.65;font-weight:400;letter-spacing:-.005em;
+-webkit-font-smoothing:antialiased}
+/* 連結沒有顏色可用（無品牌色），改用底線表達可點擊 */
+a{color:var(--fg);text-decoration:none}
+a:hover{text-decoration:underline;text-underline-offset:3px}
+
+/* label-caps：1px 字距 / 大寫。全站唯一的大寫處理，
+   只給 3-6 字的標籤用，段落長度會讀起來像在吼。 */
+.eyebrow{font-size:12.5px;font-weight:500;letter-spacing:.11em;
+text-transform:uppercase;color:var(--faint);display:block;margin-bottom:9px}
+
+/* ---------- 頂部列：齊邊、無置中導覽 ---------- */
+.top{position:sticky;top:0;z-index:50;background:var(--bg);
+border-bottom:1px solid var(--line2)}
+.top .in{max-width:1080px;margin:0 auto;padding:10px 22px;display:flex;
+gap:10px;align-items:center}
+.brand{font-weight:600;font-size:16px;letter-spacing:-.02em;white-space:nowrap}
+.navlink{font-size:14px;color:var(--mut);white-space:nowrap;padding:7px 14px;
+border-radius:var(--pill);border:1px solid transparent}
+.navlink:hover{border-color:var(--hair);color:var(--fg);text-decoration:none}
+/* 目前所在的區域用深色藥丸標示 —— 跟頁內分頁同一套語言，
+   所以「我在哪一層」只要學一次 */
+.navlink.on{background:var(--pillbg);color:var(--pillfg);border-color:var(--pillbg);
+font-weight:500}
+.navlink.on:hover{text-decoration:none}
+.searchbox{position:relative;flex:1;min-width:0}
+.searchbox input{width:100%;padding:11px 15px;border:1px solid var(--line2);
+border-radius:var(--rin);background:var(--bg);color:var(--fg);font-size:16px;
+font-family:inherit;font-weight:300;letter-spacing:-.01em}
+.searchbox input::placeholder{color:var(--faint);font-weight:300}
+.searchbox input:focus{outline:none;box-shadow:0 0 0 1px var(--line2)}
+.themebtn{flex:0 0 auto;width:38px;height:38px;border:1px solid var(--line2);
+border-radius:var(--pill);background:transparent;color:var(--fg);cursor:pointer;
+font-size:15px;line-height:1;display:flex;align-items:center;justify-content:center;
+padding:0}
+.themebtn:hover{background:var(--pillbg);color:var(--pillfg)}
+.sug{position:absolute;top:calc(100% + 6px);left:0;right:0;background:var(--card);
+border:1px solid var(--line2);border-radius:var(--rin);overflow:hidden;
+max-height:340px;overflow-y:auto}
+.sug a{display:flex;gap:12px;padding:11px 15px;color:var(--fg);
+border-bottom:1px solid var(--line);align-items:baseline}
+.sug a:last-child{border-bottom:none}
+.sug a:hover,.sug a.sel{background:var(--sunk);text-decoration:none}
+.sug .c{font-weight:600;font-variant-numeric:tabular-nums;min-width:56px}
+.sug .n{color:var(--mut);font-size:15px;font-weight:300}
+.sug .t{margin-left:auto;font-size:11.5px;color:var(--faint);
+letter-spacing:.09em;text-transform:uppercase}
+
+/* ---------- 資料過期橫幅 ---------- */
+/* 全站唯一會主動搶注意力的元素。它存在的理由是：這個工具是拿來決定下單的，
+   安靜地顯示過期價格比顯示錯誤更危險。 */
+.stale{background:var(--warn);color:#fff}
+.stale .in{max-width:1080px;margin:0 auto;padding:10px 22px;font-size:13.5px;
+display:flex;gap:10px;flex-wrap:wrap;align-items:baseline;line-height:1.55}
+.stale b{font-weight:600;white-space:nowrap}
+.stale span{opacity:.92;font-weight:300}
+.stale code{font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;
+background:rgba(255,255,255,.2);padding:1px 6px;border-radius:4px;font-size:12.5px}
+.stale[data-empty]{display:none}
+.stale.busy{background:var(--fg);color:var(--bg)}
+.stale.bad{background:var(--up)}
+.updbtn{margin-left:auto;padding:5px 14px;border-radius:var(--pill);
+border:1px solid rgba(255,255,255,.55);background:transparent;color:#fff;
+font-family:inherit;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap}
+.updbtn:hover:not(:disabled){background:#fff;color:var(--warn)}
+.updbtn:disabled{opacity:.5;cursor:default}
+.spin{width:12px;height:12px;border-radius:50%;flex:0 0 auto;
+border:2px solid rgba(255,255,255,.3);border-top-color:currentColor;
+animation:spin .7s linear infinite;align-self:center}
+.stale.busy .spin{border-color:rgba(0,0,0,.25);border-top-color:currentColor}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* 首頁的大搜尋框。原本首頁只寫「在上面輸入代號」，把人指回頂部列那個小框 ——
+   首頁的主要工作就是查股票，主要工作應該有主要尺寸的入口。 */
+.searchbox.big input{padding:22px 26px;font-size:21px;font-weight:300;
+border-radius:var(--rin);letter-spacing:-.02em}
+.searchbox.big .sug a{padding:14px 20px;font-size:16px}
+.homehero{padding:56px 0 46px;border-bottom:1px solid var(--line);margin-bottom:30px}
+.homehero h1{margin:0 0 26px;font-size:54px;font-weight:500;letter-spacing:-.045em;
+line-height:1.02}
+.homehero .hint{color:var(--faint);font-size:14px;font-weight:300;margin:14px 0 26px}
+.homehero .hint strong{color:var(--mut);font-weight:500}
+kbd{font-family:inherit;font-size:12px;border:1px solid var(--hair);
+border-radius:4px;padding:1px 6px;color:var(--mut)}
+
+.wrap{max-width:1080px;margin:0 auto;padding:34px 22px 96px}
+
+/* ---------- 標題 ---------- */
+.hero{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;margin-bottom:6px}
+.hero h1{margin:0;font-size:38px;letter-spacing:-.035em;font-weight:500;line-height:1.1}
+.hero .code{color:var(--mut);font-weight:300}
+.px{margin-left:auto;text-align:right}
+.px .v{font-size:34px;font-weight:500;font-variant-numeric:tabular-nums;
+line-height:1.1;letter-spacing:-.03em}
+.px .d{font-size:14px;font-variant-numeric:tabular-nums}
+.meta{color:var(--mut);font-size:14px;font-weight:300;margin-bottom:22px}
+
+/* ---------- 卡片：0 圓角、實心髮絲線、無背景差異 ---------- */
+.card{background:var(--card);border:1px solid var(--line2);border-radius:var(--r);
+padding:30px 30px 34px;margin-bottom:22px}
+.card h2{margin:0 0 6px;font-size:26px;letter-spacing:-.025em;font-weight:500;
+line-height:1.2}
+.card .lead{color:var(--mut);font-size:16px;font-weight:300;margin:0 0 20px;
+letter-spacing:-.01em}
+
+/* ---------- 狀態列 ---------- */
+.statusbar{display:flex;align-items:center;gap:10px;padding:12px 16px;
+border:1px solid var(--line2);border-left-width:4px;
+border-radius:var(--r);background:var(--card);font-size:15px;margin-bottom:18px;
+font-weight:300}
+.statusbar.warn{border-left-color:var(--warn)}
+.statusbar.bad{border-left-color:var(--up)}
+.statusbar.ok{border-left-color:var(--ok)}
+.statusbar .txt{flex:1;min-width:0;color:var(--mut)}
+.statusbar .txt b{color:var(--fg);font-weight:500}
+.statusbar .more{flex:0 0 auto;font-size:12px;color:var(--fg);cursor:pointer;
+white-space:nowrap;user-select:none;letter-spacing:.08em;text-transform:uppercase;
+border-bottom:1px solid var(--fg);font-weight:500}
+.expand{display:none;border:1px solid var(--line2);border-top:none;
+padding:18px 20px;margin:-18px 0 18px;
+background:var(--card);font-size:15px;line-height:1.8;color:var(--mut);font-weight:300}
+.expand.open{display:block}
+.expand b,.expand strong{color:var(--fg);font-weight:500}
+
+/* ---------- 檢查清單 ---------- */
+.chk{list-style:none;margin:0;padding:0}
+.chk li{display:flex;gap:14px;padding:14px 0;border-bottom:1px solid var(--line);
+align-items:flex-start}
+.chk li:last-child{border-bottom:none;padding-bottom:0}
+.chk li:first-child{padding-top:0}
+.ico{flex:0 0 22px;height:22px;border-radius:var(--pill);display:flex;
+align-items:center;justify-content:center;font-size:12px;font-weight:600;margin-top:3px}
+.ico.ok{background:var(--ok);color:#fff}
+.ico.warn{background:var(--warn);color:#fff}
+.ico.bad{background:var(--up);color:#fff}
+.chk .body{flex:1;min-width:0}
+.chk .t{font-weight:500;font-size:16px;letter-spacing:-.015em}
+.chk .s{color:var(--mut);font-size:15px;margin-top:3px;font-weight:300}
+
+/* ---------- 訊號條 ---------- */
+.sig .row{display:flex;align-items:center;gap:12px;padding:8px 0;font-size:14px}
+.sig .nm{flex:0 0 112px;color:var(--mut);font-weight:300}
+.sig .track{flex:1;height:22px;position:relative;background:var(--sunk);
+border-radius:var(--r);overflow:hidden}
+.sig .zero{position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--hair)}
+.sig .fill{position:absolute;top:0;bottom:0}
+.sig .val{flex:0 0 72px;text-align:right;font-variant-numeric:tabular-nums;
+font-weight:500}
+.costline{position:absolute;top:0;bottom:0;width:1px;
+background:repeating-linear-gradient(180deg,var(--warn) 0 3px,transparent 3px 6px)}
+
+/* ---------- 分頁：WHAT / WHY / WHO 藥丸列 ---------- */
+/* 分組排列。組名用小寫標籤，組內的藥丸不換行 ——
+   這樣即使整列換行，「價量」那四個也一定待在一起。 */
+.tabs{display:flex;flex-wrap:wrap;gap:10px 20px;align-items:center;
+padding:0;margin:0 0 26px}
+.tabgrp{display:flex;align-items:center;gap:6px;flex-wrap:nowrap}
+.glabel{font-size:11px;letter-spacing:.11em;text-transform:uppercase;
+color:var(--faint);font-weight:500;white-space:nowrap;margin-right:2px}
+.tabs a{flex:0 0 auto;padding:8px 16px;border-radius:var(--pill);font-size:14px;
+color:var(--mut);white-space:nowrap;border:1px solid var(--hair);background:transparent}
+.tabs a:hover{border-color:var(--fg);color:var(--fg);text-decoration:none}
+/* 選中的分頁是全站唯一的色調浮起 */
+.tabs a.on{background:var(--pillbg);color:var(--pillfg);border-color:var(--pillbg);
+font-weight:500}
+.tabs a.warnTab{color:var(--up);border-color:var(--up);opacity:.7}
+.tabs a.warnTab:hover{opacity:1;border-color:var(--up);color:var(--up)}
+.tabs a.warnTab.on{background:var(--up);color:#fff;border-color:var(--up);opacity:1}
+.tabs .sepr{flex:0 0 auto;width:1px;background:var(--line);margin:7px 6px}
+
+/* ---------- 摺疊 ---------- */
+details{border-top:1px solid var(--line);margin-top:24px;padding-top:18px}
+details summary{cursor:pointer;color:var(--mut);font-size:12.5px;
+list-style:none;user-select:none;letter-spacing:.1em;text-transform:uppercase;
+font-weight:500}
+details summary:hover{color:var(--fg)}
+details summary::-webkit-details-marker{display:none}
+details summary::before{content:"+ "}
+details[open] summary::before{content:"\\2013 "}
+details .inner{margin-top:16px}
+
+/* ---------- 表格：欄名用大寫小標，列用細線 ---------- */
+table{border-collapse:collapse;width:100%;font-size:14.5px}
+th{text-align:right;font-weight:500;color:var(--faint);font-size:11.5px;
+letter-spacing:.08em;text-transform:uppercase;
+padding:0 10px 10px;border-bottom:1px solid var(--line2);white-space:nowrap}
+th.sorted{color:var(--fg)}
+th.sorted::after{content:" \\2193";font-size:10px}
+td.sorted{font-weight:600}
+th:nth-child(-n+2),td:nth-child(-n+2){text-align:left}
+td{padding:11px 10px;border-bottom:1px solid var(--line);text-align:right;
+font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:400}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover{background:var(--sunk)}
+.scroll{overflow-x:auto}
+
+/* ---------- 表格分頁 ---------- */
+/* 純前端切頁：資料一次就全部送到瀏覽器，箭頭只是換顯示哪一段，
+   不發請求、不動網址、不留歷史紀錄 —— 上一頁鍵不會被灌爆。 */
+.pager{display:flex;align-items:center;justify-content:flex-end;gap:14px;
+padding-top:16px;border-top:1px solid var(--line)}
+.pgn{font-size:11.5px;letter-spacing:.09em;color:var(--faint);font-weight:500;
+font-variant-numeric:tabular-nums}
+.pgb{width:34px;height:34px;border-radius:var(--pill);border:1px solid var(--hair);
+background:transparent;color:var(--fg);cursor:pointer;font-size:15px;line-height:1;
+display:flex;align-items:center;justify-content:center;padding:0;font-family:inherit}
+.pgb:hover:not(:disabled){background:var(--pillbg);color:var(--pillfg);
+border-color:var(--pillbg)}
+.pgb:disabled{opacity:.22;cursor:default}
+
+.up{color:var(--up)}.dn{color:var(--dn)}.mut{color:var(--mut)}
+.ex{display:block;font-size:12px;color:var(--faint);font-weight:300;
+line-height:1.6;margin-top:3px}
+.note{color:var(--mut);font-size:15px;line-height:1.8;font-weight:300}
+.note li{margin-bottom:7px}
+
+/* ---------- 藥丸 ---------- */
+.chips{display:flex;flex-wrap:wrap;gap:7px}
+.chip{padding:8px 16px;border-radius:var(--pill);background:transparent;color:var(--fg);
+font-size:14px;font-variant-numeric:tabular-nums;border:1px solid var(--hair)}
+.chip:hover{background:var(--pillbg);color:var(--pillfg);border-color:var(--pillbg);
+text-decoration:none}
+.empty{text-align:center;color:var(--mut);padding:80px 20px;font-weight:300}
+.empty h2{font-size:34px;color:var(--fg);margin:0 0 10px;font-weight:500;
+letter-spacing:-.03em}
+.linkbtn{display:inline-block;padding:11px 20px;border-radius:var(--pill);
+background:var(--fg);color:var(--bg);font-size:15px;font-weight:500;
+border:1px solid var(--fg)}
+.linkbtn:hover{text-decoration:none;background:transparent;color:var(--fg)}
+
+/* ---------- 篩選瀑布 ---------- */
+/* 瀑布圖而非漏斗圖：資料本質是 1,082 − 518 − 1 − 239 − 64 − 15 = 245，
+   也就是「累積扣減如何得到最終值」—— 那是瀑布圖的定義。
+   漏斗圖在某一層只刷掉 1 檔時，形狀變化肉眼完全看不出來。 */
+
+/* 頂部結果：編輯感 hero + 粉彩漸層。
+   漸層只在背景層，永遠不碰文字與邊框 —— 這是原規格的硬規則。 */
+.fnhero{position:relative;overflow:hidden;background:var(--card);
+border:1px solid var(--line2);padding:46px 34px 38px;margin-bottom:26px}
+.fnhero::before{content:"";position:absolute;left:0;right:0;bottom:0;top:18%;
+opacity:var(--washop);pointer-events:none;
+background:linear-gradient(101deg,#ffedbe 0%,#ffbcc3 18%,#c9efb2 38%,
+#cdffea 56%,#b9eeff 76%,#e7d4ff 100%);
+-webkit-mask-image:linear-gradient(180deg,transparent 0%,#000 72%);
+mask-image:linear-gradient(180deg,transparent 0%,#000 72%)}
+.fnhero > *{position:relative;z-index:1}
+/* 全站唯一的襯線瞬間。出現第二次就不特別了。 */
+.fnhero .big{font-family:var(--serif);font-size:88px;font-weight:400;
+line-height:.92;letter-spacing:-.035em;font-variant-numeric:tabular-nums;
+display:block;margin:0}
+.fnhero .big .unit{font-family:var(--sans);font-size:24px;font-weight:300;
+letter-spacing:-.02em;margin-left:14px}
+.fnhero .sub{font-size:18px;font-weight:300;color:var(--mut);margin-top:16px;
+letter-spacing:-.015em;max-width:46em}
+.fnhero .sub b{color:var(--fg);font-weight:500;font-variant-numeric:tabular-nums}
+.fnhero .sub .sep{color:var(--faint);margin:0 9px}
+
+/* 條件 chips：每個條件標示自己刷掉幾檔（篩選器介面的通用慣例） */
+.fchips{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 26px}
+.fchip{display:inline-flex;align-items:center;gap:8px;padding:7px 14px;
+border-radius:var(--pill);font-size:13.5px;background:transparent;
+border:1px solid var(--hair);cursor:help;white-space:nowrap}
+.fchip:hover{border-color:var(--fg)}
+.fchip .lbl{font-weight:400}
+.fchip .cnt{font-variant-numeric:tabular-nums;font-weight:600;color:var(--up)}
+.fchip .cnt.zero{color:var(--faint);font-weight:400}
+.fchip .dot{width:6px;height:6px;border-radius:50%;flex:0 0 auto}
+.fchip .dot.fact{background:var(--mut)}
+.fchip .dot.validated{background:var(--mint)}
+.fchip .dot.pending{background:var(--warn)}
+.fchip .dot.weak{background:var(--warn)}
+.fchip.off{opacity:.45}
+
+/* 瀑布：橫向遞減長條，左對齊同一基準尺規，長度差直接對應檔數差。
+   墨色是留下的，斜線影是這一層刷掉的 —— 不引入第二個色相。 */
+.wf{display:flex;flex-direction:column;gap:0}
+/* 名稱欄要放得下「殖利率位階過低 + 已驗證」而不斷行，
+   否則標籤會把名稱擠成兩行，整列讀起來像壞掉。 */
+.wfrow{display:grid;grid-template-columns:230px 1fr 120px;gap:18px;
+align-items:center;padding:13px 0;border-bottom:1px solid var(--line)}
+.wfrow:last-child{border-bottom:none}
+.wfrow.total{padding-top:18px;border-top:1px solid var(--line2);margin-top:4px}
+.wfrow.total .wfname{font-weight:600}
+.wfrow.dim{opacity:.45}
+.wfname{font-size:14.5px;font-weight:400;display:flex;align-items:center;gap:9px;
+white-space:nowrap;letter-spacing:-.01em}
+.evb{font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;font-weight:500;
+padding:3px 8px;border-radius:var(--pill);border:1px solid var(--hair);
+color:var(--faint);cursor:help;white-space:nowrap}
+.evb.validated{color:var(--ok);border-color:var(--ok)}
+.evb.pending{color:var(--warn);border-color:var(--warn)}
+.evb.weak{color:var(--warn);border-color:var(--warn)}
+.wfbar{position:relative;height:26px}
+.wfkeep{position:absolute;left:0;top:0;bottom:0;background:var(--fg)}
+.wfkeep.final{background:var(--mint)}
+.wfdrop{position:absolute;top:0;bottom:0;
+background:repeating-linear-gradient(135deg,var(--hair) 0 1px,transparent 1px 6px);
+border:1px solid var(--hair);border-left:none}
+.wfval{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.wfval .n{font-size:19px;font-weight:500;letter-spacing:-.025em}
+.wfval .d{font-size:12px;color:var(--up);font-weight:600;margin-left:8px}
+.wfval .d.zero{color:var(--faint);font-weight:400}
+
+@media(max-width:820px){
+  .wfrow{grid-template-columns:130px 1fr 96px;gap:12px}
+  .wfname{font-size:13px}.wfname .evb{display:none}
+  .wfval .n{font-size:16px}
+  .fnhero{padding:32px 22px 28px}
+  .fnhero .big{font-size:58px}
+  .fnhero .big .unit{font-size:19px;margin-left:10px}
+  .fnhero .sub{font-size:16px}
+}
+@media(max-width:600px){
+  /* 三欄擠在 375px 寬時，中間的長條只剩約 65px —— 長度差不再對應檔數差，
+     整張圖就失去意義了。改成「名稱與數字一行、長條獨佔一行」，
+     讓長條拿回全寬，比較基準才成立。 */
+  .wfrow{grid-template-columns:1fr auto;
+  grid-template-areas:"name val" "bar bar";row-gap:9px;gap:12px;padding:15px 0}
+  .wfname{grid-area:name;font-size:14px}
+  .wfval{grid-area:val}
+  .wfbar{grid-area:bar;height:16px}
+}
+
+/* 證據矛盾標記 —— 表格內用緊湊標籤，細節掛 tooltip。 */
+.flag{display:inline-block;font-size:10.5px;font-weight:500;padding:2px 8px;
+border-radius:var(--pill);margin-left:6px;white-space:nowrap;cursor:help;
+letter-spacing:.04em;color:var(--warn);border:1px solid var(--warn)}
+.flag.bad{color:var(--up);border-color:var(--up)}
+
+/* ---------- 名詞解釋 ---------- */
+.tip{border-bottom:1px dotted var(--hair);cursor:help}
+.tip:hover{border-bottom-color:var(--fg)}
+/* 本身已經是藥丸／標籤的元素，不要再被 .tip 的虛線底線切斷輪廓 */
+.fchip.tip,.evb.tip,.flag.tip{border-bottom-style:solid}
+.evb.tip,.flag.tip{border-bottom-color:currentColor}
+.fchip.tip{border-bottom-color:var(--hair)}
+.fchip.tip:hover{border-bottom-color:var(--fg)}
+.tip:focus{outline:1px dotted var(--fg);outline-offset:2px}
+#tipbox{position:absolute;z-index:200;max-width:330px;background:var(--fg);
+color:var(--bg);padding:14px 16px;border-radius:var(--r);font-size:14px;
+line-height:1.7;pointer-events:none;opacity:0;transition:opacity .1s;
+font-weight:300;text-align:left;letter-spacing:-.005em}
+#tipbox.show{opacity:1}
+#tipbox b{color:var(--bg);font-weight:600}
+.tiphint{font-size:13px;color:var(--faint);margin:-8px 0 20px;line-height:1.7;
+font-weight:300}
+.tiphint .mark{border-bottom:1px dotted var(--hair);white-space:nowrap}
+
+/* 頂部列在窄螢幕換行：品牌與導覽一行，搜尋框獨佔第二行。
+   原本五個元素擠同一行，搜尋框被壓到只剩兩個字寬，等於不能用。 */
+@media(max-width:700px){
+  .top .in{flex-wrap:wrap;row-gap:9px}
+  .themebtn{margin-left:auto}
+  .searchbox{order:3;flex:1 0 100%}
+}
+
+@media(max-width:560px){
+  .wrap{padding:24px 18px 80px}
+  .top .in{padding:9px 18px 11px}
+  .hero h1{font-size:28px}.px .v{font-size:26px}
+  .card{padding:22px 20px 26px}
+  .card h2{font-size:21px}
+  .sig .nm{flex:0 0 90px;font-size:13px}
+  .navlink{padding:6px 11px;font-size:13.5px}
+  .tabs a{padding:7px 13px;font-size:13.5px}
+  table{font-size:14px}
+  /* 搜尋框在手機上維持 16px，低於這個值 iOS Safari 會自動放大整頁 */
+  .searchbox input{font-size:16px}
+}
+"""
