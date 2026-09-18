@@ -134,6 +134,7 @@ border:1px solid rgba(255,255,255,.55);background:transparent;color:#fff;
 font-family:inherit;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap}
 .updbtn:hover:not(:disabled){background:#fff;color:var(--warn)}
 .updbtn:disabled{opacity:.5;cursor:default}
+a.updbtn:hover{text-decoration:none}
 .spin{width:12px;height:12px;border-radius:50%;flex:0 0 auto;
 border:2px solid rgba(255,255,255,.3);border-top-color:currentColor;
 animation:spin .7s linear infinite;align-self:center}
