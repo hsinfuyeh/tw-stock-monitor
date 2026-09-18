@@ -158,8 +158,11 @@ def main(ignore_gate=False):
     if missing and ready:
         log("部分日期資料不齊，只採用: {}".format(", ".join(ready)))
 
-    log("重建倉儲…")
-    store.build(verbose=False)
+    # 用增量寫入，不是全量重建。CI 只帶了倉儲種子、沒有完整的原始檔封存，
+    # 全量重建會用僅有的幾天原始檔把多年歷史整個蓋掉 —— 2026-09-18 就是這樣
+    # 把候選名單變成空的（被 publish 的自我檢查擋下，才沒有上線）。
+    log("寫入新交易日：{}".format(", ".join(ready)))
+    store.append(ready, verbose=True)
     now_ok = usable_last_date()
     log("完成，三表齊備到 {}".format(_d(now_ok)))
 

@@ -83,9 +83,74 @@ def build(datasets=None, verbose=True):
     con.close()
     if full:
         import os
+        # 換檔前的保險：新倉儲的交易日數不能比舊的少太多。
+        #
+        # 全量重建是「raw/ 裡有什麼就建什麼」。raw/ 不完整時（例如 CI 環境只帶了
+        # 倉儲種子、沒帶原始檔封存），重建出來的倉儲只剩幾天，會把多年歷史整個蓋掉。
+        # 2026-09-18 CI 就真的發生了：用兩天的原始檔重建，所有滾動視窗算不出來，
+        # 候選名單變成空的 —— 那次是 publish 的自我檢查擋下來的，
+        # 但倉儲不該等到下游才發現自己被掏空。
+        if DB.exists():
+            def _days(path):
+                c = duckdb.connect(str(path), read_only=True)
+                try:
+                    return c.execute("SELECT COUNT(DISTINCT date) FROM quotes").fetchone()[0]
+                except Exception:
+                    return 0
+                finally:
+                    c.close()
+            old_n, new_n = _days(DB), _days(target)
+            if old_n and new_n < old_n * 0.9:
+                target.unlink()
+                raise RuntimeError(
+                    "重建後的倉儲只有 {} 個交易日，舊的有 {} 個 —— 原始檔封存不完整，"
+                    "拒絕覆蓋。舊倉儲保持不動。若是在 CI，應該用 store.append()。"
+                    .format(new_n, old_n))
         os.replace(str(target), str(DB))
         if verbose:
             print(f"  倉儲 {DB.stat().st_size/1e6:.0f} MB", flush=True)
+
+
+def append(days, verbose=True):
+    """只把指定交易日寫進既有倉儲，不動其他日期。
+
+    給 CI 用。CI 的環境只有倉儲種子、沒有完整的原始檔封存，所以不能全量重建
+    （見 build() 換檔前那段保險）。這裡對每個資料集：先刪掉這幾天既有的列
+    （重跑冪等），再把這幾天的原始檔解析後插入。
+
+    只寫「四個資料集的原始檔都拿到」以外的也照寫 —— 哪些日子算數由呼叫端
+    （ci_update 的齊備閘門）決定，這裡不重複判斷。
+    """
+    if not days:
+        return 0
+    con = duckdb.connect(str(DB))
+    total = 0
+    try:
+        for ds, tbl in TABLES.items():
+            rows = []
+            for d in days:
+                j = ingest.load_raw(ds, d)
+                if j is None:
+                    continue
+                rows.extend(parse.PARSERS[ds](j, f"{d[:4]}-{d[4:6]}-{d[6:]}"))
+            isos = ", ".join("DATE '{}-{}-{}'".format(d[:4], d[4:6], d[6:]) for d in days)
+            con.execute(f"DELETE FROM {tbl} WHERE date IN ({isos})")
+            if rows:
+                df = pd.DataFrame(rows)
+                df["date"] = pd.to_datetime(df["date"])
+                # 欄位順序對齊既有表，避免 INSERT 依位置錯位
+                cols = [r[0] for r in con.execute(f"DESCRIBE {tbl}").fetchall()]
+                df = df.reindex(columns=cols)
+                con.register("_tmp", df)
+                con.execute(f"INSERT INTO {tbl} SELECT * FROM _tmp")
+                con.unregister("_tmp")
+            total += len(rows)
+            if verbose:
+                print(f"  {ds} -> {tbl}: 寫入 {len(rows):,} 列", flush=True)
+        con.execute("CHECKPOINT")
+    finally:
+        con.close()
+    return total
 
 
 def q(sql, params=None):

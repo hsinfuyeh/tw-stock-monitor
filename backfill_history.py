@@ -65,7 +65,14 @@ def hist_calendar(start_year, end_ym):
     return days
 
 
-def main(start_year=2008):
+def main(start_year=2008, delay=None):
+    # 回補要打上萬次請求，先前用 2.5 秒間隔探測時就被 TWSE 限流擋了一天。
+    # 允許單獨放寬間隔，不影響每日更新用的 config.REQUEST_DELAY。
+    if delay:
+        global REQUEST_DELAY
+        REQUEST_DELAY = delay
+        ingest.REQUEST_DELAY = delay
+        print("請求間隔 {} 秒".format(delay), flush=True)
     today = dt.date.today()
     # 只補到目前 config 起點之前，之後的已經有了
     from config import BACKFILL_START
@@ -80,7 +87,7 @@ def main(start_year=2008):
             if not all(ingest.have(ds, d) for ds in ingest.DATASETS)]
     print("\n交易日 {:,} 天（{} ~ {}）".format(len(days), days[0], days[-1]))
     print("其中還沒補齊的 {:,} 天".format(len(todo)))
-    est = len(todo) * len(ingest.DATASETS) * REQUEST_DELAY / 3600
+    est = len(todo) * len(ingest.DATASETS) * ingest.REQUEST_DELAY / 3600
     print("預估 {:,} 次請求，約 {:.1f} 小時\n".format(
         len(todo) * len(ingest.DATASETS), est), flush=True)
     if not todo:
@@ -93,4 +100,6 @@ def main(start_year=2008):
 
 
 if __name__ == "__main__":
-    main(int(sys.argv[1]) if len(sys.argv) > 1 else 2008)
+    args = [a for a in sys.argv[1:] if not a.startswith("--delay=")]
+    dl = [float(a.split("=", 1)[1]) for a in sys.argv[1:] if a.startswith("--delay=")]
+    main(int(args[0]) if args else 2008, dl[0] if dl else None)
