@@ -53,27 +53,25 @@ App.boot(null, function (meta) {
       return Math.abs(b.value) - Math.abs(a.value); })[0];
     var verdict;
     if (!strongest || Math.abs(strongest.value) < cost) {
-      verdict = '<strong>這些型態在這檔股票上沒有可用的預測力。</strong>最強的訊號也只有 ' +
+      verdict = '<strong>這些型態在這檔股票上看不出用處。</strong>最明顯的一個也只有 ' +
         App.num(Math.abs(strongest ? strongest.value : 0)) + '%，小於來回交易成本 ' +
         App.num(cost, 1) + '%（圖上的黃線）—— 就算方向猜對，也賺不回手續費和證交稅。';
     } else if (strongest.value < 0) {
       verdict = '唯一超過交易成本的是<strong>「' + App.esc(strongest.name) +
         '」，而且是負的（' + App.num(strongest.value) + '%）</strong>—— 意思是這個型態出現後，' +
-        '這檔股票的表現反而比平常差。要靠它獲利必須放空，但台股放空受限' +
-        '（平盤下不得放空、借券成本、回補風險），實務上很難執行。而且只有 ' +
-        strongest.n + ' 次樣本，不足以當作依據。';
+        '這檔股票的表現反而比平常差。而且只出現過 ' + strongest.n + ' 次，次數太少，不足以當作依據。';
     } else {
       verdict = '最強的是<strong>「' + App.esc(strongest.name) + '」' +
         App.num(strongest.value, 2, true) + '%</strong>，略高於交易成本 ' +
-        App.num(cost, 1) + '%。但這只有 ' + strongest.n +
-        ' 次樣本，而且是單一股票上的結果 —— 樣本數這麼少時，這種幅度很可能只是運氣。';
+        App.num(cost, 1) + '%。但這個型態只出現過 ' + strongest.n +
+        ' 次，而且只是這一檔股票上的結果 —— 次數這麼少，這種幅度很可能只是運氣。';
     }
 
     var tierBlock = '';
     if (d.tier && d.tier_text) {
       var stars = '●'.repeat(d.tier) + '○'.repeat(5 - d.tier);
       tierBlock = '<div class="statusbar ' + d.tier_text[0] + '"><span class="txt">' +
-        App.tip('歷史勝率等級','歷史勝率等級') + ' <b>' + d.tier + ' / 5</b>　' +
+        App.tip('歷史勝率') + ' <b>' + d.tier + ' / 5</b>　' +
         stars + '　—　' + d.tier_text[1] + '。</span></div>';
     }
 
@@ -85,7 +83,7 @@ App.boot(null, function (meta) {
       '<div class="d ' + App.cls(d.chg) + '">' + App.num(d.chg, 2, true) +
       ' (' + App.num(d.chg_pct, 2, true) + '%)</div></div></div>' +
       '<div class="meta">' + App.esc(d.kind) + ' ｜ 資料截止 ' + App.esc(d.date) +
-      ' ｜ 統計樣本 ' + d.n_days.toLocaleString() + ' 個交易日</div>' +
+      ' ｜ 統計用了 ' + d.n_days.toLocaleString() + ' 個交易日的資料</div>' +
       '<div class="tiphint">💡 帶有<span class="mark">虛線底線</span>的名詞，' +
       '滑鼠移上去（手機點一下）會顯示白話解釋。</div>' +
       '<div class="statusbar"><span class="txt">這裡只呈現<b>已經發生的事實</b>，' +
@@ -98,14 +96,13 @@ App.boot(null, function (meta) {
       d.chart_svg + '</div>' +
       '<div class="card"><h2>那些技術型態，能告訴你什麼？</h2>' +
       '<p class="lead">每種型態出現後 10 個交易日的表現，已經扣掉大盤漲跌，' +
-      '也扣掉這檔股票本身的漲跌趨勢。剩下的才是型態本身提供的資訊量。' +
-      '圖上兩條黃線是交易成本的位置，長條沒有超過黃線就代表沒有可操作性。</p>' +
+      '也扣掉這檔股票本身的漲跌趨勢，剩下的才是型態本身的影響。' +
+      '圖上兩條黃線是手續費和稅（0.6%）的位置，長條沒有超過黃線，就算方向對也賺不回成本。</p>' +
       bars + '<p class="note" style="margin-top:14px">' + verdict + '</p></div>';
   }).catch(function () {
     app.innerHTML = '<div class="empty"><h2>' + App.esc(code) + '</h2>' +
       '<div class="note">這檔目前不在可分析範圍內。<br>' +
-      '常見原因：成交量太低未達流動性門檻、上市時間太短、或屬於已排除的' +
-      '槓桿／反向／債券／海外型 ETF。</div></div>';
+      '常見原因：成交量太小、上市時間太短、或是槓桿／反向／債券／海外型 ETF。</div></div>';
   });
 });
 </script>

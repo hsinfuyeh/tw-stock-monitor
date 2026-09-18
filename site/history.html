@@ -1,0 +1,82 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script>/* 在 body 渲染前就套用主題，避免切換時閃一下白底 */
+(function(){try{var t=localStorage.getItem('theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:wght@400;500&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<title>歷史清單</title></head><body>
+<div class="wrap" id="app"></div>
+<script src="assets/app.js"></script>
+<script>
+/* 歷史清單（stock-screener-PRD：每日快照）。
+ *
+ * 每天發佈時存下當天的清單（repo 的 snapshots/），這頁列出每一份，
+ * 並用跟回測完全相同的規則追蹤之後實際走得怎樣 —— 這是「真的往前走」的紀錄，
+ * 不是回頭測試，所以最能看出這套規則實際上靠不靠得住。 */
+function f2(v) { return v == null ? '—' : Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function money(v) { return v == null ? '—' : App.pct(v); }
+var ST = { '持有中': 'mut', '等待進場': 'mut', '達到目標': 'up', '停損出場': 'dn', '時間到出場': '' };
+
+function detail(h) {
+  return '<h3 style="font-size:17px;margin:26px 0 6px">' + h.date + ' 的清單</h3>' +
+    '<div class="scroll" data-per="20"><table><thead><tr><th>代號</th><th>名稱</th><th>總分</th>' +
+    '<th>當天收盤</th><th>停損</th><th>目標</th><th>隔天開盤買進</th><th>目前狀態</th>' +
+    '<th>持有天數</th><th class="sorted">報酬</th><th>同期 0050</th>' +
+    '<th style="text-align:left">入選理由</th></tr></thead><tbody>' +
+    h.rows.map(function (r) {
+      return '<tr><td><a href="stock.html?c=' + r.code + '"><strong>' + r.code + '</strong></a></td>' +
+        '<td>' + App.esc(r.name) + '</td><td>' + App.num(r.score, 0) + '</td>' +
+        '<td>' + f2(r.close) + '</td><td class="dn">' + f2(r.stop) + '</td>' +
+        '<td class="up">' + f2(r.target) + '</td><td>' + f2(r.entry) + '</td>' +
+        '<td class="' + (ST[r.status] || '') + '">' + App.esc(r.status) +
+        (r.exit_date ? '<br><span class="mut" style="font-size:12px">' + r.exit_date + ' @ ' + f2(r.exit) + '</span>' : '') +
+        '</td><td>' + (r.days || '—') + '</td><td class="sorted">' + money(r.ret) + '</td>' +
+        '<td>' + money(r.bench) + '</td><td class="why">' + App.esc((r.why || []).join('；')) + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+}
+
+App.boot('history', function (meta) {
+  return App.get('short/history.json').then(function (H) {
+    var app = document.getElementById('app');
+    var head = '<h1 style="font-size:30px;letter-spacing:-.03em;font-weight:500;margin:0 0 4px">歷史清單</h1>' +
+      '<div class="meta">每個交易日的清單都會存下來，這裡追蹤它們之後實際的表現</div>';
+    if (!H.length) {
+      app.innerHTML = head + '<div class="empty"><div class="note">還沒有任何一天的清單。</div></div>';
+      return;
+    }
+    var rows = H.map(function (h, i) {
+      var st = h.waiting === h.n ? '等待明天開盤進場'
+        : h.open ? '還有 ' + h.open + ' 檔持有中' : '全部已出場';
+      return '<tr data-i="' + i + '" style="cursor:pointer"><td><a href="#" data-i="' + i + '">' +
+        h.date + '</a></td><td>' + h.n + '</td><td class="mut">' + st + '</td>' +
+        '<td class="sorted">' + money(h.avg) + '</td><td>' + money(h.bench) + '</td>' +
+        '<td>' + (h.avg != null && h.bench != null ? money(h.avg - h.bench) : '—') + '</td></tr>';
+    });
+    app.innerHTML = head +
+      '<div class="card"><h2>每一天的清單</h2>' +
+      '<p class="lead">規則跟回測報告一樣：隔天開盤買進，碰到停損或目標就賣，最多抱 10 個交易日。' +
+      '還沒賣的用最新收盤價計算。報酬都已扣手續費和稅。點日期看那天選了哪些股票。</p>' +
+      '<div class="scroll"><table><thead><tr><th>清單日期</th><th>檔數</th><th>狀態</th>' +
+      '<th class="sorted">平均報酬</th><th>同期 0050</th><th>' + App.tip('贏過 0050') +
+      '</th></tr></thead><tbody>' + rows.join('') + '</tbody></table></div>' +
+      '<p class="note" style="margin-top:14px;font-size:13.5px">剛開始累積的前幾週，' +
+      '天數太少，贏或輸 0050 大多是運氣；至少要累積幾個月才看得出東西。' +
+      '想看長期的結果，看<a href="backtest.html">回測報告</a>。</p>' +
+      '<div id="det"></div></div>';
+    App.pager(app);
+    var det = document.getElementById('det');
+    function show(i) { det.innerHTML = detail(H[i]); App.pager(det); }
+    app.querySelector('tbody').addEventListener('click', function (e) {
+      var tr = e.target.closest('tr[data-i]');
+      if (!tr) return;
+      e.preventDefault();
+      show(+tr.getAttribute('data-i'));
+    });
+    show(0);
+  });
+});
+</script>
+</body></html>

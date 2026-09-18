@@ -7,14 +7,14 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:wght@400;500&display=swap">
 <link rel="stylesheet" href="assets/style.css">
-<title>選股 · 候選名單</title></head><body>
+<title>其他排行 · 層層篩選</title></head><body>
 <div class="wrap" id="app"></div>
 <script src="assets/app.js"></script>
 <script>
-var SHORT = {L0:'上市普通股',L1:'均額 < 2,000 萬',L1b:'開高低收同價',
-             L2a:'全市場後 40%',L2b:'一年區間後 30%',L3:'年增率 < 0'};
+var SHORT = {L0:'全部上市普通股',L1:'每天成交不到 2,000 萬',L1b:'整天鎖在漲跌停',
+             L2a:'殖利率全市場最低 40%',L2b:'一年區間最低 30%',L3:'營收比去年少'};
 
-App.boot('funnel', function (meta) {
+App.boot('lists', function (meta) {
   return App.get('funnel.json').then(function (f) {
     var EV = meta.evidence_labels || {};
     var total = f.total || 1;
@@ -59,7 +59,7 @@ App.boot('funnel', function (meta) {
       return '<tr><td><a href="stock.html?c=' + r.code + '"><strong>' + r.code +
         '</strong></a></td><td><a href="stock.html?c=' + r.code + '">' +
         App.esc(r.name) + '</a>' + flags + '</td>' +
-        '<td class="sorted">' + (r.tier || 0) + ' / 5</td>' +
+        '<td>' + (r.tier || 0) + ' / 5</td>' +
         '<td>' + App.num(r.close) + '</td><td>' + App.pct(r.chg_pct) + '</td>' +
         '<td>' + (r.div_yield == null ? '—' : App.num(r.div_yield) + '%') + '</td>' +
         '<td>' + App.pct(r.yoy, 1) + '</td>' +
@@ -77,24 +77,27 @@ App.boot('funnel', function (meta) {
     }
 
     document.getElementById('app').innerHTML =
+      '<h1 style="font-size:30px;letter-spacing:-.03em;font-weight:500;margin:0 0 4px">其他排行</h1>' +
+      '<div class="meta">資料截止 ' + App.esc(f.date) + '</div>' +
+      App.otherTabs(meta, 'funnel') +
       '<div class="fnhero">' +
-        '<span class="eyebrow">層層剔除 &middot; ' + App.esc(f.date) + ' 收盤</span>' +
+        '<span class="eyebrow">層層篩選 &middot; ' + App.esc(f.date) + ' 收盤</span>' +
         '<span class="big">' + f.passed.toLocaleString() +
-        '<span class="unit">檔通過</span></span>' +
-        '<div class="sub">自 <b>' + total.toLocaleString() +
-        '</b> 檔上市普通股逐層剔除<span class="sep">&middot;</span>淘汰 <b>' +
+        '<span class="unit">檔留下</span></span>' +
+        '<div class="sub">從 <b>' + total.toLocaleString() +
+        '</b> 檔上市普通股，一層一層刷掉不適合的<span class="sep">&middot;</span>刷掉 <b>' +
         ((1 - f.passed / total) * 100).toFixed(0) +
-        '%</b><span class="sep">&middot;</span>剩下的由你自己判斷要不要進場</div></div>' +
+        '%</b><span class="sep">&middot;</span>剩下的要不要買由你判斷</div></div>' +
       '<div class="fchips">' + chips + '</div>' +
       '<div class="card"><div class="wf">' + wf + '</div></div>' + ordernote +
-      '<div class="card"><h2>候選名單</h2>' +
-      '<p class="lead">依<strong>價格位置 + 月營收年增</strong>排序 —— 這是實測在池內仍有鑑別力的組合。' +
-      '名稱旁的標籤是<strong>來源之間的矛盾</strong>，滑過看細節。</p>' +
+      '<div class="card"><h2>留下的股票</h2>' +
+      '<p class="lead">依「一年區間位置、月營收年增、營收優於預期」三項的排名平均排序。' +
+      '名稱旁的標籤代表<strong>不同資料互相矛盾</strong>（例如營收成長但法人在賣），滑過看細節。</p>' +
       '<div class="scroll"><table><thead><tr><th>代號</th><th>名稱</th>' +
-      '<th class="sorted">' + App.tip('歷史勝率等級') + '</th><th>' + App.tip('收盤') +
-      '</th><th>' + App.tip('今日') + '</th><th>' + App.tip('殖利率位階','殖利率位階') +
+      '<th>' + App.tip('歷史勝率') + '</th><th>' + App.tip('收盤') +
+      '</th><th>' + App.tip('今日') + '</th><th>' + App.tip('殖利率', '殖利率排名') +
       '</th><th>' + App.tip('月營收年增') + '</th><th>' + App.tip('法人買超') +
-      '</th><th>' + App.tip('20日均額') + '</th></tr></thead><tbody>' + body +
+      '</th><th>' + App.tip('日均成交額') + '</th></tr></thead><tbody>' + body +
       '</tbody></table></div></div>';
     App.pager(document.getElementById('app'));
     var more = document.querySelector('.statusbar .more');

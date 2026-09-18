@@ -73,15 +73,17 @@
   }
 
   /* ---------- 外框 ---------- */
-  /* 除權息拿掉：它只是 14 個榜單裡的一個，沒有驗證支撐，不該佔第一層。
-     換上「訊號」—— 指向三個通過 t>3.0 的榜單，那是整個系統唯一測得出
-     東西的地方，本來被埋在 14 個分頁裡。 */
+  /* 導覽列依 PRD 的產出排：今天的清單、回測、過去的清單、其他排行。
+     每一格點進去都是不同的頁面，不是同一頁的捷徑。
+     查個股不佔一格：頂部的搜尋框隨時可用，品牌名稱回首頁。 */
   var NAV = [
-    ['short.html', '短線', 'short'],
-    ['funnel.html', '選股', 'funnel'],
-    ['lists.html?s=sue', '訊號', 'signal'],
-    ['lists.html?s=amount', '盤後', 'lists']
+    ['short.html', '今日清單', 'short'],
+    ['backtest.html', '回測報告', 'backtest'],
+    ['history.html', '歷史清單', 'history'],
+    ['lists.html', '其他排行', 'lists']
   ];
+  // 本機（python server.py）才有後端：可以按鈕更新、用自訂參數回測
+  var LOCAL = !/github\.io$/.test(location.hostname);
 
   function shell(active, q) {
     var links = NAV.map(function (n) {
@@ -132,9 +134,43 @@
     bar.querySelector('.in').innerHTML =
       '<b>資料落後 ' + n + ' 個營業日</b><span>最新是 ' + esc(meta.data_date) +
       '。每個交易日收盤後會自動更新；中間若有國定假日屬正常，' +
-      '否則是自動更新沒有成功，可以手動觸發。</span>' +
-      '<a class="updbtn" href="https://github.com/hsinfuyeh/tw-stock-monitor/actions/workflows/update.yml"' +
-      ' target="_blank" rel="noopener">前往更新</a>';
+      '否則是自動更新沒有成功，可以手動更新。</span>' + (LOCAL
+        ? '<button class="updbtn" id="updgo" type="button">立即更新</button>'
+        : '<a class="updbtn" href="https://github.com/hsinfuyeh/tw-stock-monitor/actions/workflows/update.yml"' +
+          ' target="_blank" rel="noopener">前往更新</a>');
+    var go = document.getElementById('updgo');
+    if (go) go.addEventListener('click', function () {
+      go.disabled = true;
+      fetch('api/update', { method: 'POST' }).then(function () { watchUpdate(); });
+    });
+  }
+
+  /* 本機更新進度。更新要重建資料庫再重新產生網頁（合計約 5-8 分鐘），
+     期間頂部顯示進度，完成後自動重新載入。公開網站沒有後端，不會走到這裡。 */
+  function watchUpdate() {
+    var bar = document.getElementById('updbar');
+    function tick() {
+      fetch('api/update-status', { cache: 'no-store' }).then(function (r) {
+        return r.ok ? r.json() : null;
+      }).then(function (st) {
+        if (!st) return;
+        if (st.state === 'running') {
+          bar.removeAttribute('data-empty');
+          bar.className = 'stale busy';
+          bar.querySelector('.in').innerHTML = '<span class="spin"></span><b>' +
+            esc(st.msg || '更新中') + '</b><span>' + esc(st.detail || '') + '</span>';
+          setTimeout(tick, 3000);
+        } else if (st.state === 'error') {
+          bar.removeAttribute('data-empty');
+          bar.className = 'stale bad';
+          bar.querySelector('.in').innerHTML = '<b>' + esc(st.msg || '更新失敗') +
+            '</b><span>' + esc(st.detail || '') + '</span>';
+        } else if (bar.classList.contains('busy')) {
+          location.reload();
+        }
+      }).catch(function () {});
+    }
+    tick();
   }
 
   /* ---------- 表格分頁 ----------
@@ -378,6 +414,7 @@
     getMeta().then(function (meta) {
       GLOSSARY = meta.glossary || {};
       staleBanner(meta);
+      if (LOCAL) watchUpdate();
       var r = render(meta);
       return Promise.resolve(r).then(function () { buildStamp(meta); });
     }).then(function () {
@@ -390,9 +427,31 @@
     });
   }
 
+  /* 「其他排行」的分頁列。排行頁（lists.html）與層層篩選頁（funnel.html）
+     共用，兩頁在導覽列上都屬於「其他排行」。 */
+  function otherTabs(meta, current) {
+    var info = {};
+    (meta.screens || []).forEach(function (s) { info[s.key] = s; });
+    var groups = [['篩選', [['funnel', 'funnel.html', '層層篩選']]]].concat(
+      (meta.tab_groups || []).map(function (g) {
+        return [g.label, g.keys.filter(function (k) { return info[k]; }).map(function (k) {
+          return [k, 'lists.html?s=' + k, info[k].tab || info[k].title];
+        })];
+      }));
+    return '<div class="tabs">' + groups.map(function (g) {
+      return '<div class="tabgrp"><span class="glabel">' + esc(g[0]) + '</span>' +
+        g[1].map(function (t) {
+          var warn = info[t[0]] && info[t[0]].cat === 'score';
+          var c = (t[0] === current ? 'on ' : '') + (warn ? 'warnTab' : '');
+          return '<a href="' + t[1] + '" class="' + c.trim() + '">' + esc(t[2]) + '</a>';
+        }).join('') + '</div>';
+    }).join('') + '</div>';
+  }
+
   window.App = {
     get: get, esc: esc, num: num, pct: pct, cls: cls, yi: yi, qs: qs,
     tip: tip, pager: pager, boot: boot, searchbox: searchbox,
+    otherTabs: otherTabs, local: LOCAL,
     glossary: function () { return GLOSSARY; }
   };
 })();

@@ -7,11 +7,11 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:wght@400;500&display=swap">
 <link rel="stylesheet" href="assets/style.css">
-<title>盤後</title></head><body>
+<title>其他排行</title></head><body>
 <div class="wrap" id="app"></div>
 <script src="assets/app.js"></script>
 <script>
-/* 分組與「訊號」歸類都從 meta.json 讀，不在這裡維護第二份。
+/* 分組從 meta.json 讀（App.otherTabs），不在這裡維護第二份。
    原本這裡抄了一份 GROUPS，新增榜單時只改到 Python 那邊，
    靜態站的分頁就少一個 —— 而且不會報錯，只是那個榜單消失。 */
 
@@ -23,7 +23,7 @@ function rowsTable(d, rows) {
     App.tip('收盤') + '</th><th>' + App.tip('今日') + '</th>' +
     '<th class="sorted">' + App.tip(d.extra_title || '') + '</th>' +
     (showInst ? '<th>' + App.tip('法人買超') + '</th>' : '') +
-    '<th>' + App.tip('20日均額') + '</th></tr></thead><tbody>' +
+    '<th>' + App.tip('日均成交額') + '</th></tr></thead><tbody>' +
     rows.map(function (r) {
       var ex = r.extra;
       var exTxt = ex == null ? '—' :
@@ -31,7 +31,7 @@ function rowsTable(d, rows) {
          d.extra === 'vol_ratio' ? App.num(ex) + ' 倍' :
          d.extra === 'annvol' ? App.num(ex, 0) + '%' :
          d.extra === 'posv' ? App.num(ex, 0) + '%' :
-         d.extra === 'sue' ? App.num(ex, 2, true) + ' 個標準差' :
+         d.extra === 'sue' ? App.num(ex, 1) + ' 倍' :
          d.extra === '_s' ? App.num(ex, 2, true) :
          d.extra === '法人買超' ? App.pct(ex * 100, 1) :
          App.pct(ex, d.extra === 'yoy' ? 1 : 2));
@@ -45,36 +45,18 @@ function rowsTable(d, rows) {
     }).join('') + '</tbody></table></div>';
 }
 
-App.boot(null, function (meta) {
-  var key = App.qs('s') || 'amount';
+App.boot('lists', function (meta) {
+  var key = App.qs('s') || 'sue';
   var info = {};
   (meta.screens || []).forEach(function (s) { info[s.key] = s; });
-
-  // 導覽列高亮：已驗證那三個榜單歸「訊號」，其餘歸「盤後」
-  var SIGNAL = meta.signal_keys || [];
-  var want = SIGNAL.indexOf(key) >= 0 ? 's=sue' : 's=amount';
-  document.querySelectorAll('.navlink').forEach(function (a) {
-    a.classList.toggle('on', a.getAttribute('href').indexOf(want) >= 0);
-  });
-
-  var GROUPS = (meta.tab_groups || []).map(function (g) { return [g.label, g.keys]; });
-  var tabs = GROUPS.map(function (g) {
-    var inner = g[1].map(function (k) {
-      var s = info[k]; if (!s) return '';
-      var c = (k === key ? 'on ' : '') + (s.cat === 'score' ? 'warnTab' : '');
-      return '<a href="lists.html?s=' + k + '" class="' + c.trim() + '">' +
-        App.esc(s.tab || s.title) + '</a>';
-    }).join('');
-    return '<div class="tabgrp"><span class="glabel">' + g[0] + '</span>' + inner + '</div>';
-  }).join('');
+  var tabs = App.otherTabs(meta, key);
 
   var isEx = key === 'exdiv';
-  var h1 = isEx ? '除權息行事曆' : '今日盤後';
   var metaline = isEx
-    ? '未來 60 天內的除權息事件 ｜ 資料截止 ' + App.esc(meta.data_date)
+    ? '未來 60 天內的除權息 ｜ 資料截止 ' + App.esc(meta.data_date)
     : '資料截止 ' + App.esc(meta.data_date) +
-      ' ｜ 已套用流動性門檻（20 日均額 2,000 萬以上）｜ 點代號可看個股詳情';
-  document.title = isEx ? h1 : '盤後 · ' + (info[key] ? info[key].title : '');
+      ' ｜ 只列近 20 日平均每天成交 2,000 萬以上的股票 ｜ 點代號看個股';
+  document.title = '其他排行 · ' + (info[key] ? info[key].title : '');
 
   return App.get('screens/' + key + '.json').then(function (d) {
     var tbl;
@@ -111,10 +93,12 @@ App.boot(null, function (meta) {
 
     document.getElementById('app').innerHTML =
       '<h1 style="font-size:30px;letter-spacing:-.03em;font-weight:500;margin:0 0 4px">' +
-      h1 + '</h1><div class="meta">' + metaline + '</div>' +
+      '其他排行</h1><div class="meta">' + metaline + '</div>' +
+      '<p class="note" style="margin:0 0 14px">這一頁不屬於短線清單，是另外整理的名單。' +
+      '分組依「過去表現」與「今天發生的事」區分，名單本身都不是買進建議。</p>' +
       '<div class="tiphint">💡 帶有<span class="mark">虛線底線</span>的名詞，' +
       '滑鼠移上去（手機點一下）會顯示白話解釋。</div>' +
-      '<div class="tabs">' + tabs + '</div>' + note +
+      tabs + note +
       '<div class="card"><h2>' + App.esc(d.title) + '</h2>' +
       '<p class="lead">' + d.desc + '</p>' +
       (tbl2 ? '<h3 style="font-size:15px;margin:0 0 8px">分數最高 25 名</h3>' : '') +

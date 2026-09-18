@@ -22,23 +22,25 @@ App.boot(null, function (meta) {
       '任何時候按 <kbd>/</kbd> 都會跳回這個框。</div>' +
       '<div class="chips" id="pop"></div>' +
     '</div>' +
-    '<div class="card"><h2>這個工具能做什麼</h2>' +
-      '<p class="lead">資料截止 ' + App.esc(meta.data_date) + '</p>' +
+    '<div class="card"><h2>這個網站有什麼</h2>' +
+      '<p class="lead">資料截止 ' + App.esc(meta.data_date) + '，每個交易日收盤後自動更新。</p>' +
       '<ul class="note">' +
-      '<li><strong>短線清單：</strong>依月營收、法人連買、突破、均線四個條件評分的今日 Top 20，' +
-      '附參考停損與目標價，以及同一套規則的歷史回測（和 0050 比）。參數可以在頁面上調整。' +
-      ' <a href="short.html">前往 →</a></li>' +
-      '<li><strong>能做：</strong>把進場前該確認的事實攤開 —— 流動性夠不夠你的部位、' +
-      '波動你能不能承受、近期有沒有漲跌停、有沒有除權息、價格在什麼位置。</li>' +
-      '<li><strong>能做：</strong>誠實回答「常見的技術型態在這檔股票上有沒有用」。</li>' +
-      '<li><strong>不能做：</strong>預測漲跌、告訴你該買什麼。這不是保守的說法 ——' +
-      '是這套系統用 1,869 個交易日的真實資料驗證後的結果。</li></ul></div>' +
-    '<div class="card"><h2>已經驗證過的事</h2><ul class="note">' +
-      '<li>六種常見 K 線型態（長紅、長黑、十字、爆量、突破、跌破）的預測力接近零，' +
-      '訊號強度小於 0.6% 的來回交易成本。</li>' +
-      '<li>因子合成的「綜合評分」是<strong>反指標</strong>：分數越高，後續表現越差' +
-      '（十分位單調性 −0.61，t = −4.44）。</li>' +
-      '<li>法人買超是唯一通過驗證的真訊號，但效果小於交易成本。</li></ul></div>';
+      '<li><a href="short.html"><strong>今日清單</strong></a>：依月營收、法人連續買超、' +
+      '突破前 20 日高、均線多頭排列四個條件打分數，列出今天分數最高的 20 檔，' +
+      '附參考停損價與目標價。條件和參數可以自己調。</li>' +
+      '<li><a href="backtest.html"><strong>回測報告</strong></a>：假設過去每天都照清單買，' +
+      '結果會怎樣、有沒有贏過買 0050。</li>' +
+      '<li><a href="history.html"><strong>歷史清單</strong></a>：每天的清單都會存下來，' +
+      '這裡追蹤它們之後實際的表現。</li>' +
+      '<li><a href="lists.html"><strong>其他排行</strong></a>：另外整理的名單，' +
+      '例如營收優於預期、股價接近一年高點、今天成交金額最大、法人買最多、即將除權息。</li>' +
+      '<li><strong>查個股</strong>：用上面或頂部的搜尋框，看一檔股票進場前該確認的事' +
+      '（好不好買賣、波動大不大、有沒有要除權息…）。</li></ul></div>' +
+    '<div class="card"><h2>先說清楚</h2><ul class="note">' +
+      '<li>所有清單都是<strong>依規則篩出來的參考</strong>，不是買賣建議，也不會幫你下單。</li>' +
+      '<li>每一份清單都盡量附上「過去照著買的結果」。有些名單過去表現並不好，' +
+      '網站上會直接寫出來，不會藏起來。</li>' +
+      '<li>過去的表現不代表以後會一樣。</li></ul></div>';
   var pop = ['2330','2317','2454','2308','0050','0056','2412','1101'];
   document.getElementById('pop').innerHTML = pop.map(function (c) {
     return '<a class="chip" href="stock.html?c=' + c + '">' + c + '</a>';

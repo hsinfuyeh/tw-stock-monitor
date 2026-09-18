@@ -241,7 +241,7 @@ def selfcheck(p, funnel_data, screens_data):
     if not funnel_data["passed"]:
         bad.append("候選名單是空的")
     if funnel_data["passed"] == funnel_data["total"]:
-        bad.append("候選名單等於全宇宙，等於沒有篩選")
+        bad.append("候選名單等於全部股票，等於沒有篩選")
 
     # 3. 每個榜單都要有內容
     for k, v in screens_data.items():
@@ -308,7 +308,7 @@ def build(limit=None, out=SITE):
     sc = emit_screens(p_common)
     selfcheck(p_common, fn, sc)
     print("短線清單與回測…", flush=True)
-    short = shortterm.compute()
+    short = shortterm.compute(snap_dir=ROOT / "snapshots")
 
     if data.exists():
         shutil.rmtree(data)

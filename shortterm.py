@@ -35,20 +35,20 @@ ETF_OK = ("domestic", "dividend", "active", "foreign")
 
 # (key, 標籤, 預設, 最小, 最大, 步進, 單位, 分組)
 PARAMS = [
-    ("liq_lots",  "20 日均量至少",       1000, 0,   20000, 100, "張",   "流動性"),
-    ("w_rev",     "權重",                25,   0,   100,   5,   "",     "月營收強勢"),
-    ("rev_yoy",   "年增率至少",          20,   0,   300,   5,   "%",    "月營收強勢"),
-    ("rev_bonus", "創 12 個月新高加分",  20,   0,   100,   5,   "% 權重", "月營收強勢"),
-    ("w_inst",    "權重",                25,   0,   100,   5,   "",     "法人連續買超"),
-    ("inst_days", "投信或外資連買至少",  3,    1,   20,    1,   "天",   "法人連續買超"),
-    ("w_brk",     "權重",                25,   0,   100,   5,   "",     "技術面突破"),
-    ("brk_vol",   "量能至少為前 5 日均量", 1.5, 1.0, 5.0,   0.1, "倍",   "技術面突破"),
-    ("w_ma",      "權重",                25,   0,   100,   5,   "",     "均線多頭排列"),
-    ("min_score", "入選最低分數",        50,   0,   100,   5,   "分",   "輸出"),
-    ("top_n",     "取前幾名",            20,   5,   100,   5,   "檔",   "輸出"),
-    ("stop_pct",  "停損幅度上限",        7,    1,   20,    0.5, "%",    "參考價位"),
-    ("rr",        "風險報酬比",          2,    0.5, 5,     0.5, ": 1",  "參考價位"),
-    ("hold_days", "時間停損",            10,   3,   20,    1,   "交易日", "參考價位"),
+    ("liq_lots",  "近 20 日平均每天至少",  1000, 0,   20000, 100, "張",     "成交量門檻"),
+    ("w_rev",     "佔分",                  25,   0,   100,   5,   "分",     "① 月營收強勢"),
+    ("rev_yoy",   "比去年同月至少成長",    20,   0,   300,   5,   "%",      "① 月營收強勢"),
+    ("rev_bonus", "創 12 個月新高再加",    20,   0,   100,   5,   "% 的分", "① 月營收強勢"),
+    ("w_inst",    "佔分",                  25,   0,   100,   5,   "分",     "② 法人連續買超"),
+    ("inst_days", "投信或外資連續買至少",  3,    1,   20,    1,   "天",     "② 法人連續買超"),
+    ("w_brk",     "佔分",                  25,   0,   100,   5,   "分",     "③ 突破前 20 日高"),
+    ("brk_vol",   "成交量至少是前 5 日平均", 1.5, 1.0, 5.0,   0.1, "倍",     "③ 突破前 20 日高"),
+    ("w_ma",      "佔分",                  25,   0,   100,   5,   "分",     "④ 均線多頭排列"),
+    ("min_score", "總分至少",              50,   0,   100,   5,   "分",     "清單"),
+    ("top_n",     "最多列出",              20,   5,   100,   5,   "檔",     "清單"),
+    ("stop_pct",  "停損最多跌",            7,    1,   20,    0.5, "%",      "參考價位"),
+    ("rr",        "目標漲幅是停損的",      2,    0.5, 5,     0.5, "倍",     "參考價位"),
+    ("hold_days", "最多持有",              10,   3,   20,    1,   "個交易日", "參考價位"),
 ]
 DEFAULTS = {k: d for k, _, d, *_ in PARAMS}
 HOLD_MAX = 20                 # 回測預先取的前瞻天數上限，對應 hold_days 的最大值
@@ -189,10 +189,10 @@ def reasons(r, p):
         if r["streak_f"] >= p["inst_days"]:
             out.append("外資連買 {} 天".format(int(r["streak_f"])))
     if r.get("c3") and p["w_brk"] > 0:
-        out.append("突破前 20 日高 {:,.2f}，量 {:.1f} 倍".format(
+        out.append("突破前 20 日最高價 {:,.2f}，成交量是前 5 日平均的 {:.1f} 倍".format(
             r["hi20_prev"], r["volume"] / r["vol5_prev"]))
     if r.get("c4") and p["w_ma"] > 0:
-        out.append("均線多頭（MA5 {:,.2f} > MA10 {:,.2f} > MA20 {:,.2f}）".format(
+        out.append("均線多頭排列（5 日均價 {:,.2f} > 10 日 {:,.2f} > 20 日 {:,.2f}）".format(
             r["ma5"], r["ma10"], r["ma20"]))
     return out
 
@@ -386,7 +386,64 @@ def _r(v, nd=2):
     return None if v is None or not np.isfinite(v) else round(float(v), nd)
 
 
-def compute(d=None):
+def track(d, snap):
+    """一份快照之後的實際表現。規則和回測完全相同：隔天開盤進場，
+    碰到停損或目標出場，最多持有 hold_days 天。還沒走完的標成「持有中」，
+    報酬用最新收盤算。一律扣來回成本、含除權息。"""
+    date = pd.Timestamp(snap["date"])
+    hold = int(snap["params"].get("hold_days", DEFAULTS["hold_days"]))
+    codes = [r["code"] for r in snap["top"]] + ["0050"]
+    g = d[(d["date"] > date) & d["code"].isin(codes)]
+    by = {c: x.reset_index(drop=True) for c, x in g.groupby("code")}
+    b = by.get("0050")
+    b = b.set_index("date") if b is not None else None
+    rows = []
+    for r in snap["top"]:
+        x = by.get(r["code"])
+        row = dict(r, status="等待進場", entry_date=None, entry=None, exit_date=None,
+                   exit=None, days=0, ret=None, bench=None)
+        if x is None or not len(x):
+            rows.append(row)
+            continue
+        o, h, lo, c, k = (x[col].to_numpy() for col in ("open", "high", "low", "close", "k"))
+        stop, target = r["stop"], r["target"]
+        e_px = o[0]
+        status, xi, px = None, None, None
+        for j in range(min(hold, len(x))):
+            if o[j] <= stop:
+                status, xi, px = "停損出場", j, o[j]
+            elif lo[j] <= stop:
+                status, xi, px = "停損出場", j, stop
+            elif o[j] >= target:
+                status, xi, px = "達到目標", j, o[j]
+            elif h[j] >= target:
+                status, xi, px = "達到目標", j, target
+            elif j == hold - 1:
+                status, xi, px = "時間到出場", j, c[j]
+            if status:
+                break
+        if status is None:
+            status, xi, px = "持有中", len(x) - 1, c[-1]
+        ret = (px * k[xi] / (e_px * k[0]) - 1) * 100 - COST
+        bret = None
+        if b is not None:
+            d0, d1 = x["date"][0], x["date"][xi]
+            if d0 in b.index and d1 in b.index:
+                bret = (b.at[d1, "close"] * b.at[d1, "k"] /
+                        (b.at[d0, "open"] * b.at[d0, "k"]) - 1) * 100 - ETF_COST
+        row.update(status=status, entry_date=str(x["date"][0])[:10], entry=_r(e_px),
+                   exit_date=None if status == "持有中" else str(x["date"][xi])[:10],
+                   exit=_r(px), days=int(xi + 1), ret=_r(ret), bench=_r(bret))
+        rows.append(row)
+    done = [x for x in rows if x["ret"] is not None]
+    avg = lambda k: _r(float(np.mean([x[k] for x in done if x[k] is not None]))) if done else None
+    return {"date": snap["date"], "n": len(rows),
+            "open": sum(x["status"] == "持有中" for x in rows),
+            "waiting": sum(x["status"] == "等待進場" for x in rows),
+            "avg": avg("ret"), "bench": avg("bench"), "rows": rows}
+
+
+def compute(d=None, snap_dir=None):
     """算出網頁用的 JSON 與當日快照內容（不寫檔），並做自我檢查。
 
       short/today.json     當日全部可評分標的的特徵 —— 網頁調參時在瀏覽器裡重算分數，
@@ -438,14 +495,22 @@ def compute(d=None):
           "recent": w["recent"][1], "all": w["all"][1], "ablation": abl,
           "years": [{"year": int(y), **{k: _r(v) for k, v in r.items()}}
                     for y, r in yr.iterrows()],
-          "trade_cols": ["訊號日", "代號", "名稱", "類型", "分數", "訊號日收盤", "停損",
+          "trade_cols": ["選出日", "代號", "名稱", "類型", "分數", "選出日收盤", "停損",
                          "目標", "進場日", "進場價", "出場日", "出場價", "出場原因",
-                         "持有天數", "報酬%", "0050%", "超額%"],
+                         "持有天數", "報酬%", "0050%", "贏過 0050%"],
           "trades": trades}
 
     snap = {"date": ds, "params": p, "top": top}
     check(day, today_json, bt)
-    return today_json, bt, snap
+
+    # 歷史清單：每一份過去的快照，之後實際走得怎樣
+    snaps = {ds: snap}
+    if snap_dir is not None and snap_dir.exists():
+        for f in snap_dir.glob("*.json"):
+            if f.stem != ds:
+                snaps[f.stem] = json.loads(f.read_text(encoding="utf-8"))
+    hist = [track(d, snaps[k]) for k in sorted(snaps, reverse=True)]
+    return today_json, bt, snap, hist
 
 
 class Inconsistent(Exception):
@@ -475,12 +540,13 @@ def check(day, today_json, bt):
         len(today_json["expected"]), bt["all"]["n"]), flush=True)
 
 
-def write(out, snap_dir, today_json, bt, snap):
+def write(out, snap_dir, today_json, bt, snap, hist):
     """寫出 JSON 與快照。out 是網站的 data/ 目錄。"""
     import json
     ds = today_json["date"]
     (out / "short").mkdir(parents=True, exist_ok=True)
-    for name, obj in (("today.json", today_json), ("backtest.json", bt)):
+    for name, obj in (("today.json", today_json), ("backtest.json", bt),
+                      ("history.json", hist)):
         (out / "short" / name).write_text(
             json.dumps(obj, ensure_ascii=False, separators=(",", ":"), default=str),
             encoding="utf-8")
@@ -489,16 +555,9 @@ def write(out, snap_dir, today_json, bt, snap):
     snap_dir.mkdir(parents=True, exist_ok=True)
     (snap_dir / (ds + ".json")).write_text(json.dumps(
         snap, ensure_ascii=False, indent=1), encoding="utf-8")
-    snaps = sorted(x.stem for x in snap_dir.glob("*.json"))
-    sd = out / "short" / "snapshots"
-    sd.mkdir(exist_ok=True)
-    for s in snaps:
-        (sd / (s + ".json")).write_bytes((snap_dir / (s + ".json")).read_bytes())
-    (sd / "_index.json").write_text(json.dumps(snaps[::-1]), encoding="utf-8")
 
 
 if __name__ == "__main__":
-    import sys
     import time
     t0 = time.time()
     d = features()

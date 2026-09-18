@@ -482,3 +482,13 @@ background:var(--bg);color:var(--fg);font:inherit}
   .searchbox input{font-size:16px}
 }
 """
+
+
+if __name__ == "__main__":
+    # 改完樣式跑這支：python webui_css.py
+    from pathlib import Path
+    out = Path(__file__).parent / "site" / "assets" / "style.css"
+    out.write_text("/* 本檔由 webui_css.py 產生，不要直接編輯。\n"
+                   "   改樣式請改 webui_css.py 再執行 python webui_css.py。 */\n"
+                   + CSS.lstrip("\n"), encoding="utf-8")
+    print("已寫出", out)
