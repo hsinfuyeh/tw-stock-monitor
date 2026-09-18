@@ -102,6 +102,7 @@ def main(ignore_gate=False):
             "多半是種子檔沒有包含 `raw/revenue/`。在本機重跑 `python seed.py` 即可。",
         ])
         set_output("publish", "false")
+        set_output("changed", "false")
         log("::error::缺少月營收資料，不發佈。")
         return 0
 
@@ -113,10 +114,20 @@ def main(ignore_gate=False):
     todo = [d for d in cal[-LOOKBACK:] if d > cutoff]
 
     if not todo:
+        # 排程一天會跑好幾次；第一次發佈之後，後面幾次都會走到這裡。
+        # 排程觸發就直接略過，不要每小時重做一次 4 分鐘的產出。
+        # 手動觸發則照樣重新產出 —— 那通常是改了程式碼、想讓網站跟上。
+        scheduled = os.environ.get("GITHUB_EVENT_NAME") == "schedule"
         log("沒有新的交易日，倉儲已是最新。")
-        write_summary(["倉儲已是最新：**{}**，沒有新的交易日。".format(_d(last_ok)),
-                       "", "仍會重新產出網站，確保線上內容與倉儲一致。"])
-        set_output("publish", "true")
+        if scheduled:
+            write_summary(["倉儲已是最新：**{}**。今天已經發佈過，這次排程略過。"
+                           .format(_d(last_ok))])
+            set_output("publish", "false")
+        else:
+            write_summary(["倉儲已是最新：**{}**，沒有新的交易日。".format(_d(last_ok)),
+                           "", "手動觸發，仍會重新產出網站，確保線上內容與程式碼一致。"])
+            set_output("publish", "true")
+        set_output("changed", "false")
         return 0
 
     log("要補的交易日: {}".format(", ".join(todo)))
@@ -148,10 +159,11 @@ def main(ignore_gate=False):
                 "```",
                 "",
                 "各資料源的發布時間不同（行情約 14:30，估值與三大法人更晚）。",
-                "晚一點再按一次 Run workflow 就好 —— 現在發佈的話，",
+                "下一個排程（每小時）會再試；急的話也可以手動按 Run workflow。現在發佈的話，",
                 "殖利率那層排除規則會因為缺值而靜默失效，名單會虛胖將近一倍。",
             ])
             set_output("publish", "false")
+            set_output("changed", "false")
             return 0
         log("--ignore-gate：仍然繼續。")
 
@@ -173,6 +185,7 @@ def main(ignore_gate=False):
         lines += ["- {}（缺 {}）".format(d, "、".join(v)) for d, v in missing.items()]
     write_summary(lines)
     set_output("publish", "true")
+    set_output("changed", "true")
     return 0
 
 

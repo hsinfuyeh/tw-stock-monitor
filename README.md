@@ -94,8 +94,16 @@ python -c "import store; store.build()"
 
 ## 雲端自動更新（GitHub Actions）
 
-只有<b>手動觸發</b>，沒有排程 —— 到 Actions 分頁按 Run workflow，
-或用手機的 GitHub App，或在本機 `gh workflow run update.yml`。
+每個交易日收盤後<b>自動更新</b>：台北 14:40、15:40、16:40、17:40、19:10 各試一次。
+資料沒發完就安靜跳過、下個整點再試；當天發佈過之後的排程自動略過。
+急的話也可以手動：Actions 分頁按 Run workflow，或 `gh workflow run update.yml`。
+
+不定在 13:30 收盤當下，是因為那時資料根本還不存在（行情約 14:30 發布，
+估值與三大法人更晚）。
+
+⚠️ GitHub 對公開 repo 有個規則：<b>連續 60 天沒有任何 commit，排程會被自動停用</b>。
+停用時 GitHub 會寄信通知；網站上的過期橫幅也會在晚上 8 點後出現。
+到 Actions 分頁按 Enable workflow 即可恢復。
 
 ```
 按下 Run workflow

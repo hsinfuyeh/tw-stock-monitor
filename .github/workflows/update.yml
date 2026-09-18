@@ -1,9 +1,22 @@
 name: 更新資料並發佈
 
-# 只有手動觸發，沒有排程。
-# 要跑的時候到 Actions 分頁按 "Run workflow"，或用手機的 GitHub App，
-# 或在本機打 `gh workflow run update.yml`。
+# 兩種觸發方式：
+#
+#   排程   每個交易日收盤後每小時試一次，資料齊了就發佈。
+#   手動   Actions 分頁按 Run workflow（或手機 GitHub App、或 gh workflow run）。
+#
+# 為什麼不是 13:30 收盤就跑一次：那時資料根本還不存在。行情約 14:30 發布，
+# 估值與三大法人更晚，而且各天不一樣。定死一個時間點會常常撲空，
+# 所以改成多試幾次 —— 沒齊就安靜跳過（綠燈），齊了就發佈，
+# 當天發佈過之後的排程發現沒有新交易日就直接略過，不重做。
 on:
+  schedule:
+    # GitHub 排程用 UTC。台北 = UTC+8。
+    # 台北 14:40、15:40、16:40、17:40（週一至週五）
+    - cron: "40 6-9 * * 1-5"
+    # 台北 19:10，最後一次補抓
+    - cron: "10 11 * * 1-5"
+    # 刻意避開整點：GitHub 在整點負載最高，排程延遲最嚴重。
   workflow_dispatch:
     inputs:
       ignore_gate:
@@ -11,7 +24,7 @@ on:
         type: boolean
         default: false
 
-# 同時只允許一個，避免兩次點擊打架把倉儲寫壞
+# 同時只允許一個，避免排程與手動撞在一起把倉儲寫壞
 concurrency:
   group: update
   cancel-in-progress: false
@@ -35,11 +48,11 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      # 倉儲快取。實測壓實後 148 MB（移除沒用的索引前是 873 MB），
-      # 帶著跑完全沒問題。key 每天換一把，restore-keys 讓它接續昨天那份。
+      # 倉儲快取（壓實後約 148 MB）。還原與保存拆開：
+      # 只有資料真的變了才存新的一份，否則一天五次排程會堆出一堆一樣的快取。
       - name: 還原倉儲快取
         id: cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: |
             data
@@ -48,8 +61,7 @@ jobs:
           restore-keys: warehouse-
 
       # 冷啟動（快取過期或第一次跑）沒有倉儲可用。
-      # 從零回補要 7,492 次請求 × 2.5 秒 ≈ 5.2 小時，會超過 job 上限，
-      # 所以改成從 Release 下載種子檔。做法見 README。
+      # 從零回補要好幾個小時，會超過 job 上限，所以從 Release 下載種子。
       - name: 沒有倉儲時下載種子
         if: steps.cache.outputs.cache-matched-key == ''
         env:
@@ -71,8 +83,9 @@ jobs:
         id: fetch
         run: python ci_update.py ${{ inputs.ignore_gate && '--ignore-gate' || '' }}
 
-      # 閘門擋下時 publish=false，下面全部跳過。
-      # 用「跳過」而不是「失敗」：那不是錯誤，是刻意不發佈；
+      # publish=false 時下面全部跳過（綠燈而不是紅燈）：
+      #   資料還沒發完 —— 下一個整點再試
+      #   排程時發現沒有新交易日 —— 今天已經發佈過了
       # 標成失敗會讓人開始習慣性忽略紅色叉叉。
       - name: 產出網站
         if: steps.fetch.outputs.publish == 'true'
@@ -88,11 +101,25 @@ jobs:
         if: steps.fetch.outputs.publish == 'true'
         uses: actions/deploy-pages@v4
 
+      # 只有「資料真的寫進倉儲」或「這次是從種子冷啟動」才存快取。
+      # 放在最後、而且要求前面全部成功：產出被自我檢查擋下時，
+      # 不該把可能有問題的倉儲存起來給下一次用。
+      - name: 保存倉儲快取
+        if: >-
+          success() && (steps.fetch.outputs.changed == 'true'
+          || steps.cache.outputs.cache-matched-key == '')
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            data
+            raw
+          key: warehouse-${{ github.run_id }}
+
       - name: 摘要
         if: always()
         run: |
           {
-            echo "### 這次更新"
+            echo "### 這次更新（${{ github.event_name }}）"
             echo ""
             cat ci_summary.md 2>/dev/null || echo "（沒有產生摘要，代表在抓資料那步就停了）"
             echo ""

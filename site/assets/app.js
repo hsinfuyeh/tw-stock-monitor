@@ -110,9 +110,11 @@
     if (!bar || !meta || !meta.data_date) return;
     var last = new Date(meta.data_date + 'T00:00:00');
     var now = new Date();
-    // 台股 13:30 收盤，資料約 14:30 上架；抓 15:00 保守一點
+    // 自動更新在台北 14:40 起每小時試一次，最後一次 19:10。
+    // 過了 20:00 當天資料還沒上來，才代表真的有問題 —— 在那之前跳橫幅，
+    // 只是在提醒一件排程馬上就會自己處理的事，會訓練人忽略這條橫幅。
     var edge = new Date(now);
-    if (now.getHours() < 15) edge.setDate(edge.getDate() - 1);
+    if (now.getHours() < 20) edge.setDate(edge.getDate() - 1);
     edge.setHours(0, 0, 0, 0);
     var n = 0, d = new Date(last);
     d.setDate(d.getDate() + 1);
@@ -122,13 +124,14 @@
     }
     if (n < 1) return;
     bar.removeAttribute('data-empty');
-    /* 更新是手動觸發的（使用者選擇不排程），所以這裡要講的是「怎麼更新」，
-       不是「自動更新失敗了」—— 原本那句話會讓人去找一個不存在的故障。
-       連結指向 Actions 的 workflow 頁；只有 repo 擁有者按得動 Run workflow，
-       一般訪客點進去只看得到執行紀錄，不會誤觸。 */
+    /* 走到這裡代表晚上 8 點過後當天資料還沒上來 —— 排程五次都沒成功，
+       或排程被停用（GitHub 對 60 天沒有 commit 的公開 repo 會自動停用排程）。
+       連結指向 Actions 的 workflow 頁：可以手動觸發，也可以在那裡重新啟用排程。
+       只有 repo 擁有者按得動，一般訪客點進去只看得到執行紀錄。 */
     bar.querySelector('.in').innerHTML =
       '<b>資料落後 ' + n + ' 個營業日</b><span>最新是 ' + esc(meta.data_date) +
-      '。中間若有國定假日屬正常；否則到 GitHub Actions 按 Run workflow 更新。</span>' +
+      '。每個交易日收盤後會自動更新；中間若有國定假日屬正常，' +
+      '否則是自動更新沒有成功，可以手動觸發。</span>' +
       '<a class="updbtn" href="https://github.com/hsinfuyeh/tw-stock-monitor/actions/workflows/update.yml"' +
       ' target="_blank" rel="noopener">前往更新</a>';
   }
