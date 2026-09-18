@@ -30,7 +30,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write     # 每日清單快照要 commit 回 repo
   pages: write
   id-token: write
 
@@ -100,6 +100,24 @@ jobs:
       - id: deploy
         if: steps.fetch.outputs.publish == 'true'
         uses: actions/deploy-pages@v4
+
+      # 每日清單快照（PRD：每天存一份當日清單）。網站每次都是整個重新產生，
+      # 快照只放在網站上會在下一次部署時消失，所以 commit 回 repo 的 snapshots/。
+      # 附帶好處：repo 每個交易日都有 commit，GitHub 不會因為 60 天沒活動停用排程。
+      # 失敗不擋住後面的快取保存（網站已經部署了），但要留下明顯的警告。
+      - name: 保存每日清單快照
+        if: steps.fetch.outputs.publish == 'true'
+        continue-on-error: true
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add snapshots
+          if git diff --cached --quiet; then
+            echo "快照沒有變化"
+          else
+            git commit -m "每日清單快照 $(ls snapshots | tail -1 | sed 's/\.json$//')"
+            git pull --rebase --autostash && git push || { echo "::warning::快照 commit 推送失敗"; exit 1; }
+          fi
 
       # 只有「資料真的寫進倉儲」或「這次是從種子冷啟動」才存快取。
       # 放在最後、而且要求前面全部成功：產出被自我檢查擋下時，

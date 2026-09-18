@@ -294,6 +294,7 @@ function bindSearch(bx){
 # 換上「訊號」—— 指向三個通過 t>3.0 的榜單（優於預期 / 動能 / 月營收）。
 # 那是整個系統唯一測得出東西的地方，本來被埋在 14 個分頁裡。
 NAV = [
+    ("/short", "短線", "short"),
     ("/funnel", "選股", "funnel"),
     ("/lists/sue", "訊號", "signal"),
     ("/lists/amount", "盤後", "lists"),

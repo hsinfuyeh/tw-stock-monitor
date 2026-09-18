@@ -12,7 +12,9 @@ import time
 
 import numpy as np
 import pandas as pd
-from flask import Flask, jsonify, redirect, request
+from pathlib import Path
+
+from flask import Flask, jsonify, redirect, request, send_from_directory
 
 import factors
 import rank as rankmod
@@ -279,6 +281,8 @@ def do_update():
         with _lock:
             store.build(verbose=False)
             _cache.clear()          # 面板要跟著重算，否則畫面還是舊數字
+        _set(msg="產生短線清單…", detail="約需 1 分鐘")
+        refresh_short()
 
         last = data_last_date()
         # 行情比估值／法人多出來的那幾天是不能用的，據實說明而不是宣稱成功
@@ -1142,6 +1146,96 @@ def _status():
     return st
 
 
+# --------------------------------------------------------------------- 短線
+# 短線頁只有一份實作：site/short.html（靜態站與本機共用）。本機這邊負責
+# 供應它要的檔案，外加一個靜態站做不到的「自訂參數回測」。
+SITE = Path(__file__).parent / "site"
+_short = {}
+
+
+def _short_features():
+    """整段歷史的特徵面板，倉儲沒變就不重算（約 20 秒）。"""
+    import shortterm
+    m = DB.stat().st_mtime
+    if _short.get("mtime") != m:
+        with _lock:
+            _short.update(d=shortterm.features(), mtime=m)
+    return _short["d"]
+
+
+def refresh_short():
+    """重算今日清單與預設參數回測，寫到 site/data/short/。失敗要大聲說。"""
+    import shortterm
+    from config import DATA
+    try:
+        objs = shortterm.compute(_short_features())
+        shortterm.write(SITE / "data", DATA / "snapshots", *objs)
+        _short["built"] = DB.stat().st_mtime
+        print("短線清單已更新：{}".format(objs[0]["date"]), flush=True)
+    except Exception as e:
+        print("::error::短線清單產生失敗：{}".format(e), flush=True)
+
+
+@app.route("/short")
+def short_page():
+    return send_from_directory(SITE, "short.html")
+
+
+@app.route("/assets/<path:p>")
+def site_assets(p):
+    return send_from_directory(SITE / "assets", p)
+
+
+@app.route("/data/meta.json")
+def site_meta():
+    import publish
+    return jsonify(publish._clean(publish.emit_meta(None, data_last_date())))
+
+
+@app.route("/data/short/<path:p>")
+def site_short_data(p):
+    if _short.get("built") != DB.stat().st_mtime:
+        refresh_short()
+    return send_from_directory(SITE / "data" / "short", p)
+
+
+# 靜態頁的導覽列與連結指向 *.html，本機轉到對應的 Flask 頁面
+@app.route("/stock.html")
+def _r_stock():
+    return redirect("/s/{}".format(request.args.get("c", ""))) if request.args.get("c") else redirect("/")
+
+
+@app.route("/lists.html")
+def _r_lists():
+    return redirect("/lists/{}".format(request.args.get("s", "amount")))
+
+
+@app.route("/funnel.html")
+def _r_funnel():
+    return redirect("/funnel")
+
+
+@app.route("/index.html")
+def _r_index():
+    return redirect("/")
+
+
+@app.route("/short.html")
+def _r_short():
+    return redirect("/short")
+
+
+@app.route("/api/short/backtest", methods=["POST"])
+def api_short_backtest():
+    # 整段歷史回測約 10 秒 CPU，跟更新一樣只給本機
+    if is_remote():
+        return jsonify(error="remote"), 403
+    import shortterm
+    p = shortterm.params(**(request.get_json(silent=True) or {}))
+    w = shortterm.windows(_short_features(), p)
+    return jsonify(recent=w["recent"][1], all=w["all"][1], params=p)
+
+
 @app.route("/healthz")
 def healthz():
     return jsonify(ok=True)
@@ -1155,6 +1249,9 @@ def nf(e):
 
 
 if __name__ == "__main__":
+    # publish.py 會 import server；不讓它再載一份（那份會有自己的面板快取與鎖）
+    import sys
+    sys.modules.setdefault("server", sys.modules["__main__"])
     print("預先載入面板（約 40 秒，只做一次）…", flush=True)
     panel("common")
     panel("etf")

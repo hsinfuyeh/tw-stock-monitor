@@ -1,6 +1,5 @@
 /* 本檔由 webui_css.py 產生，不要直接編輯。
    改樣式請改 webui_css.py 再重新產生，否則本機版與靜態站會慢慢長歪。 */
-
 /* ===== 淺色（預設）===== */
 :root{
 /* 畫布與墨 */
@@ -404,6 +403,41 @@ font-weight:300;text-align:left;letter-spacing:-.005em}
 .tiphint{font-size:13px;color:var(--faint);margin:-8px 0 20px;line-height:1.7;
 font-weight:300}
 .tiphint .mark{border-bottom:1px dotted var(--hair);white-space:nowrap}
+
+/* ---------- 短線：參數表單與回測 ---------- */
+.pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));
+gap:18px 26px;margin-top:6px}
+.pgrp h3{margin:0 0 8px;font-size:12.5px;font-weight:500;letter-spacing:.09em;
+color:var(--faint)}
+.prow{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:14px}
+.prow label{flex:1;color:var(--mut);font-weight:300}
+.prow input{width:78px;padding:6px 8px;border:1px solid var(--hair);
+border-radius:6px;background:var(--bg);color:var(--fg);font:inherit;
+text-align:right;font-variant-numeric:tabular-nums}
+.prow input:focus{outline:none;border-color:var(--fg)}
+.prow input.chg{border-color:var(--warn)}
+.prow .u{flex:0 0 42px;color:var(--faint);font-size:12.5px}
+.pbar{display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap}
+.btn{padding:7px 16px;border-radius:var(--pill);border:1px solid var(--hair);
+background:transparent;color:var(--fg);font:inherit;font-size:13.5px;cursor:pointer}
+.btn:hover:not(:disabled){border-color:var(--fg)}
+.btn.dark{background:var(--pillbg);color:var(--pillfg);border-color:var(--pillbg)}
+.btn:disabled{opacity:.45;cursor:default}
+th.sortable{cursor:pointer;user-select:none}
+th.sortable:hover{color:var(--fg)}
+th.asc::after{content:" \2191";font-size:10px}
+th.desc::after{content:" \2193";font-size:10px}
+td.why{text-align:left;white-space:normal;min-width:260px;color:var(--mut);
+font-size:13.5px;line-height:1.6}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}
+.stat{border:1px solid var(--line);padding:18px 20px}
+.stat h3{margin:0 0 4px;font-size:15px;font-weight:500}
+.stat .sub{color:var(--faint);font-size:12.5px;margin-bottom:12px}
+.stat dl{display:grid;grid-template-columns:1fr auto;gap:6px 14px;margin:0;font-size:14px}
+.stat dt{color:var(--mut);font-weight:300}
+.stat dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
+select.snap{padding:6px 10px;border:1px solid var(--hair);border-radius:6px;
+background:var(--bg);color:var(--fg);font:inherit}
 
 /* 頂部列在窄螢幕換行：品牌與導覽一行，搜尋框獨佔第二行。
    原本五個元素擠同一行，搜尋框被壓到只剩兩個字寬，等於不能用。 */

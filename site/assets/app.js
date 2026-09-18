@@ -77,6 +77,7 @@
      換上「訊號」—— 指向三個通過 t>3.0 的榜單，那是整個系統唯一測得出
      東西的地方，本來被埋在 14 個分頁裡。 */
   var NAV = [
+    ['short.html', '短線', 'short'],
     ['funnel.html', '選股', 'funnel'],
     ['lists.html?s=sue', '訊號', 'signal'],
     ['lists.html?s=amount', '盤後', 'lists']

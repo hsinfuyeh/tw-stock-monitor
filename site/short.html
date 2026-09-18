@@ -1,0 +1,404 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script>/* 在 body 渲染前就套用主題，避免切換時閃一下白底 */
+(function(){try{var t=localStorage.getItem('theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:wght@400;500&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<title>短線選股</title></head><body>
+<div class="wrap" id="app"></div>
+<script src="assets/app.js"></script>
+<script>
+/* 短線盤後選股（stock-screener-PRD v1.0）。
+ *
+ * 評分在瀏覽器裡算：publish 只送當日每檔的原始特徵（均線、前 20 日高、
+ * 法人連買天數、營收年增…），調參數時直接重算，不用重抓資料。
+ *
+ * 這裡的規則必須和 shortterm.py 的 score / pick / ref_prices / reasons
+ * <b>完全一致</b>。兩份實作最怕的是「看起來一樣、其實不同」，所以頁面載入時
+ * 會用預設參數跑一次，跟 Python 算出來的清單（today.json 的 expected）比對，
+ * 對不上就在頁面頂端直接警告，不要讓人拿一份錯的清單去看盤。 */
+var T, BT, P = {}, DEF = {}, SORT = { k: null, dir: -1 };
+var LOCAL = !/github\.io$/.test(location.hostname);
+
+function isNum(v) { return v !== null && v !== undefined && !isNaN(v); }
+
+function tick(p) {
+  return p < 10 ? 0.01 : p < 50 ? 0.05 : p < 100 ? 0.1 : p < 500 ? 0.5 : p < 1000 ? 1 : 5;
+}
+function r2(v) { return Math.round(v * 100) / 100; }
+
+function refPrices(close, ma20, p) {
+  var floor = close * (1 - p.stop_pct / 100);
+  var stop = (isNum(ma20) && ma20 < close) ? Math.max(ma20, floor) : floor;
+  var t = tick(stop);
+  stop = r2(Math.ceil(stop / t - 1e-9) * t);
+  var target = close + p.rr * (close - stop);
+  t = tick(target);
+  target = r2(Math.floor(target / t + 1e-9) * t);
+  return [stop, target];
+}
+
+function scoreRow(r, p) {
+  var liq = isNum(r.vol20_lots) && r.vol20_lots >= p.liq_lots;
+  var c1 = isNum(r.yoy) && r.yoy >= p.rev_yoy;
+  var hi = c1 && r.rev_high12 === 1;
+  var c2 = (isNum(r.streak_f) && r.streak_f >= p.inst_days) ||
+           (isNum(r.streak_t) && r.streak_t >= p.inst_days);
+  var c3 = isNum(r.close) && isNum(r.hi20_prev) && isNum(r.vol5_prev) &&
+           r.close > r.hi20_prev && r.volume >= r.vol5_prev * p.brk_vol;
+  var c4 = isNum(r.ma5) && isNum(r.ma10) && isNum(r.ma20) &&
+           r.close > r.ma5 && r.ma5 > r.ma10 && r.ma10 > r.ma20;
+  var bonus = p.rev_bonus / 100;
+  var s1 = (c1 ? p.w_rev * (1 - bonus) : 0) + (hi ? p.w_rev * bonus : 0);
+  var rest = (c2 ? p.w_inst : 0) + (c3 ? p.w_brk : 0) + (c4 ? p.w_ma : 0);
+  var sc;
+  if (r.kind === 'ETF') {
+    var ef = p.w_inst + p.w_brk + p.w_ma;
+    sc = ef ? rest * 100 / ef : 0;
+  } else {
+    var full = p.w_rev + p.w_inst + p.w_brk + p.w_ma;
+    sc = full ? (s1 + rest) * 100 / full : 0;
+  }
+  return { liq: liq, c1: c1, hi: hi, c2: c2, c3: c3, c4: c4,
+           score: Math.round(sc * 10) / 10 };
+}
+
+function f2(v) { return Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+
+function reasons(r, s, p) {
+  var out = [];
+  if (s.c1 && p.w_rev > 0)
+    out.push('營收年增 ' + Math.round(r.yoy) + '%' + (s.hi ? '（創 12 個月新高）' : ''));
+  if (s.c2 && p.w_inst > 0) {
+    if (r.streak_t >= p.inst_days) out.push('投信連買 ' + r.streak_t + ' 天');
+    if (r.streak_f >= p.inst_days) out.push('外資連買 ' + r.streak_f + ' 天');
+  }
+  if (s.c3 && p.w_brk > 0)
+    out.push('突破前 20 日高 ' + f2(r.hi20_prev) + '，量 ' + (r.volume / r.vol5_prev).toFixed(1) + ' 倍');
+  if (s.c4 && p.w_ma > 0)
+    out.push('均線多頭（MA5 ' + f2(r.ma5) + ' > MA10 ' + f2(r.ma10) + ' > MA20 ' + f2(r.ma20) + '）');
+  return out;
+}
+
+function rank(p) {
+  var out = [];
+  T.objs.forEach(function (r) {
+    var s = scoreRow(r, p);
+    if (!s.liq || s.score < p.min_score || s.score <= 0) return;
+    out.push({ r: r, s: s });
+  });
+  out.sort(function (a, b) {
+    if (b.s.score !== a.s.score) return b.s.score - a.s.score;
+    var x = isNum(a.r.amt20) ? a.r.amt20 : -1, y = isNum(b.r.amt20) ? b.r.amt20 : -1;
+    return y - x;
+  });
+  out = out.slice(0, p.top_n);
+  out.forEach(function (o, i) {
+    var pr = refPrices(o.r.close, o.r.ma20, p);
+    o.rank = i + 1; o.stop = pr[0]; o.target = pr[1]; o.why = reasons(o.r, o.s, p);
+  });
+  return out;
+}
+
+/* ---------- 參數 ---------- */
+function loadParams() {
+  T.params.forEach(function (x) { DEF[x.key] = x.default; P[x.key] = x.default; });
+  try {
+    var s = JSON.parse(localStorage.getItem('short_params') || '{}');
+    Object.keys(s).forEach(function (k) { if (k in P && isNum(s[k])) P[k] = +s[k]; });
+  } catch (e) {}
+}
+function saveParams() {
+  try { localStorage.setItem('short_params', JSON.stringify(P)); } catch (e) {}
+}
+function isDefault() {
+  return Object.keys(DEF).every(function (k) { return +P[k] === +DEF[k]; });
+}
+
+function paramForm() {
+  var groups = [], by = {};
+  T.params.forEach(function (x) {
+    if (!by[x.group]) { by[x.group] = []; groups.push(x.group); }
+    by[x.group].push(x);
+  });
+  return '<div class="pgrid">' + groups.map(function (g) {
+    return '<div class="pgrp"><h3>' + App.esc(g) + '</h3>' + by[g].map(function (x) {
+      return '<div class="prow"><label for="p_' + x.key + '">' + App.esc(x.label) +
+        '</label><input type="number" id="p_' + x.key + '" data-k="' + x.key +
+        '" min="' + x.min + '" max="' + x.max + '" step="' + x.step + '" value="' + P[x.key] +
+        '"><span class="u">' + App.esc(x.unit) + '</span></div>';
+    }).join('') + '</div>';
+  }).join('') + '</div>' +
+  '<div class="pbar"><button class="btn" id="preset" type="button">恢復預設</button>' +
+  (LOCAL ? '<button class="btn dark" id="prun" type="button">用目前參數回測</button>' : '') +
+  '<span class="note" id="pnote" style="font-size:13px"></span></div>';
+}
+
+function markChanged() {
+  document.querySelectorAll('.prow input').forEach(function (el) {
+    el.classList.toggle('chg', +P[el.getAttribute('data-k')] !== +DEF[el.getAttribute('data-k')]);
+  });
+  var n = document.getElementById('pnote');
+  if (n) n.textContent = isDefault() ? '目前是 PRD 預設參數。' :
+    '已調整參數：清單已重算。下方的回測報告仍是預設參數的結果' +
+    (LOCAL ? '，按「用目前參數回測」看這組參數的表現。' : '（公開網站沒有後端，自訂參數的回測請在本機執行）。');
+}
+
+/* ---------- 清單 ---------- */
+var COLS = [
+  ['rank', '#', function (o) { return o.rank; }],
+  ['code', '代號', function (o) { return o.r.code; }],
+  ['name', '名稱', function (o) { return o.r.name; }],
+  ['kind', '類型', function (o) { return o.r.kind; }],
+  ['score', '總分', function (o) { return o.s.score; }],
+  ['close', '收盤（參考進場）', function (o) { return o.r.close; }],
+  ['stop', '參考停損', function (o) { return o.stop; }],
+  ['target', '參考目標', function (o) { return o.target; }]
+];
+
+function listTable(rows) {
+  if (!rows.length)
+    return '<div class="empty"><div class="note">這組參數下沒有任何標的達到門檻。</div></div>';
+  if (SORT.k) {
+    var get = COLS.filter(function (c) { return c[0] === SORT.k; })[0][2];
+    rows = rows.slice().sort(function (a, b) {
+      var x = get(a), y = get(b);
+      return (x > y ? 1 : x < y ? -1 : 0) * SORT.dir;
+    });
+  }
+  var head = COLS.map(function (c) {
+    var cl = 'sortable' + (SORT.k === c[0] ? (SORT.dir > 0 ? ' asc' : ' desc') : '');
+    return '<th class="' + cl + '" data-k="' + c[0] + '">' + c[1] + '</th>';
+  }).join('') + '<th style="text-align:left">入選理由</th>';
+  return '<div class="scroll" data-per="20"><table><thead><tr>' + head +
+    '</tr></thead><tbody>' + rows.map(function (o) {
+      var r = o.r;
+      return '<tr><td class="mut">' + o.rank + '</td>' +
+        '<td><a href="stock.html?c=' + r.code + '"><strong>' + r.code + '</strong></a></td>' +
+        '<td><a href="stock.html?c=' + r.code + '">' + App.esc(r.name) + '</a></td>' +
+        '<td class="mut">' + r.kind + '</td>' +
+        '<td class="sorted">' + App.num(o.s.score, 0) + '</td>' +
+        '<td>' + f2(r.close) + '</td><td class="dn">' + f2(o.stop) + '</td>' +
+        '<td class="up">' + f2(o.target) + '</td>' +
+        '<td class="why">' + App.esc(o.why.join('；')) + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+}
+
+var CUR = [];
+function renderList() {
+  CUR = rank(P);
+  var box = document.getElementById('list');
+  box.innerHTML = listTable(CUR);
+  App.pager(box);
+  document.getElementById('lcount').textContent = CUR.length;
+  renderListHandlers();
+}
+function renderListHandlers() {
+  // 重新畫表頭後要重新綁排序（innerHTML 會換掉元素）
+  var box = document.getElementById('list');
+  box.querySelectorAll('th.sortable').forEach(function (th) {
+    th.onclick = function () {
+      var k = th.getAttribute('data-k');
+      if (SORT.k === k) SORT.dir = -SORT.dir;
+      else { SORT.k = k; SORT.dir = (k === 'code' || k === 'name' || k === 'kind' || k === 'rank') ? 1 : -1; }
+      box.innerHTML = listTable(CUR);
+      App.pager(box);
+      renderListHandlers();
+    };
+  });
+}
+
+/* ---------- 回測 ---------- */
+function statBox(title, sub, s) {
+  if (!s || !s.n) return '<div class="stat"><h3>' + title + '</h3><div class="sub">沒有交易</div></div>';
+  var ex = s.exits || {};
+  return '<div class="stat"><h3>' + title + '</h3><div class="sub">' + sub + '</div><dl>' +
+    '<dt>訊號日範圍</dt><dd>' + s.start + ' ~ ' + s.end + '</dd>' +
+    '<dt>交易筆數</dt><dd>' + s.n.toLocaleString() + '</dd>' +
+    '<dt>勝率</dt><dd>' + App.num(s.win, 1) + '%</dd>' +
+    '<dt>平均每筆報酬（扣成本）</dt><dd>' + App.pct(s.avg) + '</dd>' +
+    '<dt>0050 同期</dt><dd>' + App.pct(s.bench) + '</dd>' +
+    '<dt><b>超額報酬</b></dt><dd>' + App.pct(s.excess) + '</dd>' +
+    '<dt>單筆最大虧損</dt><dd>' + App.pct(s.worst) + '</dd>' +
+    '<dt>' + App.tip('t 值', 't 值') + '</dt><dd>' + (s.t == null ? '—' : App.num(s.t, 2, true)) + '</dd>' +
+    '<dt>相當於幾次獨立觀察</dt><dd>' + App.num(s.indep, 0) + '</dd>' +
+    '<dt>出場原因</dt><dd class="mut" style="font-weight:300">停損 ' + (ex['停損'] || 0) +
+    '・達標 ' + (ex['達標'] || 0) + '・時間 ' + (ex['時間'] || 0) + '</dd>' +
+    '<dt>平均持有</dt><dd>' + App.num(s.hold_avg, 1) + ' 天</dd></dl></div>';
+}
+
+function verdict(bt) {
+  var a = bt.all, r = bt.recent;
+  var pass = a.excess > 0 && r.excess > 0;
+  var cls = pass ? 'ok' : 'bad';
+  var sig = a.t != null && Math.abs(a.t) >= 2;
+  var txt = pass
+    ? '<b>預設參數在兩段回測都贏 0050</b>：整段歷史每筆 ' + App.num(a.excess, 2, true) +
+      '%（t = ' + App.num(a.t, 2) + '），近 60 日 ' + App.num(r.excess, 2, true) + '%。'
+    : '<b>預設參數尚未通過 PRD 的驗收標準</b>：扣成本後平均每筆' +
+      '，整段歷史 ' + App.num(a.excess, 2, true) + '%（' + a.n.toLocaleString() + ' 筆，t = ' +
+      App.num(a.t, 2) + (sig ? '，不是運氣' : '') + '）、近 60 日 ' + App.num(r.excess, 2, true) +
+      '%，都輸給同期 0050。下方拆解測試可以看出問題出在哪個條件或出場規則。';
+  return '<div class="statusbar ' + cls + '"><span class="txt">' + txt + '</span></div>';
+}
+
+function btSection(bt) {
+  var abl = '<div class="scroll"><table><thead><tr><th>設定</th><th>筆數</th><th>勝率</th>' +
+    '<th>平均報酬</th><th>0050 同期</th><th class="sorted">超額</th><th>t 值</th></tr></thead><tbody>' +
+    bt.ablation.map(function (a) {
+      return '<tr><td>' + App.esc(a.label) + '</td><td class="mut">' + (a.n || 0).toLocaleString() +
+        '</td><td>' + App.num(a.win, 1) + '%</td><td>' + App.pct(a.avg) + '</td><td>' +
+        App.pct(a.bench) + '</td><td class="sorted">' + App.pct(a.excess) + '</td><td>' +
+        (a.t == null ? '—' : App.num(a.t, 2, true)) + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+  var yrs = '<div class="scroll"><table><thead><tr><th>年度</th><th>筆數</th><th>勝率</th>' +
+    '<th>平均報酬</th><th>0050 同期</th><th class="sorted">超額</th></tr></thead><tbody>' +
+    bt.years.map(function (y) {
+      return '<tr><td>' + y.year + '</td><td class="mut">' + y.n.toLocaleString() + '</td><td>' +
+        App.num(y.win, 1) + '%</td><td>' + App.pct(y.avg) + '</td><td>' + App.pct(y.bench) +
+        '</td><td class="sorted">' + App.pct(y.excess) + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+  var tc = bt.trade_cols;
+  var trades = '<div class="scroll"><table><thead><tr>' + tc.map(function (c, i) {
+    return '<th' + (i === 16 ? ' class="sorted"' : '') + '>' + c + '</th>';
+  }).join('') + '</tr></thead><tbody>' + bt.trades.map(function (t) {
+    return '<tr>' + t.map(function (v, i) {
+      if (i === 1) return '<td><a href="stock.html?c=' + v + '">' + v + '</a></td>';
+      if (i >= 14) return '<td' + (i === 16 ? ' class="sorted"' : '') + '>' + App.pct(v) + '</td>';
+      if (i === 4 || i === 13) return '<td>' + App.num(v, 0) + '</td>';
+      if (typeof v === 'number') return '<td>' + f2(v) + '</td>';
+      return '<td' + (i === 2 ? '' : ' class="mut"') + '>' + App.esc(v) + '</td>';
+    }).join('') + '</tr>';
+  }).join('') + '</tbody></table></div>';
+
+  return '<div class="card"><h2>回測</h2>' +
+    '<p class="lead">每天收盤後取 Top ' + DEF.top_n + '，<b>隔天開盤</b>進場，碰到停損或目標就出場，' +
+    '最多持有 ' + DEF.hold_days + ' 個交易日。扣來回成本 ' + bt.cost + '%，' +
+    '和同一段時間持有 0050（扣 ' + bt.etf_cost.toFixed(3) + '%）比較。</p>' +
+    verdict(bt) + '<div id="custom"></div>' +
+    '<div class="stats" style="margin-top:18px">' +
+    statBox('近 60 個交易日', 'PRD 指定的回測區間', bt.recent) +
+    statBox('整段歷史', '同一套規則，樣本多 30 倍', bt.all) + '</div>' +
+    '<details><summary>為什麼要看兩段、怎麼讀 t 值</summary><div class="inner note">' +
+    '<p>同一天選出的 20 檔高度連動，持有期又重疊 10 天，所以 60 個交易日實際上只有大約 ' +
+    '<b>6 次獨立觀察</b> —— 近 60 日贏或輸 0050，很大一部分是那兩個月大盤剛好怎麼走。' +
+    '整段歷史用同一套規則、樣本多 30 倍，才分得出是規則的效果還是運氣。</p>' +
+    '<p>t 值是「平均超額報酬離 0 有多遠」，已經把同日相關和持有期重疊算進去（Newey-West）。' +
+    '絕對值小於 2 大多是雜訊；大於 3 才算站得住。</p>' +
+    '<p>也因為這樣，<b>不建議反覆調參數直到近 60 日贏 0050</b> —— 樣本這麼少，' +
+    '總是調得出一組贏的，但那是把過去的雜訊背下來，不是找到規則。' +
+    '調完請看整段歷史的數字有沒有跟著變好。</p>' +
+    '<p>回測在隔天開盤進場，不是 PRD 寫的「當日收盤」：三大法人買賣超 15:00 後才公布，' +
+    '拿到訊號時當天收盤已經買不到。隔天開盤一字漲停買不到的，不算成交。' +
+    '同一天盤中同時碰到停損與目標時，算停損（無法得知誰先發生，取保守）。' +
+    '損益含除權息。</p></div></details>' +
+    '<h2 style="margin-top:34px;font-size:20px">拆解測試（整段歷史）</h2>' +
+    '<p class="lead">每個條件單獨使用、以及拿掉停損停利，看虧損出在選股還是出場規則。</p>' + abl +
+    '<h2 style="margin-top:34px;font-size:20px">逐年（整段歷史）</h2>' + yrs +
+    '<h2 style="margin-top:34px;font-size:20px">近 60 日逐筆交易</h2>' +
+    '<p class="lead">可以挑幾筆用看盤軟體對照：進場日開盤價、停損與目標價、出場日與出場價。</p>' +
+    trades + '</div>';
+}
+
+function runCustom() {
+  var btn = document.getElementById('prun'), box = document.getElementById('custom');
+  btn.disabled = true; btn.textContent = '回測中…';
+  box.innerHTML = '';
+  fetch('api/short/backtest', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(P)
+  }).then(function (r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then(function (j) {
+    box.innerHTML = '<h2 style="margin-top:26px;font-size:20px">目前參數的回測</h2>' +
+      '<div class="stats">' + statBox('近 60 個交易日', '目前參數', j.recent) +
+      statBox('整段歷史', '目前參數', j.all) + '</div>';
+  }).catch(function (e) {
+    box.innerHTML = '<div class="statusbar warn"><span class="txt">回測失敗：' + App.esc(e.message) +
+      '。這個功能需要在本機用 dashboard.bat 開啟。</span></div>';
+  }).then(function () { btn.disabled = false; btn.textContent = '用目前參數回測'; });
+}
+
+/* ---------- 快照 ---------- */
+function snapSection(idx) {
+  if (!idx.length) return '';
+  return '<div class="card"><h2>每日清單快照</h2>' +
+    '<p class="lead">每天發佈時存下當天的清單（預設參數），之後可以回頭對照當天到底選了什麼。</p>' +
+    '<select class="snap" id="snapsel">' + idx.map(function (d) {
+      return '<option>' + d + '</option>';
+    }).join('') + '</select><div id="snapbox" style="margin-top:16px"></div></div>';
+}
+function showSnap(d) {
+  App.get('short/snapshots/' + d + '.json').then(function (s) {
+    var box = document.getElementById('snapbox');
+    box.innerHTML = '<div class="scroll" data-per="20"><table><thead><tr><th>代號</th><th>名稱</th>' +
+      '<th>類型</th><th>總分</th><th>收盤</th><th>停損</th><th>目標</th>' +
+      '<th style="text-align:left">入選理由</th></tr></thead><tbody>' + s.top.map(function (r) {
+        return '<tr><td><a href="stock.html?c=' + r.code + '"><strong>' + r.code + '</strong></a></td><td>' +
+          App.esc(r.name) + '</td><td class="mut">' + r.kind + '</td><td>' + App.num(r.score, 0) +
+          '</td><td>' + f2(r.close) + '</td><td class="dn">' + f2(r.stop) + '</td><td class="up">' +
+          f2(r.target) + '</td><td class="why">' + App.esc(r.why.join('；')) + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+    App.pager(box);
+  });
+}
+
+App.boot('short', function (meta) {
+  return Promise.all([App.get('short/today.json'), App.get('short/backtest.json'),
+                      App.get('short/snapshots/_index.json').catch(function () { return []; })])
+  .then(function (res) {
+    T = res[0]; BT = res[1];
+    T.objs = T.rows.map(function (a) {
+      var o = {}; T.cols.forEach(function (c, i) { o[c] = a[i]; }); return o;
+    });
+    loadParams();
+
+    // 兩份實作的一致性檢查（用預設參數，不受使用者調整影響）
+    var mine = rank(DEF).map(function (o) { return o.r.code; }).join(',');
+    var drift = mine !== T.expected.join(',');
+
+    document.getElementById('app').innerHTML =
+      '<div class="fnhero"><span class="eyebrow">短線盤後選股 &middot; ' + App.esc(T.date) + ' 收盤</span>' +
+      '<span class="big" id="lcount">0</span>' +
+      '<div class="sub">上市個股與股票型 ETF，依四個條件加權評分' +
+      '<span class="sep">&middot;</span>持有約 2 週到 1 個月<span class="sep">&middot;</span>' +
+      '參考價位依公式計算，<b>不構成投資建議</b></div></div>' +
+      (drift ? '<div class="statusbar bad"><span class="txt"><b>網頁算出的清單和後端不一致</b>：' +
+        '兩份評分實作對不上，這份清單不可信。請回報。</span></div>' : '') +
+      '<div class="card"><h2>今日清單</h2>' +
+      '<p class="lead">月營收年增 ≥ 門檻（創 12 個月新高再加分）、投信或外資連續買超、' +
+      '收盤突破前 20 日高且放量、均線多頭排列，各佔一份權重，不必全部符合。' +
+      'ETF 沒有月營收，用後三項換算成 100 分。點表頭可以排序。</p>' +
+      '<div id="list"></div>' +
+      '<details' + (isDefault() ? '' : ' open') + '><summary>調整參數</summary><div class="inner">' +
+      paramForm() + '</div></details></div>' +
+      btSection(BT) + snapSection(res[2]);
+
+    renderList();
+    markChanged();
+    document.querySelectorAll('.prow input').forEach(function (el) {
+      el.addEventListener('input', function () {
+        var v = parseFloat(el.value);
+        if (!isNum(v)) return;
+        P[el.getAttribute('data-k')] = v;
+        saveParams(); renderList(); markChanged();
+      });
+    });
+    document.getElementById('preset').addEventListener('click', function () {
+      Object.keys(DEF).forEach(function (k) { P[k] = DEF[k]; });
+      document.querySelectorAll('.prow input').forEach(function (el) {
+        el.value = DEF[el.getAttribute('data-k')];
+      });
+      saveParams(); renderList(); markChanged();
+    });
+    var pr = document.getElementById('prun');
+    if (pr) pr.addEventListener('click', runCustom);
+    var ss = document.getElementById('snapsel');
+    if (ss) { ss.addEventListener('change', function () { showSnap(ss.value); }); showSnap(ss.value); }
+  });
+});
+</script>
+</body></html>

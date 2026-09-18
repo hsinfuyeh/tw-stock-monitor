@@ -39,11 +39,13 @@ import factors
 import funnel
 import screens
 import server
+import shortterm
 import stock_report
 import webui
 from config import COST_ROUND_TRIP
 
-SITE = Path(__file__).parent / "site"
+ROOT = Path(__file__).parent
+SITE = ROOT / "site"
 DATA = SITE / "data"
 
 
@@ -305,6 +307,8 @@ def build(limit=None, out=SITE):
     print("榜單…", flush=True)
     sc = emit_screens(p_common)
     selfcheck(p_common, fn, sc)
+    print("短線清單與回測…", flush=True)
+    short = shortterm.compute()
 
     if data.exists():
         shutil.rmtree(data)
@@ -314,6 +318,7 @@ def build(limit=None, out=SITE):
     sizes["meta"] = write(data / "meta.json", emit_meta(p_common, day_date))
     sizes["universe"] = write(data / "universe.json", emit_universe())
     sizes["funnel"] = write(data / "funnel.json", fn)
+    shortterm.write(data, ROOT / "snapshots", *short)
     tot = 0
     for k, v in sc.items():
         tot += write(data / "screens" / "{}.json".format(k), v)

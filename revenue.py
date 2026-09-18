@@ -184,8 +184,13 @@ def load(codes=None):
     # 之後 nlargest / 數值運算全部會壞，而 sort_values 剛好還能用 ——
     # 也就是榜單看起來正常，問題在別的地方才爆出來。
     d["sue"] = ((d["yoy"] - exp) / sd).replace([np.inf, -np.inf], np.nan)
+    # 本月營收是否為近 12 個月（含本月）最高。短線選股的「月營收強勢」加分項。
+    # 只用本月與之前 11 個月，公布時就已知，沒有偷看。
+    hi12 = d.groupby("code", sort=False)["revenue"].transform(
+        lambda s: s.rolling(12, min_periods=12).max())
+    d["rev_high12"] = (d["revenue"] >= hi12).astype(float).where(hi12.notna())
     return d[["code", "avail_date", "rev_month", "revenue", "yoy", "mom",
-              "yoy_3m", "sue"]]
+              "yoy_3m", "sue", "rev_high12"]]
 
 
 def as_of_panel(rev, dates):
@@ -215,18 +220,19 @@ def as_of_panel(rev, dates):
         g = g.sort_values("avail_date")
         left = pd.DataFrame({"date": dates})
         m = pd.merge_asof(
-            left, g[["avail_date", "yoy", "yoy_3m", "mom", "sue", "rev_month"]],
+            left, g[["avail_date", "yoy", "yoy_3m", "mom", "sue", "rev_high12",
+                     "rev_month"]],
             left_on="date", right_on="avail_date", direction="backward")
         m["code"] = code
         out.append(m)
     r = pd.concat(out, ignore_index=True)
     # 營收太舊（超過 75 天沒更新）視為缺值，避免停止公布的公司留著舊數字
     r.loc[(r["date"] - r["avail_date"]).dt.days > 75,
-          ["yoy", "yoy_3m", "mom", "sue"]] = pd.NA
+          ["yoy", "yoy_3m", "mom", "sue", "rev_high12"]] = np.nan
     # 距公布幾天 —— PEAD 是事件驅動的，訊號會隨時間衰減，
     # 公布 3 天的股票跟公布 50 天的不是同一回事，畫面上要分得出來。
     r["days_since"] = (r["date"] - r["avail_date"]).dt.days
-    return r[["date", "code", "yoy", "yoy_3m", "mom", "sue", "days_since",
+    return r[["date", "code", "yoy", "yoy_3m", "mom", "sue", "rev_high12", "days_since",
               "avail_date", "rev_month"]]
 
 
