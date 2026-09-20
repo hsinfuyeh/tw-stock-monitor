@@ -46,10 +46,11 @@ PARAMS = [
     ("w_ma",      "佔分",                  25,   0,   100,   5,   "分",     "④ 均線多頭排列"),
     ("min_score", "總分至少",              50,   0,   100,   5,   "分",     "清單"),
     ("top_n",     "最多列出",              20,   5,   100,   5,   "檔",     "清單"),
-    ("atr_mult",  "停損距離（ATR 的倍數）", 2.0,  0.5, 4.0,   0.5, "倍",     "參考價位"),
+    ("min_atrp",  "波動至少（ATR 佔股價）", 2.5,  0,   10,    0.5, "%",      "波動門檻"),
+    ("atr_mult",  "停損距離（ATR 的倍數）", 3.0,  0.5, 4.0,   0.5, "倍",     "參考價位"),
     ("hold_days", "最多持有",              20,   3,   30,    1,   "個交易日", "參考價位"),
-    ("use_target", "設定目標價（0 關 1 開）", 0,   0,   1,     1,   "",       "參考價位"),
-    ("rr",        "目標漲幅是停損的",      2,    0.5, 5,     0.5, "倍",     "參考價位"),
+    ("use_target", "設定目標價（0 關 1 開）", 1,   0,   1,     1,   "",       "參考價位"),
+    ("target_net", "目標淨賺（已扣手續費和稅）", 5, 1,  30,    0.5, "%",      "參考價位"),
 ]
 STOP_MIN, STOP_MAX = 0.02, 0.10    # 停損距離的上下限（ATR 太小或太大時夾住）
 DEFAULTS = {k: d for k, _, d, *_ in PARAMS}
@@ -134,7 +135,14 @@ def features():
 # --------------------------------------------------------------------- 評分
 def score(d, p):
     """向量化評分。回傳每列的四個條件是否成立與總分。"""
-    liq = d["vol20_lots"] >= p["liq_lots"]
+    # 流動性與波動都是「門檻」不是「分數」：不符合直接排除。
+    #
+    # 波動門檻的理由：目標是 20 個交易日內淨賺 5%（含成本要漲約 5.6%）。
+    # 一檔平常一天只動 1% 的股票，20 天內漲 5.6% 的機率本來就很低，
+    # 但手續費和稅一樣要付。實測加上 ATR% ≥ 2.5% 之後，達標率從 60% 升到 69%
+    # （樣本外 2023–2025），平均每筆也變好。見 RESEARCH_LOG.md 第 5 輪。
+    liq = (d["vol20_lots"] >= p["liq_lots"]) & (
+        d["atrp14"] * 100 >= p["min_atrp"] if p.get("min_atrp") else True)
     c1 = d["yoy"] >= p["rev_yoy"]
     hi = c1 & (d["rev_high12"] == 1)
     c2 = (d["streak_f"] >= p["inst_days"]) | (d["streak_t"] >= p["inst_days"])
@@ -183,8 +191,18 @@ def ref_prices(close, atrp, p):
       等於把日常波動變成實現的虧損。改成 2×ATR 之後，這部分的扣分就消失了
       （對 0050 從 −0.34%、t = −2.88 變成 −0.15%、t = −0.60）。詳見 RESEARCH_LOG.md。
 
-    目標價預設<b>不設</b>：設上限會砍掉少數大漲的那幾筆（右尾），
-    實測反而讓平均報酬變差。要用的話把 use_target 設成 1。
+    目標價 = 進場價 × (1 + 目標淨賺% + 來回成本%)，也就是<b>賣掉之後真的淨賺這個數</b>。
+    預設 5%：要賺到淨 5%，股價實際上要漲 5.585%（手續費 0.1425% × 2 ＋ 證交稅 0.3%）。
+
+    取捨要講清楚，而且這是實測出來、統計上很明確的事：
+
+      設目標（現在的預設）  達標率 64%，但平均每筆比 0050 少賺 0.42%（t = −3.5）
+      不設目標              平均每筆跟 0050 差不多（+0.03%，t = 0.02）
+
+    停損放多寬都一樣 —— 1×ATR 到不停損全部測過，設目標那一排永遠是負的。
+    原因是賺多的那幾筆被 +5% 上限砍掉，虧的卻沒有對稱的限制。
+    想要「高機率先落袋」就開著，想要平均報酬好一點就把 use_target 設成 0。
+    兩個數字都列在回測報告的「拆開來看」裡。
     """
     close = np.asarray(close, float)
     atrp = np.asarray(atrp, float)
@@ -199,9 +217,10 @@ def ref_prices(close, atrp, p):
     stop = np.round(np.ceil(stop / t - 1e-9) * t, 2)
     if not p.get("use_target"):
         return stop, np.full_like(stop, np.nan)
-    target = close + p["rr"] * (close - stop)
+    target = close * (1 + (p["target_net"] + COST) / 100.0)
+    # 目標往<b>上</b>取整到檔位：取整之後仍要確保扣完成本有拿到設定的淨賺
     t = _tick(target)
-    target = np.round(np.floor(target / t + 1e-9) * t, 2)
+    target = np.round(np.ceil(target / t - 1e-9) * t, 2)
     return stop, target
 
 
@@ -291,8 +310,6 @@ def backtest(d, p, start=None, end=None, arr=None, bench=None):
     n = len(arr["code"])
     code = arr["code"]
 
-    # 訊號日的參考價位
-    stop, target = ref_prices(d.loc[i0, "close"], d.loc[i0, "atrp14"], p)
     e = i0 + 1
     ok = (e < n)
     ok[ok] = code[e[ok]] == code[i0[ok]]
@@ -302,6 +319,10 @@ def backtest(d, p, start=None, end=None, arr=None, bench=None):
     ok &= ~locked
     entry = arr["open"][ec]
     ok &= np.isfinite(entry) & (entry > 0)
+    # 停損與目標用<b>實際成交價</b>（隔天開盤）算，不是用訊號日收盤價算。
+    # 這樣「達標」才真的等於「賣掉之後淨賺設定的 %」。畫面上的參考價位是收盤後
+    # 先估的版本（那時還不知道明天開盤多少），實際下單時要用自己的成交價重算。
+    stop, target = ref_prices(entry, d.loc[i0, "atrp14"], p)
 
     exit_px = np.full(len(i0), np.nan)
     exit_i = np.full(len(i0), -1)
@@ -375,8 +396,8 @@ def summarize(t, hold, n_signal=None, skipped=0):
     days = t["signal"].nunique()
     return {
         "n": len(t), "n_signal": n_signal, "skipped": skipped,
-        # 規格書的產品目標：持有期間內曾經漲到 +5%（不是收盤價，是盤中最高）
-        "p5": round(float((t["mfe"] >= 5).mean() * 100), 1) if "mfe" in t else None,
+        # 進場之後盤中最高曾經漲到「淨賺 5% 需要的幅度」的比例
+        "p5": round(float((t["mfe"] >= 5 + COST).mean() * 100), 1) if "mfe" in t else None,
         "mfe_med": round(float(t["mfe"].median()), 2) if "mfe" in t else None,
         "mae_med": round(float(t["mae"].median()), 2) if "mae" in t else None,
         "days": days, "start": str(t["signal"].min())[:10], "end": str(t["signal"].max())[:10],
@@ -426,6 +447,8 @@ ABLATION = [
     ("只用月營收，不設停損", {"w_inst": 0, "w_brk": 0, "w_ma": 0, "atr_mult": 99}),
     ("預設，但停損固定 −7%（舊版）", {"fixed_stop_pct": 7}),
     ("預設，但只持有 10 日", {"hold_days": 10}),
+    ("預設，但不設目標價", {"use_target": 0}),
+    ("預設，但不限波動", {"min_atrp": 0}),
 ]
 
 

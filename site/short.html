@@ -35,20 +35,26 @@ function tick(p) {
    實測固定百分比的停損越緊越虧，而且每個策略、每個期間都一樣。
    目標價預設不設 —— 設上限會砍掉少數大漲的那幾筆，實測讓平均報酬變差。 */
 var STOP_MIN = 0.02, STOP_MAX = 0.10;
+var COST = 0.585;     // 來回手續費 0.1425% × 2 ＋ 證交稅 0.3%
 function refPrices(close, atrp, p) {
   var dist = isNum(atrp) ? Math.min(Math.max(p.atr_mult * atrp, STOP_MIN), STOP_MAX) : STOP_MAX;
   var stop = close * (1 - dist);
   var t = tick(stop);
   stop = r2(Math.ceil(stop / t - 1e-9) * t);
   if (!p.use_target) return [stop, null];
-  var target = close + p.rr * (close - stop);
+  /* 目標價 = 進場價 × (1 + 目標淨賺% + 成本%)，賣掉之後才真的淨賺那個數。
+     往上取整到檔位，取整後仍確保拿得到設定的淨賺。 */
+  var target = close * (1 + (p.target_net + COST) / 100);
   t = tick(target);
-  target = r2(Math.floor(target / t + 1e-9) * t);
+  target = r2(Math.ceil(target / t - 1e-9) * t);
   return [stop, target];
 }
 
 function scoreRow(r, p) {
-  var liq = isNum(r.vol20_lots) && r.vol20_lots >= p.liq_lots;
+  /* 流動性與波動都是門檻不是分數。波動門檻的理由：20 天內要漲 5.6% 才能淨賺 5%，
+     平常一天只動 1% 的股票很難做到，但手續費和稅一樣要付。 */
+  var liq = isNum(r.vol20_lots) && r.vol20_lots >= p.liq_lots &&
+    (!p.min_atrp || (isNum(r.atrp14) && r.atrp14 * 100 >= p.min_atrp));
   var c1 = isNum(r.yoy) && r.yoy >= p.rev_yoy;
   var hi = c1 && r.rev_high12 === 1;
   var c2 = (isNum(r.streak_f) && r.streak_f >= p.inst_days) ||
@@ -262,11 +268,16 @@ App.boot('short', function (meta) {
       '<li><b>均線多頭排列</b>：收盤價 &gt; 5 日均價 &gt; 10 日均價 &gt; 20 日均價（短期價格一路在長期之上）</li>' +
       '</ol><p class="note" style="margin:-8px 0 18px;font-size:13.5px">ETF 沒有月營收，只看後三項，再換算成 100 分，' +
       '和個股放在同一張表。近 20 日平均每天成交不到 1,000 張的不列入。<br>' +
-      '<b>參考停損 = 收盤 − 2 × ATR</b>（ATR 是這檔股票平常一天的波動幅度，' +
-      '距離限制在 2%～10% 之間）。用固定百分比當停損，實測每個策略、每個期間都比較差 —— ' +
-      '對波動大的股票來說 7% 只是兩天的正常波動。<b>目標價預設不設</b>：' +
-      '設上限會砍掉少數大漲的那幾筆，實測讓平均報酬變差。' +
-      '<a href="backtest.html">回測報告</a>有完整數字。</p>' +
+      '<b>參考目標 = 賣掉之後淨賺 5%</b>（股價要漲 5.585%，' +
+      '因為手續費 0.1425% × 2 和證交稅 0.3% 都算進去了）。' +
+      '<b>參考停損 = 收盤 − 3 × ATR</b>（ATR 是這檔股票平常一天的波動幅度，' +
+      '距離限制在 2%～10%）。固定百分比的停損實測每個期間都比較差。<br>' +
+      '另外加了<b>波動門檻</b>：ATR 不到股價 2.5% 的不列入 —— 20 天要漲 5.6%，' +
+      '平常一天只動 1% 的股票很難做到，手續費和稅卻一樣要付。加了這個門檻之後，' +
+      '達標率從 60% 升到 69%。<br>' +
+      '這兩個價位是用<b>今天的收盤價</b>估的（收盤後還不知道明天開盤多少）。' +
+      '實際成交後，請用自己的成交價 × 1.0559 當目標、成交價 − 3 × ATR 當停損。' +
+      '<a href="backtest.html">回測報告</a>有完整數字與取捨。</p>' +
       '<div id="list"></div>' +
       '<details' + (isDefault() ? '' : ' open') + '><summary>調整條件與參數</summary><div class="inner">' +
       paramForm() + '</div></details></div>';
