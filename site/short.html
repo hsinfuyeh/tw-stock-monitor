@@ -115,6 +115,52 @@ function rank(p) {
   return out;
 }
 
+/* ---------- 成交價換算 ----------
+ * 清單上的價位是用今天收盤價估的，但你明天開盤才買得到。
+ * 成交之後把實際成交價填進來，這裡用同一套公式重算，不用自己乘。 */
+function calcPanel() {
+  var opts = CUR.map(function (o, i) {
+    return '<option value="' + i + '">' + App.esc(o.r.code + ' ' + o.r.name) + '</option>';
+  }).join('');
+  return '<div class="prow" style="max-width:520px">' +
+    '<label for="c_pick">股票</label>' +
+    '<select class="snap" id="c_pick" style="flex:1">' + opts + '</select></div>' +
+    '<div class="prow" style="max-width:520px"><label for="c_px">你的成交價</label>' +
+    '<input type="number" id="c_px" step="0.01" min="0"><span class="u">元</span></div>' +
+    '<div id="c_out" class="note" style="margin-top:10px"></div>';
+}
+
+function calcRender() {
+  var i = +document.getElementById('c_pick').value;
+  var o = CUR[i];
+  if (!o) return;
+  var px = parseFloat(document.getElementById('c_px').value);
+  var out = document.getElementById('c_out');
+  if (!isNum(px) || px <= 0) {
+    out.innerHTML = '填入成交價之後，這裡會算出對應的停損價與目標價。';
+    return;
+  }
+  var pr = refPrices(px, o.r.atrp14, P);
+  var risk = (px - pr[0]) / px * 100;
+  out.innerHTML = '<b>' + App.esc(o.r.code + ' ' + o.r.name) + '</b>　成交價 ' + f2(px) + '<br>' +
+    '停損價 <b class="dn">' + f2(pr[0]) + '</b>（跌 ' + App.num(risk, 1) + '%，' +
+    '等於 ' + App.num((px - pr[0]) / (o.r.atrp14 * px), 1) + ' 個 ATR）' +
+    (pr[1] == null ? '<br>目前設定沒有目標價（抱滿 ' + P.hold_days + ' 個交易日）'
+      : '<br>目標價 <b class="up">' + f2(pr[1]) + '</b>（漲 ' +
+        App.num((pr[1] - px) / px * 100, 2) + '%，賣掉後淨賺 ' +
+        App.num((pr[1] / px - 1) * 100 - COST, 2) + '%）') +
+    '<br><span class="mut">最多抱 ' + P.hold_days + ' 個交易日；兩個價位都沒碰到就到期賣出。</span>';
+}
+
+function calcBind() {
+  var box = document.getElementById('calc');
+  if (!box) return;
+  box.innerHTML = calcPanel();
+  document.getElementById('c_pick').addEventListener('change', calcRender);
+  document.getElementById('c_px').addEventListener('input', calcRender);
+  calcRender();
+}
+
 /* ---------- 參數 ---------- */
 function loadParams() {
   T.params.forEach(function (x) { DEF[x.key] = x.default; P[x.key] = x.default; });
@@ -216,6 +262,7 @@ function renderList() {
   CUR = rank(P);
   document.getElementById('lcount').textContent = CUR.length;
   paintList();
+  calcBind();
 }
 
 /* 回測結論的一行摘要：清單旁邊就要看得到「這套規則過去表現如何」，
@@ -279,6 +326,8 @@ App.boot('short', function (meta) {
       '實際成交後，請用自己的成交價 × 1.0559 當目標、成交價 − 3 × ATR 當停損。' +
       '<a href="backtest.html">回測報告</a>有完整數字與取捨。</p>' +
       '<div id="list"></div>' +
+      '<details id="calcbox"><summary>用我的實際成交價計算停損與目標</summary>' +
+      '<div class="inner"><div id="calc"></div></div></details>' +
       '<details' + (isDefault() ? '' : ' open') + '><summary>調整條件與參數</summary><div class="inner">' +
       paramForm() + '</div></details></div>';
 

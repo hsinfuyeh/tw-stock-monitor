@@ -17,11 +17,15 @@ COLS = ["date", "code", "label", "net", "mfe", "mae", "day", "regime", "adtv20",
         "bench", "atrp14"]
 
 
-def _prd(d):
-    """網站現在的四條件前 20 名（只留個股，標籤只有個股）。"""
+def _prd(d, min_atrp=0):
+    """PRD 四條件的前 20 名（只留個股，標籤只有個股）。
+
+    min_atrp 明確傳入，不跟著網站的預設值走 —— 否則以後改了網站設定，
+    RESEARCH_LOG 裡這一輪的數字就再也重現不出來了。
+    """
     import shortterm
     f = shortterm.features()
-    p = shortterm.params()
+    p = shortterm.params(min_atrp=min_atrp)
     top = shortterm.pick(f, shortterm.score(f, p), p)
     t = f.loc[top.index, ["date", "code"]]
     t["date"] = t["date"].astype("datetime64[ns]")
@@ -37,8 +41,8 @@ def _top(d, mask, key, asc, k=S.K):
 
 def selections(d, u, cs, strat):
     """五種選股。PRD 是網站現在用的四條件。"""
-    prd = _prd(d)
-    out = {"PRD 現行": prd}
+    prd = _prd(d, min_atrp=0)          # 這一輪的基準：當時還沒有波動門檻的版本
+    out = {"PRD 無門檻": prd}
     for lim in (0.025, 0.035):
         out["PRD ＋ATR%≥{:.1f}%".format(lim * 100)] = prd[prd["atrp14"] >= lim]
     out["B0r 動能"] = _top(d, *strat[("B0r", "")])

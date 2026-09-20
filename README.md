@@ -148,7 +148,9 @@ python run.py rank              # 上市普通股排序 HTML
 python run.py rank-etf          # ETF 排序（獨立宇宙與因子集）
 python run.py stock 2330 2317   # 個股 K 線觀察報告
 python run.py daily             # 每日跑這個：增量更新 + 重建 + 出全部報告
-python tests.py                 # 29 項正確性測試
+python tests.py                 # 57 項正確性測試（含短線評分、標籤、JSON 合法性）
+python tests_short.py           # 只跑短線核心那 21 項（用合成資料，幾秒）
+python study.py all             # 重跑 RESEARCH_LOG 裡的每一輪研究
 python shortterm.py             # 短線清單：印出今日 Top 20 與入選理由
 ```
 
@@ -166,6 +168,9 @@ python shortterm.py             # 短線清單：印出今日 Top 20 與入選�
 - `barrier.py` — 規格書的特徵字典 ＋ 10 日 / +5% 先觸及標籤（triple-barrier）。
   隔天開盤進場、跳空以開盤價成交、同日碰兩邊算停損先到、一字漲停買不到、
   鎖跌停當天賣不掉，損益含除權息。
+- `study.py` — 統一入口（`python study.py all`）。特徵面板算一次快取在
+  `data/study_panel.pkl`，倉儲更新會自動重算。每一輪吃的參數都寫死在腳本裡、
+  不跟著網站預設走，否則以後改了設定，RESEARCH_LOG 的數字就重現不出來。
 - `study_spec.py` — 事前登記的 23 組（baseline、M1 突破、M2 回檔、M3 營收事件、
   M4 反轉、PRD 對照），walk-forward 選參數、2026 當 holdout。
 - `study_exit.py` / `study_hold.py` / `study_bench.py` — 停損、目標與持有期、

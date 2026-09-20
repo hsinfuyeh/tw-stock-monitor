@@ -218,6 +218,8 @@ if __name__ == "__main__":
     test_exdiv()
     test_no_lookahead()
     test_framework(nd)
+    import tests_short
+    tests_short.run(check)
     print("\n" + "=" * 66)
     print("通過 {} 項，失敗 {} 項".format(len(PASS), len(FAIL)))
     if FAIL:

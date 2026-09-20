@@ -83,11 +83,15 @@ def pick(d, mask, key, asc, k=K):
     return x.groupby("date", sort=False).head(k)
 
 
-def prd_picks(d):
-    """目前網站（PRD 四條件）的前 20 名，只保留個股（標籤只有個股）。"""
+def prd_picks(d, min_atrp=0):
+    """PRD 四條件的前 20 名，只保留個股（標籤只有個股）。
+
+    min_atrp 預設 0：第 1–4 輪跑的時候網站還沒有波動門檻，固定住才能重現當時的數字。
+    不要改成跟著 shortterm 的預設值走。
+    """
     import shortterm
     f = shortterm.features()
-    p = shortterm.params()
+    p = shortterm.params(min_atrp=min_atrp)
     top = shortterm.pick(f, shortterm.score(f, p), p)
     t = f.loc[top.index, ["date", "code"]]
     t["date"] = t["date"].astype("datetime64[ns]")
