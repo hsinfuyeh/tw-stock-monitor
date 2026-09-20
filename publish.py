@@ -310,6 +310,11 @@ def build(limit=None, out=SITE):
     print("短線清單與回測…", flush=True)
     short = shortterm.compute(snap_dir=ROOT / "snapshots")
 
+    # 先寫到暫存目錄，全部寫完才換掉正式的 data/。
+    # 原本是直接砍掉 data/ 再慢慢寫，本機按「立即更新」時，那 4 分鐘內
+    # 開網頁會是空白或 404（CI 沒這個問題，它是先產出再部署）。
+    final = data
+    data = final.parent / "_data_new"
     if data.exists():
         shutil.rmtree(data)
     data.mkdir(parents=True)
@@ -350,6 +355,16 @@ def build(limit=None, out=SITE):
             print("  {}/{}  可用 {} 略過 {}".format(i + 1, len(u), ok, skip),
                   flush=True)
     sizes["stocks"] = stot
+
+    # 原子換檔：舊的先改名、新的換上去、再刪掉舊的。中間只有毫秒級的空窗。
+    old = final.parent / "_data_old"
+    if old.exists():
+        shutil.rmtree(old)
+    if final.exists():
+        final.rename(old)
+    data.rename(final)
+    shutil.rmtree(old, ignore_errors=True)
+    data = final
 
     total = sum(sizes.values())
     print("\n{:<12}{:>10}".format("區塊", "大小"))

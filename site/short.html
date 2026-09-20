@@ -127,6 +127,8 @@ function calcPanel() {
     '<select class="snap" id="c_pick" style="flex:1">' + opts + '</select></div>' +
     '<div class="prow" style="max-width:520px"><label for="c_px">你的成交價</label>' +
     '<input type="number" id="c_px" step="0.01" min="0"><span class="u">元</span></div>' +
+    '<div class="prow" style="max-width:520px"><label for="c_amt">下單金額（可不填）</label>' +
+    '<input type="number" id="c_amt" step="10" min="0"><span class="u">萬元</span></div>' +
     '<div id="c_out" class="note" style="margin-top:10px"></div>';
 }
 
@@ -149,7 +151,27 @@ function calcRender() {
       : '<br>目標價 <b class="up">' + f2(pr[1]) + '</b>（漲 ' +
         App.num((pr[1] - px) / px * 100, 2) + '%，賣掉後淨賺 ' +
         App.num((pr[1] / px - 1) * 100 - COST, 2) + '%）') +
-    '<br><span class="mut">最多抱 ' + P.hold_days + ' 個交易日；兩個價位都沒碰到就到期賣出。</span>';
+    '<br><span class="mut">最多抱 ' + P.hold_days + ' 個交易日；兩個價位都沒碰到就到期賣出。</span>' +
+    sizeNote(o);
+}
+
+/* 下單金額 vs 這檔平常的成交量。回測用固定成本 0.585%，沒有把「你的單子
+   自己推動價格」算進去 —— 單筆金額佔日均成交額越高，實際成本就越高於回測。
+   業界常用的保守上限是 1%。 */
+function sizeNote(o) {
+  var amt = parseFloat(document.getElementById('c_amt').value);
+  if (!isNum(amt) || amt <= 0) return '';
+  var money = amt * 1e4, adtv = o.r.amt20;
+  if (!isNum(adtv) || adtv <= 0) return '';
+  var pct = money / adtv * 100;
+  var lv = pct <= 1 ? 'ok' : (pct <= 5 ? 'warn' : 'bad');
+  var msg = pct <= 1 ? '這個金額相對這檔的成交量很小，滑價影響有限。'
+    : pct <= 5 ? '這個金額偏大，進出可能推動價格，實際成本會高於回測假設的 ' + COST + '%。'
+    : '<b>這個金額太大</b>：等於這檔平常一天成交量的 ' + App.num(pct, 0) +
+      '%，分批也很難不影響價格。回測的成本假設在這個規模下不成立。';
+  return '<br><span class="' + (lv === 'ok' ? 'mut' : lv === 'warn' ? 'up' : 'up') + '">' +
+    '下單 ' + App.num(amt, 0) + ' 萬 ＝ 這檔日均成交額的 ' + App.num(pct, 2) + '%。' + msg +
+    '</span>';
 }
 
 function calcBind() {
@@ -158,6 +180,7 @@ function calcBind() {
   box.innerHTML = calcPanel();
   document.getElementById('c_pick').addEventListener('change', calcRender);
   document.getElementById('c_px').addEventListener('input', calcRender);
+  document.getElementById('c_amt').addEventListener('input', calcRender);
   calcRender();
 }
 

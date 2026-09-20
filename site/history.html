@@ -51,18 +51,23 @@ App.boot('history', function (meta) {
       var st = h.waiting === h.n ? '等待明天開盤進場'
         : h.open ? '還有 ' + h.open + ' 檔持有中' : '全部已出場';
       return '<tr data-i="' + i + '" style="cursor:pointer"><td><a href="#" data-i="' + i + '">' +
-        h.date + '</a></td><td>' + h.n + '</td><td class="mut">' + st + '</td>' +
+        h.date + '</a>' + (h.backfilled ? ' <span class="mut" style="font-size:12px">補算</span>' : '') +
+        '</td><td>' + h.n + '</td><td class="mut">' + st + '</td>' +
         '<td class="sorted">' + money(h.avg) + '</td><td>' + money(h.bench) + '</td>' +
         '<td>' + (h.avg != null && h.bench != null ? money(h.avg - h.bench) : '—') + '</td></tr>';
     });
     app.innerHTML = head +
       '<div class="card"><h2>每一天的清單</h2>' +
-      '<p class="lead">規則跟回測報告一樣：隔天開盤買進，碰到停損或目標就賣，最多抱 10 個交易日。' +
+      '<p class="lead">規則跟回測報告一樣：隔天開盤買進，碰到停損或目標就賣，最多抱 ' +
+      (H[0].hold || 20) + ' 個交易日。' +
       '還沒賣的用最新收盤價計算。報酬都已扣手續費和稅。點日期看那天選了哪些股票。</p>' +
       '<div class="scroll"><table><thead><tr><th>清單日期</th><th>檔數</th><th>狀態</th>' +
       '<th class="sorted">平均報酬</th><th>同期 0050</th><th>' + App.tip('贏過 0050') +
       '</th></tr></thead><tbody>' + rows.join('') + '</tbody></table></div>' +
-      '<p class="note" style="margin-top:14px;font-size:13.5px">剛開始累積的前幾週，' +
+      '<p class="note" style="margin-top:14px;font-size:13.5px">標「補算」的那幾天，' +
+      '是當天沒有順利產出（例如電腦沒開、自動更新沒跑），事後用當天的資料重算補上的。' +
+      '用到的數字都是當天收盤就已經知道的，不會偷看後來才發生的事，但畢竟不是當天即時產出的紀錄。<br>' +
+      '剛開始累積的前幾週，' +
       '天數太少，贏或輸 0050 大多是運氣；至少要累積幾個月才看得出東西。' +
       '想看長期的結果，看<a href="backtest.html">回測報告</a>。</p>' +
       '<div id="det"></div></div>';

@@ -19,8 +19,11 @@ PRD 沒寫死、這裡做的決定（都可在 PARAMS 調整或在下方註明�
   * 「前 20 日最高」與「5 日均量」<b>不含當日</b> —— 否則今天的高點和量
     會算進自己的比較基準，突破與爆量都會被低估。
   * 分數相同時依 20 日成交金額排序（較好買的在前）。
-  * 停損價：max(MA20, 進場價 × (1 − 7%))。但若收盤已經跌破 MA20，
-    MA20 會高於進場價，那不是停損是停利 —— 這種情況只用 7% 那個。
+  * 波動門檻 ATR% ≥ 2.5%：20 個交易日要漲 5.6% 才能淨賺 5%，
+    平常一天只動 1% 的股票很難做到，但手續費和稅一樣要付。
+  * 停損 = 進場價 − 3 × ATR14（距離夾在 2%–10%）、目標 = 淨賺 5% 所需的價格、
+    最多抱 20 個交易日。固定百分比的停損實測每個期間都比較差，
+    設目標價則是達標率高但平均報酬差 —— 完整數字與取捨見 RESEARCH_LOG.md。
 
 不構成投資建議，也不會自動下單。
 """
@@ -498,7 +501,8 @@ def track(d, snap):
             rows.append(row)
             continue
         o, h, lo, c, k = (x[col].to_numpy() for col in ("open", "high", "low", "close", "k"))
-        stop, target = r["stop"], r["target"]
+        stop = r["stop"]
+        target = r["target"] if r.get("target") is not None else float("inf")
         e_px = o[0]
         status, xi, px = None, None, None
         for j in range(min(hold, len(x))):
@@ -529,10 +533,20 @@ def track(d, snap):
         rows.append(row)
     done = [x for x in rows if x["ret"] is not None]
     avg = lambda k: _r(float(np.mean([x[k] for x in done if x[k] is not None]))) if done else None
-    return {"date": snap["date"], "n": len(rows),
+    return {"date": snap["date"], "n": len(rows), "hold": hold,
+            "backfilled": bool(snap.get("backfilled")),
             "open": sum(x["status"] == "持有中" for x in rows),
             "waiting": sum(x["status"] == "等待進場" for x in rows),
             "avg": avg("ret"), "bench": avg("bench"), "rows": rows}
+
+
+def _top_rows(rows):
+    """快照裡的 top 欄位。今天的清單與補算的缺日共用同一份格式。"""
+    return [{"code": r["code"], "name": r["name"], "kind": r["kind"],
+             "score": float(r["score"]), "close": float(r["close"]),
+             "stop": float(r["stop"]),
+             "target": _r(r["target"]), "why": r["why"]}
+            for _, r in rows.iterrows()]
 
 
 def compute(d=None, snap_dir=None):
@@ -554,10 +568,7 @@ def compute(d=None, snap_dir=None):
     feat = []
     for r in day[FEATURE_COLS].itertuples(index=False):
         feat.append([r.code, r.name, r.kind] + [_r(getattr(r, c), 4) for c in FEATURE_COLS[3:]])
-    top = [{
-        "code": r["code"], "name": r["name"], "kind": r["kind"], "score": float(r["score"]),
-        "close": float(r["close"]), "stop": float(r["stop"]), "target": float(r["target"]),
-        "why": r["why"]} for _, r in rows.iterrows()]
+    top = _top_rows(rows)
     today_json = {"date": ds, "cols": FEATURE_COLS,
                   "params": [dict(zip(("key", "label", "default", "min", "max", "step",
                                        "unit", "group"), x)) for x in PARAMS],
@@ -597,12 +608,29 @@ def compute(d=None, snap_dir=None):
 
     # 歷史清單：每一份過去的快照，之後實際走得怎樣
     snaps = {ds: snap}
+    existing = {}
     if snap_dir is not None and snap_dir.exists():
         for f in snap_dir.glob("*.json"):
             if f.stem != ds:
-                snaps[f.stem] = json.loads(f.read_text(encoding="utf-8"))
+                existing[f.stem] = json.loads(f.read_text(encoding="utf-8"))
+
+    # 缺日補算：CI 某天沒跑（或電腦關著）就會缺一天，歷史清單會從此斷掉。
+    # 用那天的資料重算補上 —— 特徵全都是當天收盤就已知的，不會偷看未來，
+    # 但畢竟不是「當天真的產出的」，所以標記 backfilled，頁面上分開標示。
+    if existing:
+        first = min(existing)
+        cal = [str(x)[:10] for x in np.sort(d["date"].unique())]
+        missing = [x for x in cal if first < x < ds and x not in existing]
+        for m in missing:
+            snaps[m] = {"date": m, "params": p, "backfilled": True,
+                        "top": _top_rows(today(d, p, pd.Timestamp(m)))}
+        if missing:
+            print("補算缺少的快照 {} 天：{}".format(
+                len(missing), "、".join(missing[:5]) + ("…" if len(missing) > 5 else "")),
+                flush=True)
+    snaps.update(existing)
     hist = [track(d, snaps[k]) for k in sorted(snaps, reverse=True)]
-    return today_json, bt, snap, hist
+    return today_json, bt, snaps, hist
 
 
 class Inconsistent(Exception):
@@ -633,8 +661,8 @@ def check(day, today_json, bt):
         len(today_json["expected"]), bt["all"]["n"]), flush=True)
 
 
-def write(out, snap_dir, today_json, bt, snap, hist):
-    """寫出 JSON 與快照。out 是網站的 data/ 目錄。"""
+def write(out, snap_dir, today_json, bt, snaps, hist):
+    """寫出 JSON 與快照。out 是網站的 data/ 目錄，snaps 是 日期 -> 快照。"""
     import json
     ds = today_json["date"]
     (out / "short").mkdir(parents=True, exist_ok=True)
@@ -647,10 +675,14 @@ def write(out, snap_dir, today_json, bt, snap, hist):
                        allow_nan=False),
             encoding="utf-8")
 
-    # 快照：同一天重跑會覆寫（資料若事後修正，快照跟著修正）
+    # 快照：當天的重跑會覆寫（資料若事後修正，快照跟著修正）；
+    # 補算的缺日只在還沒有檔案時才寫，不會蓋掉當天真的產生的那份。
     snap_dir.mkdir(parents=True, exist_ok=True)
-    (snap_dir / (ds + ".json")).write_text(json.dumps(
-        snap, ensure_ascii=False, indent=1), encoding="utf-8")
+    for day, one in snaps.items():
+        f = snap_dir / (day + ".json")
+        if day == ds or not f.exists():
+            f.write_text(json.dumps(_json_safe(one), ensure_ascii=False, indent=1),
+                         encoding="utf-8")
 
 
 if __name__ == "__main__":

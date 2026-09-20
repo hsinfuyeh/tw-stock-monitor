@@ -35,3 +35,6 @@ ci_summary.md
 # 歷史回補的執行紀錄
 backfill_hist.log
 backfill_hist.err
+site/_data_new/
+site/_data_old/
+data/study_panel.pkl
