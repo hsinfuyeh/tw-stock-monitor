@@ -46,12 +46,17 @@ PARAMS = [
     ("w_ma",      "佔分",                  25,   0,   100,   5,   "分",     "④ 均線多頭排列"),
     ("min_score", "總分至少",              50,   0,   100,   5,   "分",     "清單"),
     ("top_n",     "最多列出",              20,   5,   100,   5,   "檔",     "清單"),
-    ("stop_pct",  "停損最多跌",            7,    1,   20,    0.5, "%",      "參考價位"),
+    ("atr_mult",  "停損距離（ATR 的倍數）", 2.0,  0.5, 4.0,   0.5, "倍",     "參考價位"),
+    ("hold_days", "最多持有",              20,   3,   30,    1,   "個交易日", "參考價位"),
+    ("use_target", "設定目標價（0 關 1 開）", 0,   0,   1,     1,   "",       "參考價位"),
     ("rr",        "目標漲幅是停損的",      2,    0.5, 5,     0.5, "倍",     "參考價位"),
-    ("hold_days", "最多持有",              10,   3,   20,    1,   "個交易日", "參考價位"),
 ]
+STOP_MIN, STOP_MAX = 0.02, 0.10    # 停損距離的上下限（ATR 太小或太大時夾住）
 DEFAULTS = {k: d for k, _, d, *_ in PARAMS}
-HOLD_MAX = 20                 # 回測預先取的前瞻天數上限，對應 hold_days 的最大值
+# 不出現在網頁表單、只給回測拆解用：固定百分比停損（0 = 用 ATR）。
+# 留著是為了能在同一份回測裡並排比較「舊版固定 −7%」與現在的 ATR 停損。
+DEFAULTS["fixed_stop_pct"] = 0
+HOLD_MAX = 30                 # 回測預先取的前瞻天數上限，對應 hold_days 的最大值
 COST = 0.585                  # PRD：手續費 0.1425% × 2 + 證交稅 0.3%，不計折扣
 
 
@@ -87,6 +92,14 @@ def features():
         d["ma{}".format(n)] = g["close"].transform(lambda s: s.rolling(n).mean())
     d["vol20_lots"] = g["volume"].transform(lambda s: s.rolling(20).mean()) / 1000
     d["amt20"] = g["amount"].transform(lambda s: s.rolling(20).mean())
+    # ATR14（Wilder）：參考停損的距離用它，不用固定百分比。
+    # 除權息日的前一日收盤用參考價，否則配息的價格落差會被算成波動。
+    prev = d["ref_price"].where(d["ref_price"].notna(), g["close"].shift(1))
+    tr = pd.concat([d["high"] - d["low"], (d["high"] - prev).abs(),
+                    (d["low"] - prev).abs()], axis=1).max(axis=1)
+    d["atr14"] = tr.groupby(d["code"], sort=False).transform(
+        lambda x: x.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean())
+    d["atrp14"] = d["atr14"] / d["close"]
     # 突破比較基準：不含當日
     d["hi20_prev"] = g["high"].transform(lambda s: s.shift(1).rolling(20).max())
     d["vol5_prev"] = g["volume"].transform(lambda s: s.shift(1).rolling(5).mean())
@@ -158,17 +171,34 @@ def _tick(p):
     return factors.tick_size(p)
 
 
-def ref_prices(close, ma20, p):
-    """參考價位（依公式計算，不是建議）。"""
+def ref_prices(close, atrp, p):
+    """參考價位（依公式計算，不是建議）。
+
+    停損距離 = ATR 的倍數，不是固定百分比 —— 這是回測出來的結果，理由值得寫清楚：
+
+      台股個股的 ATR14 中位數約 2.9%，固定 7% 的停損看起來寬，對波動大的股票
+      其實只有兩個 ATR、對波動小的卻有四五個。實測 2019–2026 全部 23 組選股 ×
+      7 種停損，<b>停損越緊、扣成本後越差，而且每個策略、每個期間都一樣</b>：
+      固定 −3% 時「先碰停損」的比例高達 53–68%，持有中位數只有 1–3 天，
+      等於把日常波動變成實現的虧損。改成 2×ATR 之後，這部分的扣分就消失了
+      （對 0050 從 −0.34%、t = −2.88 變成 −0.15%、t = −0.60）。詳見 RESEARCH_LOG.md。
+
+    目標價預設<b>不設</b>：設上限會砍掉少數大漲的那幾筆（右尾），
+    實測反而讓平均報酬變差。要用的話把 use_target 設成 1。
+    """
     close = np.asarray(close, float)
-    ma20 = np.asarray(ma20, float)
-    floor = close * (1 - p["stop_pct"] / 100.0)
-    # 收盤已跌破 MA20 時 MA20 在進場價之上，不能當停損，只用百分比那個
-    stop = np.where(ma20 < close, np.maximum(ma20, floor), floor)
-    # 停損往上取整到檔位（虧損不超過設定的 %），目標往下取整（保守）；
-    # 目標用取整<b>後</b>的停損算，畫面上的數字才能自己驗算。
+    atrp = np.asarray(atrp, float)
+    if p.get("fixed_stop_pct"):
+        dist = np.full_like(close, p["fixed_stop_pct"] / 100.0)
+    else:
+        dist = np.clip(p["atr_mult"] * atrp, STOP_MIN, STOP_MAX)
+        dist = np.where(np.isfinite(dist), dist, STOP_MAX)
+    stop = close * (1 - dist)
+    # 停損往上取整到檔位（虧損不超過算出來的距離），目標往下取整（保守）
     t = _tick(stop)
     stop = np.round(np.ceil(stop / t - 1e-9) * t, 2)
+    if not p.get("use_target"):
+        return stop, np.full_like(stop, np.nan)
     target = close + p["rr"] * (close - stop)
     t = _tick(target)
     target = np.round(np.floor(target / t + 1e-9) * t, 2)
@@ -206,7 +236,7 @@ def today(d=None, p=None, date=None):
     sc = score(day, p)
     top = pick(day, sc, p)
     rows = day.loc[top.index].join(top[["liq", "c1", "c1hi", "c2", "c3", "c4", "score"]])
-    stop, target = ref_prices(rows["close"], rows["ma20"], p)
+    stop, target = ref_prices(rows["close"], rows["atrp14"], p)
     rows = rows.assign(stop=stop, target=target)
     rows["why"] = [reasons(r, p) for _, r in rows.iterrows()]
     return rows
@@ -262,7 +292,7 @@ def backtest(d, p, start=None, end=None, arr=None, bench=None):
     code = arr["code"]
 
     # 訊號日的參考價位
-    stop, target = ref_prices(d.loc[i0, "close"], d.loc[i0, "ma20"], p)
+    stop, target = ref_prices(d.loc[i0, "close"], d.loc[i0, "atrp14"], p)
     e = i0 + 1
     ok = (e < n)
     ok[ok] = code[e[ok]] == code[i0[ok]]
@@ -276,6 +306,12 @@ def backtest(d, p, start=None, end=None, arr=None, bench=None):
     exit_px = np.full(len(i0), np.nan)
     exit_i = np.full(len(i0), -1)
     why = np.array([""] * len(i0), dtype=object)
+    # 目標價可以關掉（預設就是關的）：內部用 +inf 代表永遠碰不到，
+    # 但輸出到表格要留原本的缺值 —— inf 不是合法的 JSON，寫出去整頁會載入失敗。
+    target_out = target
+    target = np.where(np.isfinite(target), target, np.inf)
+    hi_seen = np.full(len(i0), -np.inf)
+    lo_seen = np.full(len(i0), np.inf)
     open_ = ok.copy()
     for j in range(hold):
         idx = np.minimum(e + j, n - 1)
@@ -285,6 +321,9 @@ def backtest(d, p, start=None, end=None, arr=None, bench=None):
         lost = open_ & ~alive
         open_ &= alive
         o, h, lo, c = (arr[x][idx] for x in ("open", "high", "low", "close"))
+        kk = arr["k"][idx] / arr["k"][e]          # 除權息還原，跟損益一致
+        hi_seen = np.where(open_, np.maximum(hi_seen, h * kk), hi_seen)
+        lo_seen = np.where(open_, np.minimum(lo_seen, lo * kk), lo_seen)
         gap_s = open_ & (o <= stop)
         hit_s = open_ & ~gap_s & (lo <= stop)
         gap_t = open_ & ~gap_s & ~hit_s & (o >= target)
@@ -305,6 +344,8 @@ def backtest(d, p, start=None, end=None, arr=None, bench=None):
     gross = exit_px[done] * k_out / (entry[done] * k_in) - 1
     ret = gross * 100 - COST
     d_in, d_out = arr["date"][e], arr["date"][x]
+    mfe = (hi_seen[done] / entry[done] - 1) * 100
+    mae = (lo_seen[done] / entry[done] - 1) * 100
     b_in = bo.reindex(pd.DatetimeIndex(d_in)).to_numpy()
     b_out = bc.reindex(pd.DatetimeIndex(d_out)).to_numpy()
     bret = (b_out / b_in - 1) * 100 - ETF_COST
@@ -313,10 +354,11 @@ def backtest(d, p, start=None, end=None, arr=None, bench=None):
         "name": d.loc[i0, "name"].to_numpy(), "kind": d.loc[i0, "kind"].to_numpy(),
         "score": top.loc[i0, "score"].to_numpy(),
         "sig_close": d.loc[i0, "close"].to_numpy(),
-        "stop": stop[done], "target": target[done],
+        "stop": stop[done], "target": target_out[done],
         "entry_date": d_in, "entry": entry[done],
         "exit_date": d_out, "exit": exit_px[done], "why": why[done],
-        "days": x - e + 1, "ret": ret, "bench": bret, "excess": ret - bret})
+        "days": x - e + 1, "ret": ret, "bench": bret, "excess": ret - bret,
+        "mfe": mfe, "mae": mae})
     skipped = int((~ok).sum() - (~ok & ~np.isfinite(entry)).sum())
     return t, summarize(t, hold, len(top), skipped)
 
@@ -333,6 +375,10 @@ def summarize(t, hold, n_signal=None, skipped=0):
     days = t["signal"].nunique()
     return {
         "n": len(t), "n_signal": n_signal, "skipped": skipped,
+        # 規格書的產品目標：持有期間內曾經漲到 +5%（不是收盤價，是盤中最高）
+        "p5": round(float((t["mfe"] >= 5).mean() * 100), 1) if "mfe" in t else None,
+        "mfe_med": round(float(t["mfe"].median()), 2) if "mfe" in t else None,
+        "mae_med": round(float(t["mae"].median()), 2) if "mae" in t else None,
         "days": days, "start": str(t["signal"].min())[:10], "end": str(t["signal"].max())[:10],
         "win": round(float((t["ret"] > 0).mean() * 100), 1),
         "avg": round(float(t["ret"].mean()), 2),
@@ -367,7 +413,7 @@ def windows(d, p, recent=60):
 
 FEATURE_COLS = ["code", "name", "kind", "close", "ma5", "ma10", "ma20",
                 "hi20_prev", "volume", "vol5_prev", "vol20_lots", "amt20",
-                "streak_f", "streak_t", "yoy", "rev_high12"]
+                "streak_f", "streak_t", "yoy", "rev_high12", "atrp14"]
 
 # 拆解測試：每個條件單獨用、以及拿掉停損停利，看虧損是出在選股還是出場規則
 ABLATION = [
@@ -376,10 +422,33 @@ ABLATION = [
     ("只用法人連買", {"w_rev": 0, "w_brk": 0, "w_ma": 0}),
     ("只用技術面突破", {"w_rev": 0, "w_inst": 0, "w_ma": 0}),
     ("只用均線多頭", {"w_rev": 0, "w_inst": 0, "w_brk": 0}),
-    ("預設，但不設停損停利", {"stop_pct": 99, "rr": 99}),
-    ("只用月營收，不設停損停利", {"w_inst": 0, "w_brk": 0, "w_ma": 0,
-                                 "stop_pct": 99, "rr": 99}),
+    ("預設，但不設停損", {"atr_mult": 99}),
+    ("只用月營收，不設停損", {"w_inst": 0, "w_brk": 0, "w_ma": 0, "atr_mult": 99}),
+    ("預設，但停損固定 −7%（舊版）", {"fixed_stop_pct": 7}),
+    ("預設，但只持有 10 日", {"hold_days": 10}),
 ]
+
+
+def _json_safe(o):
+    """遞迴清乾淨：numpy 型別 -> Python，NaN / Infinity -> None。
+
+    NaN 與 Infinity 都不是合法的 JSON。json.dumps 預設會照寫，瀏覽器的 JSON.parse
+    直接拋錯 —— 整頁空白，而且產出流程完全不會報錯。2026-09-20 關掉目標價之後
+    就是這樣中的（目標價變成 Infinity 寫進逐筆交易表）。所以寫檔前統一過一遍。
+    """
+    if isinstance(o, dict):
+        return {k: _json_safe(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_json_safe(x) for x in o]
+    if isinstance(o, (np.integer,)):
+        return int(o)
+    if isinstance(o, (np.floating, float)):
+        return float(o) if np.isfinite(o) else None
+    if isinstance(o, (np.bool_, bool)):
+        return bool(o)
+    if isinstance(o, (pd.Timestamp,)):
+        return str(o)[:10]
+    return o if o is None or isinstance(o, (str, int)) else str(o)
 
 
 def _r(v, nd=2):
@@ -523,6 +592,7 @@ def check(day, today_json, bt):
     bad = []
     stk = day[day["kind"] == "個股"]
     for col, label in (("yoy", "月營收年增率"), ("rev_high12", "營收 12 個月新高"),
+                       ("atrp14", "ATR"),
                        ("ma20", "MA20"), ("hi20_prev", "前 20 日最高"),
                        ("vol5_prev", "前 5 日均量"), ("vol20_lots", "20 日均量")):
         if not int(stk[col].notna().sum()):
@@ -547,8 +617,11 @@ def write(out, snap_dir, today_json, bt, snap, hist):
     (out / "short").mkdir(parents=True, exist_ok=True)
     for name, obj in (("today.json", today_json), ("backtest.json", bt),
                       ("history.json", hist)):
+        # allow_nan=False：NaN / Infinity 都不是合法 JSON，瀏覽器會整頁載入失敗。
+        # 寧可在這裡直接爆掉，也不要發佈一個打不開的頁面（2026-09-20 就是這樣中的）。
         (out / "short" / name).write_text(
-            json.dumps(obj, ensure_ascii=False, separators=(",", ":"), default=str),
+            json.dumps(_json_safe(obj), ensure_ascii=False, separators=(",", ":"),
+                       allow_nan=False),
             encoding="utf-8")
 
     # 快照：同一天重跑會覆寫（資料若事後修正，快照跟著修正）

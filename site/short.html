@@ -31,11 +31,16 @@ function tick(p) {
   return p < 10 ? 0.01 : p < 50 ? 0.05 : p < 100 ? 0.1 : p < 500 ? 0.5 : p < 1000 ? 1 : 5;
 }
 
-function refPrices(close, ma20, p) {
-  var floor = close * (1 - p.stop_pct / 100);
-  var stop = (isNum(ma20) && ma20 < close) ? Math.max(ma20, floor) : floor;
+/* 停損距離 = ATR 的倍數（不是固定百分比）。理由見 shortterm.ref_prices 的說明：
+   實測固定百分比的停損越緊越虧，而且每個策略、每個期間都一樣。
+   目標價預設不設 —— 設上限會砍掉少數大漲的那幾筆，實測讓平均報酬變差。 */
+var STOP_MIN = 0.02, STOP_MAX = 0.10;
+function refPrices(close, atrp, p) {
+  var dist = isNum(atrp) ? Math.min(Math.max(p.atr_mult * atrp, STOP_MIN), STOP_MAX) : STOP_MAX;
+  var stop = close * (1 - dist);
   var t = tick(stop);
   stop = r2(Math.ceil(stop / t - 1e-9) * t);
+  if (!p.use_target) return [stop, null];
   var target = close + p.rr * (close - stop);
   t = tick(target);
   target = r2(Math.floor(target / t + 1e-9) * t);
@@ -98,7 +103,7 @@ function rank(p) {
   });
   out = out.slice(0, p.top_n);
   out.forEach(function (o, i) {
-    var pr = refPrices(o.r.close, o.r.ma20, p);
+    var pr = refPrices(o.r.close, o.r.atrp14, p);
     o.rank = i + 1; o.stop = pr[0]; o.target = pr[1]; o.why = reasons(o.r, o.s, p);
   });
   return out;
@@ -156,7 +161,7 @@ var COLS = [
   ['score', '總分', function (o) { return o.s.score; }],
   ['close', '收盤（參考進場價）', function (o) { return o.r.close; }],
   ['stop', '參考停損', function (o) { return o.stop; }],
-  ['target', '參考目標', function (o) { return o.target; }]
+  ['target', '參考目標', function (o) { return o.target == null ? -1 : o.target; }]
 ];
 
 function listTable(rows) {
@@ -182,7 +187,7 @@ function listTable(rows) {
         '<td class="mut">' + r.kind + '</td>' +
         '<td class="sorted">' + App.num(o.s.score, 0) + '</td>' +
         '<td>' + f2(r.close) + '</td><td class="dn">' + f2(o.stop) + '</td>' +
-        '<td class="up">' + f2(o.target) + '</td>' +
+        '<td class="up">' + (o.target == null ? '<span class="mut">不設</span>' : f2(o.target)) + '</td>' +
         '<td class="why">' + App.esc(o.why.join('；')) + '</td></tr>';
     }).join('') + '</tbody></table></div>';
 }
@@ -212,11 +217,15 @@ function renderList() {
 function btLine(bt) {
   if (!bt || !bt.all || !bt.all.n) return '';
   var a = bt.all, pass = a.excess > 0 && bt.recent.excess > 0;
-  return '<div class="statusbar ' + (pass ? 'ok' : 'bad') + '"><span class="txt">' +
-    (pass ? '<b>預設參數過去的表現贏過 0050</b>：' : '<b>注意：預設參數過去的表現輸給 0050</b>：') +
-    '照這份清單買，平均每筆' + (a.excess >= 0 ? '多賺 ' : '少賺 ') +
+  var flat = a.t != null && Math.abs(a.t) < 2;
+  var head = pass ? '<b>預設參數過去的表現贏過 0050</b>：'
+    : flat ? '<b>過去的表現跟直接買 0050 差不多</b>：'
+    : '<b>注意：預設參數過去的表現輸給 0050</b>：';
+  return '<div class="statusbar ' + (pass ? 'ok' : flat ? 'warn' : 'bad') + '"><span class="txt">' +
+    head + '照這份清單買，平均每筆' + (a.excess >= 0 ? '多賺 ' : '少賺 ') +
     App.num(Math.abs(a.excess), 2) + '%（' + a.start.slice(0, 4) + '–' + a.end.slice(0, 4) +
-    ' 年、' + a.n.toLocaleString() + ' 筆，已扣手續費和稅）。' +
+    ' 年、' + a.n.toLocaleString() + ' 筆，已扣手續費和稅）' +
+    (flat ? '，這個差距在統計上和 0 分不出來' : '') + '。' +
     '</span><a class="more" href="backtest.html">看回測報告 →</a></div>';
 }
 
@@ -252,8 +261,12 @@ App.boot('short', function (meta) {
       '<li><b>突破前 20 日高</b>：收盤價高過前 20 個交易日的最高價，而且成交量是前 5 日平均的 1.5 倍以上</li>' +
       '<li><b>均線多頭排列</b>：收盤價 &gt; 5 日均價 &gt; 10 日均價 &gt; 20 日均價（短期價格一路在長期之上）</li>' +
       '</ol><p class="note" style="margin:-8px 0 18px;font-size:13.5px">ETF 沒有月營收，只看後三項，再換算成 100 分，' +
-      '和個股放在同一張表。近 20 日平均每天成交不到 1,000 張的不列入。' +
-      '參考停損 = 20 日均價與「收盤跌 7%」取較高者；參考目標 = 收盤 + 2 ×（收盤 − 停損）。</p>' +
+      '和個股放在同一張表。近 20 日平均每天成交不到 1,000 張的不列入。<br>' +
+      '<b>參考停損 = 收盤 − 2 × ATR</b>（ATR 是這檔股票平常一天的波動幅度，' +
+      '距離限制在 2%～10% 之間）。用固定百分比當停損，實測每個策略、每個期間都比較差 —— ' +
+      '對波動大的股票來說 7% 只是兩天的正常波動。<b>目標價預設不設</b>：' +
+      '設上限會砍掉少數大漲的那幾筆，實測讓平均報酬變差。' +
+      '<a href="backtest.html">回測報告</a>有完整數字。</p>' +
       '<div id="list"></div>' +
       '<details' + (isDefault() ? '' : ' open') + '><summary>調整條件與參數</summary><div class="inner">' +
       paramForm() + '</div></details></div>';

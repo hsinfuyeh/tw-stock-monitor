@@ -29,9 +29,13 @@ function statBox(title, sub, s) {
     '<dt>同期間買 0050</dt><dd>' + money(s.bench) + '</dd>' +
     '<dt><b>' + App.tip('贏過 0050') + '</b></dt><dd>' + money(s.excess) + '</dd>' +
     '<dt>單筆最大虧損</dt><dd>' + money(s.worst) + '</dd>' +
+    '<dt>持有期間曾達 +5%</dt><dd>' + (s.p5 == null ? '—' : App.num(s.p5, 1) + '%') + '</dd>' +
+    '<dt>最高漲到（中位數）</dt><dd>' + (s.mfe_med == null ? '—' : App.num(s.mfe_med, 1, true) + '%') + '</dd>' +
+    '<dt>最低跌到（中位數）</dt><dd>' + (s.mae_med == null ? '—' : App.num(s.mae_med, 1, true) + '%') + '</dd>' +
     '<dt>' + App.tip('可信度') + '</dt><dd>' + (s.t == null ? '—' : App.num(s.t, 1, true)) + '</dd>' +
     '<dt>出場原因</dt><dd class="mut" style="font-weight:300">停損 ' + (ex['停損'] || 0).toLocaleString() +
-    '・達標 ' + (ex['達標'] || 0).toLocaleString() + '・時間到 ' + (ex['時間'] || 0).toLocaleString() + '</dd>' +
+    (ex['達標'] ? '・達標 ' + ex['達標'].toLocaleString() : '') +
+    '・時間到 ' + (ex['時間'] || 0).toLocaleString() + '</dd>' +
     '<dt>平均持有</dt><dd>' + App.num(s.hold_avg, 1) + ' 天</dd></dl></div>';
 }
 
@@ -39,9 +43,15 @@ function verdict(bt) {
   var a = bt.all, r = bt.recent;
   var pass = a.excess > 0 && r.excess > 0;
   var strong = a.t != null && Math.abs(a.t) >= 2;
+  var flat = a.t != null && Math.abs(a.t) < 2;
   var txt = pass
     ? '<b>預設參數兩段回測都贏 0050</b>：整段歷史平均每筆多賺 ' + App.num(a.excess, 2) +
       '%，近 60 日多賺 ' + App.num(r.excess, 2) + '%。'
+    : flat
+    ? '<b>跟直接買 0050 差不多</b>：整段歷史（' + a.n.toLocaleString() + ' 筆）平均每筆' +
+      (a.excess < 0 ? '少賺 ' : '多賺 ') + App.num(Math.abs(a.excess), 2) +
+      '%，這個差距在統計上和 0 分不出來。也就是說<b>沒有證據能贏過直接買 0050</b>，' +
+      '但也不像舊版那樣穩定地輸（舊版用固定 7% 停損時是每筆少賺 0.34%，而且不像巧合）。'
     : '<b>預設參數還沒通過 PRD 的驗收標準</b>：扣掉手續費和稅之後，' +
       '整段歷史（' + a.n.toLocaleString() + ' 筆）平均每筆比 0050 ' +
       (a.excess < 0 ? '少賺 ' : '多賺 ') + App.num(Math.abs(a.excess), 2) + '%' +
@@ -134,7 +144,7 @@ App.boot('backtest', function (meta) {
       '<div class="card"><h2>怎麼測的</h2>' +
       '<ul class="note">' +
       '<li>每天收盤後取當天清單的前 ' + topn + ' 名，<b>隔天開盤買進</b>。</li>' +
-      '<li>碰到參考停損價就賣、碰到參考目標價就賣，都沒碰到的話最多抱 ' + hold + ' 個交易日。</li>' +
+      '<li>跌到參考停損價（收盤 − 2 × ATR）就賣，否則抱滿 ' + hold + ' 個交易日賣出。預設不設目標價。</li>' +
       '<li>每筆扣掉手續費和稅 ' + bt.cost + '%，股利也算進去。</li>' +
       '<li>跟同一段時間買 0050 比（0050 也扣手續費和稅 ' + bt.etf_cost.toFixed(3) + '%）。</li></ul>' +
       '<details><summary>為什麼是隔天開盤買、不是當天收盤</summary><div class="inner note">' +
@@ -154,6 +164,16 @@ App.boot('backtest', function (meta) {
       '<p>也因為這樣，<b>不建議一直調參數調到近 60 日贏 0050</b> —— 樣本這麼少，總調得出一組贏的，' +
       '但那是把過去的巧合背下來，不是找到規則。調完請看整段歷史有沒有跟著變好。</p></div></details>' +
       cc.html +
+      '<div class="card"><h2>這些規則是怎麼定出來的</h2>' +
+      '<p class="lead">2026-09 依一份研究規格重做了一輪驗證：先寫好假設，再一次測完 23 種選股組合 × 7 種停損，' +
+      '好壞結果都記在 repo 的 RESEARCH_LOG.md。三個主要結論：</p>' +
+      '<ul class="note">' +
+      '<li><b>停損越緊、結果越差</b>，每個策略、每個期間都一樣。台股個股平常一天就會波動 2–3%，' +
+      '固定 3% 的停損等於把日常波動變成實現的虧損（先碰停損的比例 53–68%，平均只抱 1–3 天）。' +
+      '所以改成「收盤 − 2 × ATR」，距離跟著個股自己的波動走。</li>' +
+      '<li><b>設目標價也會扣分</b>：少數大漲的那幾筆是報酬的主要來源，設上限等於把它們砍掉。</li>' +
+      '<li><b>選股有一點效果，但不足以贏過 0050</b>：清單贏得過「當天平均的個股」，' +
+      '可是平均個股本來就輸給 0050。</li></ul></div>' +
       '<div class="card"><h2>拆開來看</h2>' +
       '<p class="lead">整段歷史。每個條件單獨用、以及拿掉停損停利，看虧損是出在「選股」還是「賣出規則」。</p>' +
       abl + '</div>' +
