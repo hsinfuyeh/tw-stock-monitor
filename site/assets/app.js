@@ -93,8 +93,10 @@
     return '<div class="top"><div class="in">' +
       '<a class="brand" href="index.html">台股觀測</a>' + links +
       searchbox(q || '') +
+      '<button id="updbtn2" class="themebtn" type="button" title="立即更新資料">⟳</button>' +
       '<button id="themebtn" class="themebtn" type="button">☾</button>' +
-      '</div></div><div class="stale" id="updbar" data-empty="1"><div class="in"></div></div>';
+      '</div></div><div class="stale" id="updbar" data-empty="1"><div class="in"></div></div>' +
+      '<div class="stale" id="updmsg" data-empty="1"><div class="in"></div></div>';
   }
 
   function searchbox(value, big) {
@@ -414,6 +416,7 @@
     getMeta().then(function (meta) {
       GLOSSARY = meta.glossary || {};
       staleBanner(meta);
+      bindUpdateButton();
       if (LOCAL) watchUpdate();
       var r = render(meta);
       return Promise.resolve(r).then(function () { buildStamp(meta); });
@@ -425,6 +428,117 @@
         '<div class="note">' + esc(e.message) + '<br>' +
         '資料檔可能還沒產生，或這個頁面不是從網站根目錄開啟的。</div></div>';
     });
+  }
+
+  /* ---------- 立即更新（右上角的 ⟳）----------
+   * 本機版直接打自己的 /api/update。
+   * 公開網站是靜態的、沒有後端，所以改成請 GitHub 跑那個自動更新流程
+   * （跟每天排程跑的是同一個）。這需要一把只能「觸發這個 repo 的 workflow」
+   * 的鑰匙，存在<b>你自己的瀏覽器</b>（localStorage），不會進 repo、
+   * 也不會傳給別人。第一次按會請你貼上，之後就記住。
+   */
+  var GH = { owner: 'hsinfuyeh', repo: 'tw-stock-monitor', wf: 'update.yml' };
+  var TOKEN_KEY = 'gh_token';
+
+  function ghToken() {
+    try { return localStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; }
+  }
+
+  function msgbar(html, cls) {
+    var bar = document.getElementById('updmsg');
+    if (!bar) return;
+    bar.removeAttribute('data-empty');
+    bar.className = 'stale' + (cls ? ' ' + cls : '');
+    bar.querySelector('.in').innerHTML = html;
+  }
+
+  function askToken() {
+    msgbar('<b>需要一把 GitHub 鑰匙才能從網頁按更新</b>' +
+      '<span>到 <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" ' +
+      'rel="noopener" style="color:#fff;text-decoration:underline">GitHub 建立 Fine-grained token</a>：' +
+      'Repository access 選 ' + GH.repo + '，Permissions 只開 <b>Actions: Read and write</b>。' +
+      '建好後貼進來，它只存在這台瀏覽器。</span>' +
+      '<input id="ghtok" type="password" placeholder="github_pat_…" ' +
+      'style="flex:1 0 220px;padding:6px 10px;border-radius:6px;border:none;font:inherit">' +
+      '<button class="updbtn" id="ghsave" type="button">儲存並更新</button>');
+    document.getElementById('ghsave').addEventListener('click', function () {
+      var v = (document.getElementById('ghtok').value || '').trim();
+      if (!v) return;
+      try { localStorage.setItem(TOKEN_KEY, v); } catch (e) {}
+      runUpdate();
+    });
+  }
+
+  function gh(path, opts) {
+    opts = opts || {};
+    opts.headers = Object.assign({
+      'Accept': 'application/vnd.github+json',
+      'Authorization': 'Bearer ' + ghToken()
+    }, opts.headers || {});
+    return fetch('https://api.github.com/repos/' + GH.owner + '/' + GH.repo + path, opts);
+  }
+
+  function watchGh(since) {
+    gh('/actions/workflows/' + GH.wf + '/runs?per_page=1').then(function (r) {
+      return r.ok ? r.json() : null;
+    }).then(function (j) {
+      var run = j && j.workflow_runs && j.workflow_runs[0];
+      if (!run || new Date(run.created_at) < since) {
+        return setTimeout(function () { watchGh(since); }, 5000);
+      }
+      if (run.status !== 'completed') {
+        msgbar('<span class="spin"></span><b>GitHub 正在更新資料…</b>' +
+          '<span>大約 5–8 分鐘。可以關掉頁面，更新完再回來。</span>' +
+          '<a class="updbtn" href="' + run.html_url + '" target="_blank" rel="noopener">看進度</a>',
+          'busy');
+        return setTimeout(function () { watchGh(since); }, 10000);
+      }
+      if (run.conclusion === 'success') {
+        msgbar('<b>更新完成</b><span>重新載入頁面看最新資料。</span>' +
+          '<button class="updbtn" id="reloadbtn" type="button">重新載入</button>', 'ok');
+        var rb = document.getElementById('reloadbtn');
+        if (rb) rb.addEventListener('click', function () { location.reload(); });
+      } else {
+        msgbar('<b>更新沒有成功（' + esc(run.conclusion || '') + '）</b>' +
+          '<span>多半是 TWSE 當天的資料還沒發完，晚點再按一次即可。</span>' +
+          '<a class="updbtn" href="' + run.html_url + '" target="_blank" rel="noopener">看紀錄</a>',
+          'bad');
+      }
+    }).catch(function () {
+      setTimeout(function () { watchGh(since); }, 10000);
+    });
+  }
+
+  function runUpdate() {
+    if (LOCAL) {                       // 本機：叫自己的後端做
+      msgbar('<span class="spin"></span><b>開始更新…</b>', 'busy');
+      fetch('api/update', { method: 'POST' }).then(function () { watchUpdate(); });
+      return;
+    }
+    if (!ghToken()) return askToken();
+    var since = new Date(Date.now() - 60000);
+    msgbar('<span class="spin"></span><b>送出更新要求…</b>', 'busy');
+    gh('/actions/workflows/' + GH.wf + '/dispatches', {
+      method: 'POST', body: JSON.stringify({ ref: 'main' })
+    }).then(function (r) {
+      if (r.status === 204) return watchGh(since);
+      if (r.status === 401 || r.status === 403 || r.status === 404) {
+        try { localStorage.removeItem(TOKEN_KEY); } catch (e) {}
+        return msgbar('<b>這把鑰匙不能用（' + r.status + '）</b>' +
+          '<span>可能是權限不足或已過期。重新建一把，Permissions 要開 Actions: Read and write。</span>',
+          'bad');
+      }
+      return r.text().then(function (t) {
+        msgbar('<b>觸發失敗（' + r.status + '）</b><span>' + esc(t.slice(0, 160)) + '</span>', 'bad');
+      });
+    }).catch(function (e) {
+      msgbar('<b>連不上 GitHub</b><span>' + esc(e.message) + '</span>', 'bad');
+    });
+  }
+
+  function bindUpdateButton() {
+    var b = document.getElementById('updbtn2');
+    if (b) b.addEventListener('click', runUpdate);
   }
 
   /* 「其他排行」的分頁列。排行頁（lists.html）與層層篩選頁（funnel.html）

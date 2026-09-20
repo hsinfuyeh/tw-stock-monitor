@@ -129,6 +129,7 @@ background:rgba(255,255,255,.2);padding:1px 6px;border-radius:4px;font-size:12.5
 .stale[data-empty]{display:none}
 .stale.busy{background:var(--fg);color:var(--bg)}
 .stale.bad{background:var(--up)}
+.stale.ok{background:var(--ok)}
 .updbtn{margin-left:auto;padding:5px 14px;border-radius:var(--pill);
 border:1px solid rgba(255,255,255,.55);background:transparent;color:#fff;
 font-family:inherit;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap}
