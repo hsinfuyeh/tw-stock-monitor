@@ -8,13 +8,13 @@ CONFIGS = [("B0r", ""), ("M1", "v=1.2 收斂=要"), ("M3", "sue≥2.0 公布≤7
 EXITS = [("+5% 上限 / 10 日", dict(up=0.05, dn=0.99, hold=10)),
          ("純持有 10 日", dict(up=9.99, dn=0.99, hold=10)),
          ("純持有 20 日", dict(up=9.99, dn=0.99, hold=20))]
-IN_END, OOS_END = pd.Timestamp("2023-01-01"), pd.Timestamp("2026-01-01")
+IN_END, OOS_END = pd.Timestamp("2019-01-01"), pd.Timestamp("2026-01-01")
 
 def main(src):
     d0 = pd.read_pickle(src)
     rows, years = [], []
     for name, kw in EXITS:
-        d = d0.drop(columns=["label", "day", "net", "mfe", "mae"], errors="ignore")
+        d = d0.drop(columns=barrier.LABEL_COLS, errors="ignore")
         d = d.join(barrier.labels(d, **kw))
         u = S.universe(d); cs = S.cand_score(d, u); strat = S.strategies(d, u, cs)
         base = d[u].groupby("date").agg(net_u=("net", "mean"))
@@ -22,8 +22,8 @@ def main(src):
         for fam, cfg in CONFIGS:
             picks[fam] = S.prd_picks(d) if fam == "PRD" else S.pick(d, *strat[(fam, cfg)])
         for k, t in picks.items():
-            for period, sel in (("樣本內 19-22", t[t["date"] < IN_END]),
-                                ("樣本外 23-25", t[(t["date"] >= IN_END) & (t["date"] < OOS_END)]),
+            for period, sel in (("樣本內 08-18", t[t["date"] < IN_END]),
+                                ("樣本外 19-25", t[(t["date"] >= IN_END) & (t["date"] < OOS_END)]),
                                 ("holdout 26", t[t["date"] >= OOS_END])):
                 m = S.metrics(sel, base)
                 if m.get("n"): rows.append(dict(exit=name, strat=k, period=period, **m))

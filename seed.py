@@ -10,8 +10,8 @@
 
 種子裡有什麼 ——
 
-    data/twse.duckdb   壓實後約 148 MB。TWSE 那四個資料源都在裡面。
-    raw/revenue/       月營收，570 個檔案、2.3 MB。
+    data/twse.duckdb   壓實後約 271 MB（2008-2026，4,597 個交易日）。
+    raw/revenue/       月營收，約 570 個檔案、2.3 MB。
 
     月營收必須一起帶。它不在 DuckDB 裡（publish 時才由 revenue.load()
     從原始檔讀），CI 沒有它的話 yoy 全是缺值，漏斗的 L3 營收層會整層失效

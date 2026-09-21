@@ -138,9 +138,32 @@ def test_score(check):
           got["a"] is None and got["b"] is None and got["c"] == 3)
 
 
+def test_exrights_rows(check):
+    """TWT49U 的欄位位置會隨年份變 —— 寫死索引會安靜地解析錯。"""
+    print("\n除權息解析（exrights）")
+    import exrights
+
+    # 2019 之後：3 前收 4 參考價 5 金額 6 類型
+    new = ['108年01月02日', '8473', '山林水', '56.20', '56.09', '0.105651', '權',
+           '61.80', '50.50', '56.20', '56.20']
+    # 2008–2018：權值與息值分成兩欄，所以金額在 7、類型在 8
+    old = ['97年01月02日', '3315', '宣昶', '53.50', '53.15', 0.35, 0.0, '0.350000', '權',
+           '57.20', '49.45', '53.50', '53.50']
+    a, b = exrights._row(new), exrights._row(old)
+    check("新格式（2019 後）解析正確",
+          a and a["code"] == "8473" and abs(a["value"] - 0.105651) < 1e-9
+          and a["kind"] == "權" and a["date"] == "2019-01-02", str(a))
+    check("舊格式（權值息值分兩欄）解析正確",
+          b and b["code"] == "3315" and abs(b["value"] - 0.35) < 1e-9
+          and b["kind"] == "權" and b["date"] == "2008-01-02", str(b))
+    check("認不出來的列回傳 None，不會硬塞錯的值",
+          exrights._row(['97年01月02日', '1234', 'x', '1', '1']) is None)
+
+
 def run(check):
     test_barrier(check)
     test_score(check)
+    test_exrights_rows(check)
 
 
 if __name__ == "__main__":

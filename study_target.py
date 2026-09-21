@@ -10,7 +10,7 @@ NET = 5.0                                  # 使用者要的淨獲利（%）
 UP = (NET + barrier.COST) / 100.0          # 換算成毛報酬的上界
 HOLDS = (10, 20, 30)
 STOPS = [("2×ATR 停損", "atr"), ("不停損", 0.99)]
-IN_END, OOS_END = pd.Timestamp("2023-01-01"), pd.Timestamp("2026-01-01")
+IN_END, OOS_END = pd.Timestamp("2019-01-01"), pd.Timestamp("2026-01-01")
 
 
 COLS = ["date", "code", "label", "net", "mfe", "mae", "day", "regime", "adtv20",
@@ -71,8 +71,7 @@ def main(src):
     rows = []
     for hold in HOLDS:
         for sname, sv in STOPS:
-            d = d0.drop(columns=["label", "day", "net", "mfe", "mae", "ei", "xi", "bench"],
-                        errors="ignore")
+            d = d0.drop(columns=barrier.LABEL_COLS, errors="ignore")
             dn = np.clip(2.0 * d["atrp14"].to_numpy(), 0.02, 0.10) if sv == "atr" else sv
             lab = barrier.labels(d, up=UP, dn=dn, hold=hold)
             d = d.join(lab).assign(bench=barrier.bench_returns(d, lab, m))
@@ -81,14 +80,14 @@ def main(src):
             strat = S.strategies(d, u, cs)
             for k, t in selections(d, u, cs, strat).items():
                 t = t.dropna(subset=["bench"])
-                for period, sel in (("樣本內 19-22", t[t["date"] < IN_END]),
-                                    ("樣本外 23-25", t[(t["date"] >= IN_END) & (t["date"] < OOS_END)]),
+                for period, sel in (("樣本內 08-18", t[t["date"] < IN_END]),
+                                    ("樣本外 19-25", t[(t["date"] >= IN_END) & (t["date"] < OOS_END)]),
                                     ("holdout 26", t[t["date"] >= OOS_END])):
                     r = stats(sel, hold)
                     if r:
                         rows.append(dict(持有=hold, 停損=sname, 選股=k, period=period, **r))
     r = pd.DataFrame(rows)
-    for period in ("樣本內 19-22", "樣本外 23-25", "holdout 26"):
+    for period in ("樣本內 08-18", "樣本外 19-25", "holdout 26"):
         x = r[r["period"] == period]
         print("\n===== {} 淨每筆 =====".format(period))
         print(x.pivot_table(index=["持有", "停損"], columns="選股", values="淨每筆", sort=False).round(2).to_string())
@@ -98,7 +97,7 @@ def main(src):
         print(x.pivot_table(index=["持有", "停損"], columns="選股", values="對0050", sort=False).round(2).to_string())
     r.to_json("reports/target_study.json", orient="records", force_ascii=False)
     print("\n樣本內最好的 6 組（依淨每筆）：")
-    print(r[r.period == "樣本內 19-22"].sort_values("淨每筆", ascending=False).head(6).to_string(index=False))
+    print(r[r.period == "樣本內 08-18"].sort_values("淨每筆", ascending=False).head(6).to_string(index=False))
 
 
 if __name__ == "__main__":

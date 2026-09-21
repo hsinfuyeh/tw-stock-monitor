@@ -232,6 +232,10 @@ def labels(d, up=0.05, dn=0.03, hold=10, cost=COST):
 
 ETF_COST = 0.1425 * 2 + 0.1        # 0050 來回（證交稅 0.1%）
 
+# labels() 產生的欄位。重算標籤前要先清掉這些，否則 join 會撞名。
+# 各 study 原本各抄一份清單，加了 ei/xi 之後有兩支漏改，直接炸掉。
+LABEL_COLS = ["label", "day", "net", "mfe", "mae", "ei", "xi", "bench"]
+
 
 def bench_returns(d, lab, m=None):
     """每筆交易「同一段時間改買 0050」的報酬（%，已扣 0050 的成本）。"""

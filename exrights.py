@@ -62,22 +62,48 @@ def fetch_year(year, max_age_hours=12):
     return out
 
 
-def load(start_year=2019, end_year=None):
+KINDS = {"權", "息", "權息"}
+
+
+def _row(r):
+    """一列 TWT49U 的資料。<b>欄位位置會隨年份變</b>，所以不能寫死索引。
+
+    2019 之後：… 3 前收 4 參考價 5 權值+息值 6 類型 …
+    2008-2018：權值與息值<b>分成兩欄</b>，所以「權值+息值」在 7、類型在 8。
+
+    寫死 r[5]／r[6] 的話，舊年份會把「息值」當成類型（那是數字不是字串），
+    解析整個壞掉 —— 2026-09-21 回補到 2008 時就是這樣炸的。
+    改成先找「類型」欄（權／息／權息），金額固定是它的前一欄。
+    """
+    try:
+        ki = next(i for i, v in enumerate(r)
+                  if isinstance(v, str) and v.strip() in KINDS)
+        return dict(date=_roc_cn(r[0]), code=r[1].strip(),
+                    prev_close=float(str(r[3]).replace(",", "")),
+                    ref_price=float(str(r[4]).replace(",", "")),
+                    value=float(str(r[ki - 1]).replace(",", "")),
+                    kind=r[ki].strip())
+    except (StopIteration, ValueError, IndexError):
+        return None
+
+
+def load(start_year=None, end_year=None):
+    """載入除權息事件。預設跟著 config.BACKFILL_START 走。
+
+    起點一定要跟行情資料一致：少了哪一年的除權息，那一年的除息日價格落差
+    就會被當成下跌，報酬被系統性低估（台股平均殖利率 3-4%/年）。
+    2026-09-21 回補到 2008 之後就踩到這個 —— 行情有 18 年、除權息只有 7 年。
+    """
+    if start_year is None:
+        from config import BACKFILL_START
+        start_year = int(str(BACKFILL_START)[:4])
     end_year = end_year or dt.date.today().year
     rows = []
     for y in range(start_year, end_year + 1):
         for r in fetch_year(y):
-            try:
-                rows.append(dict(
-                    date=_roc_cn(r[0]),
-                    code=r[1].strip(),
-                    prev_close=float(str(r[3]).replace(",", "")),
-                    ref_price=float(str(r[4]).replace(",", "")),
-                    value=float(str(r[5]).replace(",", "")),
-                    kind=r[6].strip(),
-                ))
-            except (ValueError, IndexError):
-                continue
+            one = _row(r)
+            if one:
+                rows.append(one)
     df = pd.DataFrame(rows)
     if len(df):
         df["date"] = pd.to_datetime(df["date"])

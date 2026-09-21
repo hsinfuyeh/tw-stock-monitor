@@ -13,7 +13,7 @@ EXITS = [("+5% 上限 / 10 日", dict(up=0.05, dn=0.99, hold=10)),
          ("純持有 10 日", dict(up=9.99, dn=0.99, hold=10)),
          ("純持有 20 日", dict(up=9.99, dn=0.99, hold=20)),
          ("2×ATR 停損 / 20 日", dict(up=9.99, dn=None, hold=20))]
-IN_END, OOS_END = pd.Timestamp("2023-01-01"), pd.Timestamp("2026-01-01")
+IN_END, OOS_END = pd.Timestamp("2019-01-01"), pd.Timestamp("2026-01-01")
 
 def stats(t, hold):
     if not len(t): return {}
@@ -29,7 +29,7 @@ def main(src):
     m = barrier.market()
     rows = []
     for name, kw in EXITS:
-        d = d0.drop(columns=["label","day","net","mfe","mae","ei","xi","bench"], errors="ignore")
+        d = d0.drop(columns=barrier.LABEL_COLS, errors="ignore")
         kw = dict(kw)
         if kw["dn"] is None: kw["dn"] = np.clip(2.0 * d["atrp14"].to_numpy(), 0.02, 0.10)
         lab = barrier.labels(d, **kw)
@@ -44,8 +44,8 @@ def main(src):
         for k, t in picks.items():
             if "bench" not in t.columns:
                 t = t.join(d["bench"])
-            for period, sel in (("樣本內 19-22", t[t["date"] < IN_END]),
-                                ("樣本外 23-25", t[(t["date"]>=IN_END)&(t["date"]<OOS_END)]),
+            for period, sel in (("樣本內 08-18", t[t["date"] < IN_END]),
+                                ("樣本外 19-25", t[(t["date"]>=IN_END)&(t["date"]<OOS_END)]),
                                 ("holdout 26", t[t["date"] >= OOS_END])):
                 r = stats(sel.dropna(subset=["bench"]), kw["hold"])
                 if r: rows.append(dict(exit=name, strat=k, period=period, **r))

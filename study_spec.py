@@ -16,7 +16,7 @@ import barrier
 import validate
 
 K = 10
-TEST_YEARS = (2022, 2023, 2024, 2025)
+TEST_YEARS = tuple(range(2011, 2026))   # 資料補到 2008 後擴大（RESEARCH_LOG 第 7 輪）
 HOLDOUT = pd.Timestamp("2026-01-01")
 TRAIN_YEARS = 3
 MIN_TRAIN = 100

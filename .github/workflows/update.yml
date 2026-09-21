@@ -48,8 +48,13 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      # 倉儲快取（壓實後約 148 MB）。還原與保存拆開：
+      # 倉儲快取（壓實後約 271 MB）。還原與保存拆開：
       # 只有資料真的變了才存新的一份，否則一天五次排程會堆出一堆一樣的快取。
+      #
+      # 前綴帶著資料起點（warehouse2008-）。2026-09-21 把歷史補到 2008 之後，
+      # 舊前綴的快取裝的是 2019 起的倉儲，restore-keys 會繼續命中它，
+      # CI 就永遠停在 7 年資料、線上回測跟本機對不起來 —— 而且不會有任何錯誤。
+      # 換前綴等於讓舊快取失效，強制從新的 Release 種子重新開始。
       - name: 還原倉儲快取
         id: cache
         uses: actions/cache/restore@v4
@@ -57,8 +62,8 @@ jobs:
           path: |
             data
             raw
-          key: warehouse-${{ github.run_id }}
-          restore-keys: warehouse-
+          key: warehouse2008-${{ github.run_id }}
+          restore-keys: warehouse2008-
 
       # 冷啟動（快取過期或第一次跑）沒有倉儲可用。
       # 從零回補要好幾個小時，會超過 job 上限，所以從 Release 下載種子。
@@ -131,7 +136,7 @@ jobs:
           path: |
             data
             raw
-          key: warehouse-${{ github.run_id }}
+          key: warehouse2008-${{ github.run_id }}
 
       - name: 摘要
         if: always()

@@ -12,7 +12,7 @@ BASE = "https://www.twse.com.tw"
 UA = "Mozilla/5.0 (compatible; personal-research/1.0)"
 
 # 回補起點。涵蓋 2020 COVID 崩跌、2022 空頭、2023-26 多頭 -> 多種波動環境
-BACKFILL_START = "20190101"
+BACKFILL_START = "20080101"
 
 DATASETS = {
     # 全市場日行情（OHLCV + 本益比）。核心資料集。

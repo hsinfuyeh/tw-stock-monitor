@@ -31,15 +31,15 @@ CONFIGS = [
     ("M4", "z≤-2.5 大盤非down=要"),
     ("PRD", "目前網站"),
 ]
-IN_END = pd.Timestamp("2023-01-01")      # 樣本內：2019–2022
-OOS_END = pd.Timestamp("2026-01-01")     # 樣本外：2023–2025；之後是 holdout
+IN_END = pd.Timestamp("2019-01-01")      # 樣本內：2008–2018
+OOS_END = pd.Timestamp("2026-01-01")     # 樣本外：2019–2025；之後是 holdout
 
 
 def main(src):
     d0 = pd.read_pickle(src)
     rows = []
     for name, fn in EXITS:
-        d = d0.drop(columns=["label", "day", "net", "mfe", "mae"], errors="ignore")
+        d = d0.drop(columns=barrier.LABEL_COLS, errors="ignore")
         L = barrier.labels(d, dn=fn(d))
         d = d.join(L)
         u = S.universe(d)
@@ -54,15 +54,15 @@ def main(src):
             else:
                 picks[fam] = S.pick(d, *strat[(fam, cfg)])
         for k, t in picks.items():
-            for period, sel in (("樣本內 19-22", t[t["date"] < IN_END]),
-                                ("樣本外 23-25", t[(t["date"] >= IN_END) & (t["date"] < OOS_END)]),
+            for period, sel in (("樣本內 08-18", t[t["date"] < IN_END]),
+                                ("樣本外 19-25", t[(t["date"] >= IN_END) & (t["date"] < OOS_END)]),
                                 ("holdout 26", t[t["date"] >= OOS_END])):
                 m = S.metrics(sel, base)
                 if m.get("n"):
                     rows.append(dict(exit=name, strat=k, period=period, **m))
     r = pd.DataFrame(rows)
     cols = ["n", "p_up", "p_stop", "timeout", "net", "excess", "pf", "hold_med", "t"]
-    for period in ("樣本內 19-22", "樣本外 23-25", "holdout 26"):
+    for period in ("樣本內 08-18", "樣本外 19-25", "holdout 26"):
         print("\n=== {} ===".format(period))
         x = r[r["period"] == period]
         print(x.pivot_table(index="exit", columns="strat", values="net", sort=False).round(2).to_string())
@@ -72,7 +72,7 @@ def main(src):
         print(x.pivot_table(index="exit", columns="strat", values="p_up", sort=False).round(1).to_string())
     r.to_json("reports/exit_study.json", orient="records", force_ascii=False)
     print("\n完整表格 reports/exit_study.json")
-    best = r[(r["period"] == "樣本內 19-22")].sort_values("net", ascending=False).head(8)
+    best = r[(r["period"] == "樣本內 08-18")].sort_values("net", ascending=False).head(8)
     print("\n樣本內最好的 8 組：")
     print(best[["exit", "strat"] + cols].to_string(index=False))
 
