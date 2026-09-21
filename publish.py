@@ -36,8 +36,10 @@ import numpy as np
 import pandas as pd
 
 import factors
+import forward
 import funnel
 import screens
+import risk_lists
 import server
 import shortterm
 import stock_report
@@ -308,7 +310,14 @@ def build(limit=None, out=SITE):
     sc = emit_screens(p_common)
     selfcheck(p_common, fn, sc)
     print("短線清單與回測…", flush=True)
-    short = shortterm.compute(snap_dir=ROOT / "snapshots")
+    feat = shortterm.features()
+    short = shortterm.compute(feat)
+    # 規範 v1 第 4 節：處置股、注意股不買。抓不到時照實標示，不當成「沒有」。
+    risk = risk_lists.fetch(short[0]["date"])
+    short[0]["risk"] = risk
+    short[0]["stage"] = forward.STAGE
+    print("前瞻實測（規範 v1 第 7 節）…", flush=True)
+    fwd_new, fwd = forward.compute(feat, risk)
 
     # 先寫到暫存目錄，全部寫完才換掉正式的 data/。
     # 原本是直接砍掉 data/ 再慢慢寫，本機按「立即更新」時，那 4 分鐘內
@@ -323,7 +332,8 @@ def build(limit=None, out=SITE):
     sizes["meta"] = write(data / "meta.json", emit_meta(p_common, day_date))
     sizes["universe"] = write(data / "universe.json", emit_universe())
     sizes["funnel"] = write(data / "funnel.json", fn)
-    shortterm.write(data, ROOT / "snapshots", *short)
+    shortterm.write(data, *short)
+    forward.write(data, fwd_new, fwd)
     tot = 0
     for k, v in sc.items():
         tot += write(data / "screens" / "{}.json".format(k), v)

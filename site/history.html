@@ -7,80 +7,214 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:wght@400;500&display=swap">
 <link rel="stylesheet" href="assets/style.css">
-<title>歷史清單</title></head><body>
+<title>前瞻實測</title>
+<style>
+.arms{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:6px}
+@media (max-width:760px){.arms{grid-template-columns:1fr}}
+.arm{border:1px solid var(--line2);border-radius:var(--r);padding:18px 20px;background:var(--card)}
+.arm h3{margin:0 0 2px;font-size:18px;font-weight:500}
+.arm .d{color:var(--mut);font-size:13.5px;margin-bottom:10px;line-height:1.6}
+.arm dl{display:grid;grid-template-columns:1fr auto;gap:5px 12px;margin:10px 0 0;font-size:14px}
+.arm dt{color:var(--mut);font-weight:300}.arm dd{margin:0;text-align:right}
+.st{display:inline-block;padding:1px 10px;border-radius:var(--pill);font-size:12.5px;border:1px solid currentColor;vertical-align:2px}
+.st.todo{color:var(--mut)}.st.watch{color:var(--warn)}.st.ok{color:var(--ok)}.st.fail{color:var(--up)}
+.bar{height:6px;border-radius:3px;background:var(--line2);position:relative;margin:8px 0 4px}
+.bar i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--fg)}
+.bar b{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--warn)}
+.tabs{display:flex;gap:7px;flex-wrap:wrap;margin:4px 0 14px}
+.tabs .chip.on{background:var(--pillbg);color:var(--pillfg);border-color:var(--pillbg)}
+.stages tr.on td{font-weight:600}
+svg.eq{width:100%;height:70px;display:block;margin-top:10px}
+</style></head><body>
 <div class="wrap" id="app"></div>
 <script src="assets/app.js"></script>
 <script>
-/* 歷史清單（stock-screener-PRD：每日快照）。
+/* 前瞻實測（短線交易與研究規範 v1 第 3、5、7、8 節）。
  *
- * 每天發佈時存下當天的清單（repo 的 snapshots/），這頁列出每一份，
- * 並用跟回測完全相同的規則追蹤之後實際走得怎樣 —— 這是「真的往前走」的紀錄，
- * 不是回頭測試，所以最能看出這套規則實際上靠不靠得住。 */
+ * 18 年回測已經說明：這些規則在過去都沒贏過 0050。回測可以一直改到好看，
+ * 往前走的紀錄改不了 —— 所以從起算日開始，四個版本（臂）同時「紙上」跑，
+ * 用規範的資金規則（最多 3 檔、每筆風險 0.5%、一天最多新增 1 檔…）算成一個投資組合，
+ * 跟同期買進持有 0050 比。每個臂在第 120 天做中期檢查、第 250 天做最終判定。 */
 function f2(v) { return v == null ? '—' : Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function money(v) { return v == null ? '—' : App.pct(v); }
+function n1(v, suf) { return v == null ? '—' : App.num(v, 1) + (suf || ''); }
 var ST = { '持有中': 'mut', '等待進場': 'mut', '達到目標': 'up', '停損出場': 'dn', '時間到出場': '' };
+var RISKNAME = { pending: '名單可能還沒公布', unavailable: '名單抓不到', unknown: '補算的日子沒有當時的名單' };
+function hasWhy(a) { return a.key === 'arm0' || a.key === 'arm2'; }
 
-function detail(h) {
-  return '<h3 style="font-size:17px;margin:26px 0 6px">' + h.date + ' 的清單</h3>' +
-    '<div class="scroll" data-per="20"><table><thead><tr><th>代號</th><th>名稱</th><th>總分</th>' +
-    '<th>當天收盤</th><th>停損</th><th>目標</th><th>隔天開盤買進</th><th>目前狀態</th>' +
-    '<th>持有天數</th><th class="sorted">報酬</th><th>同期 0050</th>' +
-    '<th style="text-align:left">入選理由</th></tr></thead><tbody>' +
-    h.rows.map(function (r) {
-      return '<tr><td><a href="stock.html?c=' + r.code + '"><strong>' + r.code + '</strong></a></td>' +
-        '<td>' + App.esc(r.name) + '</td><td>' + App.num(r.score, 0) + '</td>' +
-        '<td>' + f2(r.close) + '</td><td class="dn">' + f2(r.stop) + '</td>' +
-        '<td class="up">' + f2(r.target) + '</td><td>' + f2(r.entry) + '</td>' +
-        '<td class="' + (ST[r.status] || '') + '">' + App.esc(r.status) +
-        (r.exit_date ? '<br><span class="mut" style="font-size:12px">' + r.exit_date + ' @ ' + f2(r.exit) + '</span>' : '') +
-        '</td><td>' + (r.days || '—') + '</td><td class="sorted">' + money(r.ret) + '</td>' +
-        '<td>' + money(r.bench) + '</td><td class="why">' + App.esc((r.why || []).join('；')) + '</td></tr>';
+function spark(eq) {
+  if (!eq || eq.length < 2) return '';
+  var ys = [];
+  eq.forEach(function (e) { ys.push(e[1]); if (e[2] != null) ys.push(e[2]); });
+  var lo = Math.min.apply(null, ys), hi = Math.max.apply(null, ys), W = 300, H = 70;
+  if (hi - lo < 1e-9) { hi += 0.01; lo -= 0.01; }
+  function line(k) {
+    return eq.map(function (e, i) {
+      return (i ? 'L' : 'M') + (i / (eq.length - 1) * W).toFixed(1) + ',' +
+        (H - 4 - (e[k] - lo) / (hi - lo) * (H - 8)).toFixed(1);
+    }).join('');
+  }
+  return '<svg class="eq" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' +
+    '<path d="' + line(2) + '" fill="none" stroke="var(--mut)" stroke-width="1.2" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>' +
+    '<path d="' + line(1) + '" fill="none" stroke="var(--fg)" stroke-width="1.8" vector-effect="non-scaling-stroke"/></svg>' +
+    '<div class="mut" style="font-size:12px">實線：這個臂的組合　虛線：同期 0050</div>';
+}
+
+function limit(v, bad) {
+  return v == null ? '—' : '<span class="' + (bad ? 'up' : '') + '">' + App.num(v, 2) + '%</span>';
+}
+
+function card(a, F) {
+  var m = a.metrics || {}, s = m.status || {}, n = m.days || 0;
+  return '<div class="arm"><h3>' + App.esc(a.name) + ' <span class="st ' + (s.level || 'todo') + '">' +
+    App.esc(s.label || '累積中') + '</span></h3>' +
+    '<div class="d">' + App.esc(a.desc) + '</div>' +
+    '<div class="bar"><i style="width:' + Math.min(n / F.final * 100, 100) + '%"></i>' +
+    '<b style="left:' + (F.mid / F.final * 100) + '%"></b></div>' +
+    '<div class="mut" style="font-size:12.5px">第 ' + n + ' / ' + F.final + ' 個交易日（黃線：第 ' + F.mid + ' 天中期檢查）</div>' +
+    '<div class="note" style="font-size:13px;line-height:1.6;margin-top:6px">' + App.esc(s.note || '') + '</div>' +
+    spark(a.equity) +
+    '<dl>' +
+    '<dt>組合報酬</dt><dd>' + money(m.port) + '</dd>' +
+    '<dt>同期 0050</dt><dd>' + money(m.bench) + '</dd>' +
+    '<dt><b>' + App.tip('贏過 0050') + '</b></dt><dd>' + money(m.excess) + '</dd>' +
+    '<dt>' + App.tip('平均持股比重') + '</dt><dd>' + n1(m.expo, '%') + '</dd>' +
+    '<dt>' + App.tip('最大回落') + '（上限 15%）</dt><dd>' + limit(m.mdd, m.mdd < -15) + '</dd>' +
+    '<dt>10 日報酬為正的比例（目標 ≥ 55%）</dt><dd>' + n1(m.pos10, '%') + '</dd>' +
+    (a.key === 'arm0' ? '<dt>達到目標的比例（目標 ≥ 55%）</dt><dd>' + n1(m.hit, '%') + '</dd>' : '') +
+    '<dt>單筆最大虧損佔本金（上限 1%）</dt><dd>' + limit(m.worst_cap, m.worst_cap < -1) + '</dd>' +
+    '<dt>' + App.tip('可信度') + '（最終要 ≥ 2.5）</dt><dd>' + (m.t == null ? '滿 30 天才算' : App.num(m.t, 1, true)) + '</dd>' +
+    '<dt>買進 / 已出場 / 持有中</dt><dd>' + (m.entered || 0) + ' / ' + (m.closed || 0) + ' / ' + (m.open || 0) + '</dd>' +
+    '<dt>依規則跳過</dt><dd>' + (m.skipped || 0) + ' 次</dd>' +
+    (a.shadow ? '<dt>影子版「不停損」逐筆平均</dt><dd>' + money(a.shadow.avg) + '（' + a.shadow.n + ' 筆）</dd>' : '') +
+    '</dl></div>';
+}
+
+function tradesTable(a) {
+  // 新的在上：依訊號日、同一天再依進場日排（原始順序是出場的先後）
+  var T = (a.trades || []).slice().sort(function (x, y) {
+    return (y.signal + (y.entry_date || '')).localeCompare(x.signal + (x.entry_date || ''));
+  });
+  if (!T.length) return '<p class="note">還沒有交易。清單是收盤後產生的，隔天開盤才會「買進」。</p>';
+  return '<div class="scroll" data-per="15"><table><thead><tr><th>訊號日</th><th>代號</th><th>名稱</th>' +
+    '<th>結果</th><th>進場日</th><th>出場日</th><th>佔本金</th><th>個股報酬</th>' +
+    '<th class="sorted">對本金的影響</th></tr></thead><tbody>' +
+    T.map(function (t) {
+      if (!t.taken) return '<tr class="mut"><td>' + t.signal + '</td><td>' + t.code + '</td><td>' + App.esc(t.name) +
+        '</td><td colspan="6" style="text-align:left">跳過：' + App.esc(t.why) + '</td></tr>';
+      return '<tr><td>' + t.signal + '</td><td><a href="stock.html?c=' + t.code + '"><strong>' + t.code + '</strong></a></td>' +
+        '<td>' + App.esc(t.name) + '</td><td class="' + (ST[t.status] || '') + '">' + App.esc(t.status) + '</td>' +
+        '<td>' + (t.entry_date || '—') + '</td><td>' + (t.exit_date || '—') + '</td>' +
+        '<td>' + n1(t.weight, '%') + '</td><td>' + money(t.ret) + '</td>' +
+        '<td class="sorted">' + (t.pnl_cap == null ? '—' : App.pct(t.pnl_cap, 3)) + '</td></tr>';
     }).join('') + '</tbody></table></div>';
 }
 
+function dayDetail(a, h) {
+  var r = h.risk || {}, warn = [];
+  if (r.disposal_status === 'unknown' && r.notice_status === 'unknown') warn.push('補算的日子沒有當時的處置股／注意股名單，這天沒有排除');
+  else if (r.disposal_status && r.disposal_status !== 'ok') warn.push('處置股' + (RISKNAME[r.disposal_status] || r.disposal_status));
+  if (r.notice_status && r.notice_status !== 'ok') warn.push('注意股' + (RISKNAME[r.notice_status] || r.notice_status));
+  if (!h.n) return '<p class="note" style="margin-top:18px">' + h.date + ' 沒有符合條件的股票。</p>';
+  return '<h3 style="font-size:17px;margin:22px 0 6px">' + h.date + ' 的清單' +
+    (h.pre ? ' <span class="mut" style="font-size:13px">（起算日前，不計入成績）</span>' : '') + '</h3>' +
+    (warn.length ? '<div class="note" style="font-size:13px">' + App.esc(warn.join('；')) + '</div>' : '') +
+    '<div class="scroll" data-per="20"><table><thead><tr><th>代號</th><th>名稱</th><th>產業</th><th>總分</th>' +
+    '<th>當天收盤</th><th>隔天開盤買進</th><th>停損</th><th>目標</th><th>目前狀態</th>' +
+    '<th>持有天數</th><th class="sorted">報酬</th>' +
+    (hasWhy(a) ? '<th style="text-align:left">入選理由</th>' : '') + '</tr></thead><tbody>' +
+    h.rows.map(function (r) {
+      return '<tr><td><a href="stock.html?c=' + r.code + '"><strong>' + r.code + '</strong></a>' +
+        (r.flags || []).map(function (f) { return '<span class="flag">' + App.esc(f) + '</span>'; }).join('') + '</td>' +
+        '<td>' + App.esc(r.name) + '</td><td class="mut">' + App.esc(r.ind || '—') + '</td>' +
+        '<td>' + (r.score == null ? '—' : App.num(r.score, 0)) + '</td>' +
+        '<td>' + f2(r.close) + '</td><td>' + f2(r.entry) + '</td>' +
+        '<td class="dn">' + f2(r.stop_used) + '</td><td class="up">' + f2(r.target_used) + '</td>' +
+        '<td class="' + (ST[r.status] || '') + '">' + App.esc(r.status) +
+        (r.exit_date ? '<br><span class="mut" style="font-size:12px">' + r.exit_date + ' @ ' + f2(r.exit) + '</span>' : '') +
+        '</td><td>' + (r.days || '—') + '</td><td class="sorted">' + money(r.ret) + '</td>' +
+        (hasWhy(a) ? '<td class="why">' + App.esc((r.why || []).join('；')) + '</td>' : '') + '</tr>';
+    }).join('') + '</tbody></table></div>';
+}
+
+function armBody(a) {
+  var L = a.days_list || [];
+  var days = L.length ? '<div class="scroll"><table><thead><tr><th>清單日期</th><th>檔數</th><th>狀態</th>' +
+    '<th class="sorted">逐筆平均報酬</th></tr></thead><tbody id="daylist">' +
+    L.map(function (h, i) {
+      var st = !h.n ? '當天沒有符合條件的股票' : h.waiting === h.n ? '等待隔天開盤進場' : h.open ? '還有 ' + h.open + ' 檔持有中' : '全部已出場';
+      return '<tr data-i="' + i + '" style="cursor:pointer"><td><a href="#">' + h.date + '</a>' +
+        (h.backfilled ? ' <span class="mut" style="font-size:12px">補算</span>' : '') +
+        (h.pre ? ' <span class="mut" style="font-size:12px">起算前</span>' : '') +
+        '</td><td>' + h.n + '</td><td class="mut">' + st + '</td><td class="sorted">' + money(h.avg) + '</td></tr>';
+    }).join('') + '</tbody></table></div>' : '<p class="note">還沒有任何一天的清單。</p>';
+  return '<h3 style="font-size:18px;margin:10px 0 6px">組合的交易紀錄</h3>' +
+    '<p class="note" style="font-size:13.5px;margin-top:0">照資金規則「買」進去的，和因為規則被跳過的都列出來。' +
+    '「對本金的影響」已扣手續費和稅，是這一筆讓整筆本金變動了多少 %。</p>' + tradesTable(a) +
+    '<h3 style="font-size:18px;margin:26px 0 6px">每天的候選清單</h3>' +
+    '<p class="note" style="font-size:13.5px;margin-top:0">每天選出來的全部股票，不管組合有沒有買，都各自追蹤。點日期看明細。</p>' +
+    days + '<div id="det"></div>';
+}
+
 App.boot('history', function (meta) {
-  return App.get('short/history.json').then(function (H) {
+  return App.get('short/forward.json').then(function (F) {
     var app = document.getElementById('app');
-    var head = '<h1 style="font-size:30px;letter-spacing:-.03em;font-weight:500;margin:0 0 4px">歷史清單</h1>' +
-      '<div class="meta">每個交易日的清單都會存下來，這裡追蹤它們之後實際的表現</div>';
-    if (!H.length) {
-      app.innerHTML = head + '<div class="empty"><div class="note">還沒有任何一天的清單。</div></div>';
-      return;
+    var R = F.rules, S = F.stage;
+    var stageRows = S.stages.map(function (x) {
+      var on = x[0] === S.current;
+      return '<tr class="' + (on ? 'on' : '') + '"><td>' + x[0] + (on ? ' ◀ 現在' : '') +
+        '</td><td>' + App.esc(x[1]) + '</td><td style="text-align:left">' + App.esc(x[2]) + '</td><td>' + App.esc(x[3]) + '</td></tr>';
+    }).join('');
+    app.innerHTML =
+      '<h1 style="font-size:30px;letter-spacing:-.03em;font-weight:500;margin:0 0 4px">前瞻實測</h1>' +
+      '<div class="meta">從 ' + F.start + ' 起往前走的紙上紀錄，資料到 ' + F.date + '</div>' +
+      '<div class="statusbar warn"><span class="txt"><b>目前階段：' + S.current + ' ' + App.esc(S.name) + '</b>　' +
+      '這頁的成績都是照規則「假裝」買賣算出來的，沒有真的下單。</span></div>' +
+      '<div class="card"><h2>四個版本同時跑</h2>' +
+      '<p class="lead">每個版本（臂）用同一套資金規則：最多同時 ' + R.max_hold + ' 檔、每筆最多賠本金的 ' +
+      (R.risk * 100) + '%（部位 = 本金 × ' + (R.risk * 100) + '% ÷ 停損距離）、一天最多新買 ' + R.new_per_day +
+      ' 檔、單檔最多佔本金 ' + (R.cap * 100) + '%、同產業最多 ' + R.ind_max + ' 檔、處置股和注意股不買。' +
+      '跟同一天起買進持有 0050 比，報酬都已扣手續費和稅。</p>' +
+      '<div class="arms">' + F.arms.map(function (a) { return card(a, F); }).join('') + '</div>' +
+      '<p class="note" style="margin-top:14px;font-size:13.5px">' +
+      '<b>平均持股比重</b>要一起看：這套規則每檔只放本金的幾 %，平常大部分資金是現金，' +
+      '0050 則是 100% 在市場上。所以大盤上漲時組合幾乎一定落後 0050 —— 這是規範刻意選的「學費」規模，' +
+      '目的是先用小錢看清楚規則準不準，不是現在就要賺贏大盤。<br>' +
+      '<b>判定方式</b>：第 ' + F.mid + ' 個交易日時，如果贏過 0050 ≤ −0.3% 而且可信度 ≤ −2，這個臂就停用；' +
+      '第 ' + F.final + ' 天要同時達到贏過 0050 &gt; 0、可信度 ≥ 2.5、最大回落不超過 15%' +
+      '（Arm 0 另外要達到目標的比例 ≥ 55%）才算成功。任何參數一改，那個臂就要從第 1 天重新算。</p></div>' +
+      '<div class="card"><h2>各臂明細</h2><div class="tabs" id="tabs">' +
+      F.arms.map(function (a, i) { return '<button class="chip" type="button" data-a="' + i + '">' + App.esc(a.name) + '</button>'; }).join('') +
+      '</div><div id="armbody"></div></div>' +
+      '<div class="card"><h2>什麼時候可以真的下單</h2>' +
+      '<div class="scroll"><table class="stages"><thead><tr><th>階段</th><th>名稱</th><th style="text-align:left">條件</th><th>資金上限</th></tr></thead>' +
+      '<tbody>' + stageRows + '</tbody></table></div>' +
+      '<h3 style="font-size:17px;margin:22px 0 6px">緊急停止（碰到任何一條就全部停下來檢討）</h3><ul class="note">' +
+      F.kill.map(function (k) { return '<li>' + App.esc(k) + '</li>'; }).join('') + '</ul>' +
+      '<p class="note" style="font-size:13.5px">標「補算」的日子是當天沒有順利產出（電腦沒開、自動更新沒跑），' +
+      '事後用當天收盤就已知的資料重算補上的，不會偷看之後的事；但補算的日子沒有當時的處置股/注意股名單。' +
+      '想看長期的結果，看<a href="backtest.html">回測報告</a>。</p></div>';
+    var body = document.getElementById('armbody'), tabs = document.getElementById('tabs');
+    function showArm(i) {
+      var a = F.arms[i];
+      [].forEach.call(tabs.children, function (b, j) { b.classList.toggle('on', j === i); });
+      body.innerHTML = armBody(a);
+      App.pager(body);
+      var det = body.querySelector('#det'), dl = body.querySelector('#daylist');
+      function show(k) { det.innerHTML = dayDetail(a, a.days_list[k]); App.pager(det); }
+      if (dl) {
+        dl.addEventListener('click', function (e) {
+          var tr = e.target.closest('tr[data-i]'); if (!tr) return;
+          e.preventDefault(); show(+tr.getAttribute('data-i'));
+        });
+        // 預設打開最近一天有股票的清單
+        var k0 = 0;
+        while (k0 < a.days_list.length - 1 && !a.days_list[k0].n) k0++;
+        show(k0);
+      }
     }
-    var rows = H.map(function (h, i) {
-      var st = h.waiting === h.n ? '等待明天開盤進場'
-        : h.open ? '還有 ' + h.open + ' 檔持有中' : '全部已出場';
-      return '<tr data-i="' + i + '" style="cursor:pointer"><td><a href="#" data-i="' + i + '">' +
-        h.date + '</a>' + (h.backfilled ? ' <span class="mut" style="font-size:12px">補算</span>' : '') +
-        '</td><td>' + h.n + '</td><td class="mut">' + st + '</td>' +
-        '<td class="sorted">' + money(h.avg) + '</td><td>' + money(h.bench) + '</td>' +
-        '<td>' + (h.avg != null && h.bench != null ? money(h.avg - h.bench) : '—') + '</td></tr>';
-    });
-    app.innerHTML = head +
-      '<div class="card"><h2>每一天的清單</h2>' +
-      '<p class="lead">規則跟回測報告一樣：隔天開盤買進，碰到停損或目標就賣，最多抱 ' +
-      (H[0].hold || 20) + ' 個交易日。' +
-      '還沒賣的用最新收盤價計算。報酬都已扣手續費和稅。點日期看那天選了哪些股票。</p>' +
-      '<div class="scroll"><table><thead><tr><th>清單日期</th><th>檔數</th><th>狀態</th>' +
-      '<th class="sorted">平均報酬</th><th>同期 0050</th><th>' + App.tip('贏過 0050') +
-      '</th></tr></thead><tbody>' + rows.join('') + '</tbody></table></div>' +
-      '<p class="note" style="margin-top:14px;font-size:13.5px">標「補算」的那幾天，' +
-      '是當天沒有順利產出（例如電腦沒開、自動更新沒跑），事後用當天的資料重算補上的。' +
-      '用到的數字都是當天收盤就已經知道的，不會偷看後來才發生的事，但畢竟不是當天即時產出的紀錄。<br>' +
-      '剛開始累積的前幾週，' +
-      '天數太少，贏或輸 0050 大多是運氣；至少要累積幾個月才看得出東西。' +
-      '想看長期的結果，看<a href="backtest.html">回測報告</a>。</p>' +
-      '<div id="det"></div></div>';
-    App.pager(app);
-    var det = document.getElementById('det');
-    function show(i) { det.innerHTML = detail(H[i]); App.pager(det); }
-    app.querySelector('tbody').addEventListener('click', function (e) {
-      var tr = e.target.closest('tr[data-i]');
-      if (!tr) return;
-      e.preventDefault();
-      show(+tr.getAttribute('data-i'));
-    });
-    show(0);
+    tabs.addEventListener('click', function (e) { var b = e.target.closest('[data-a]'); if (b) showArm(+b.getAttribute('data-a')); });
+    showArm(0);
   });
 });
 </script>

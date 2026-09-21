@@ -160,10 +160,112 @@ def test_exrights_rows(check):
           exrights._row(['97年01月02日', '1234', 'x', '1', '1']) is None)
 
 
+def test_forward(check):
+    """前瞻實測（forward.py）：規範 v1 的選股、逐筆追蹤、資金規則。"""
+    print("\n前瞻實測（forward）")
+    import forward as F
+    import shortterm as S
+
+    # --- Arm 2 選股：個股、成交額前 30%、z ≤ −2.5、大盤不是 down、依 z 由低到高取 10 檔
+    n = 40
+    day = pd.DataFrame({
+        "code": ["C%02d" % i for i in range(n)], "kind": ["個股"] * (n - 1) + ["ETF"],
+        "adtv20": np.linspace(4e9, 1e8, n), "close": [50.0] * n,
+        "ret5_z": [-3.0 - i * 0.01 for i in range(n)], "regime": ["up"] * n})
+    day.loc[3, "close"] = 9.0                       # 收盤 < 10 元：排除
+    day.loc[5, "ret5_z"] = -2.0                     # 不夠超跌：排除
+    got = list(F.pick_m4(day)["code"])
+    ok = (len(got) <= 10 and "C03" not in got and "C05" not in got
+          and all(int(c[1:]) < n * 0.3 + 1 for c in got))
+    zs = list(day.set_index("code").loc[got, "ret5_z"])
+    check("Arm 2：只取成交額前 30%、排除低價與不夠超跌、最多 10 檔", ok, str(got))
+    check("Arm 2：依超跌程度由深到淺排序", zs == sorted(zs), str(zs))
+    check("Arm 2：大盤是空頭（down）時不選", not len(F.pick_m4(day.assign(regime="down"))))
+
+    # --- 逐筆追蹤
+    p = S.params()
+    row = {"code": "AAA", "name": "x", "close": 100.0, "atrp14": 0.02, "stop": 94.0, "target": 105.6}
+
+    def x_of(rows):
+        d = panel(rows)
+        return d.iloc[1:].reset_index(drop=True)
+
+    t = F.track_trade(x_of([FLAT, (110, 110, 110, 110)] + [FLAT] * 3), row, p)
+    check("隔天一字漲停 -> 買不到，不算進場", t["status"] == "買不到（一字漲停）" and t["entry"] is None)
+    t = F.track_trade(x_of([FLAT, (104, 105, 103.5, 104)] + [(104, 104.5, 103.5, 104)] * 25), row, p)
+    st, tg = S.ref_prices(np.array([104.0]), np.array([0.02]), p)
+    check("停損、目標用實際成交價（隔天開盤）重算",
+          t["stop_used"] == S._r(st[0]) and t["target_used"] == S._r(tg[0]),
+          "{} {} vs {} {}".format(t["stop_used"], t["target_used"], st[0], tg[0]))
+    check("兩邊都沒碰到 -> 抱滿天數出場", t["status"] == "時間到出場" and t["days"] == p["hold_days"])
+    t = F.track_trade(x_of([FLAT, (100, 100, 100, 100), (90, 91, 89, 90)] + [FLAT] * 25), row, p)
+    check("跳空跌破停損 -> 以開盤價出場", t["status"] == "停損出場" and t["exit"] == 90.0, str(t["exit"]))
+    g = np.prod([1 + v for _, v in t["path"]])
+    check("逐日路徑連乘 = 出場價 / 進場價", abs(g - 0.9) < 1e-9, str(g))
+
+    # --- 資金規則：每天 3 檔候選、同一個產業、第 1 檔被標處置股
+    days = ["2026-10-%02d" % i for i in range(1, 16)]
+
+    def cand(sd, i, ind, flags=()):
+        ed = days[days.index(sd) + 1]
+        xd = days[min(days.index(sd) + 8, len(days) - 1)]
+        span = days[days.index(ed):days.index(xd) + 1]
+        return {"code": "S%s%d" % (sd[-2:], i), "name": "x", "ind": ind, "flags": list(flags),
+                "status": "時間到出場", "entry": 100.0, "stop_used": 95.0, "ret": 0.0,
+                "entry_date": ed, "exit_date": xd, "path": [(d, 0.0) for d in span]}
+    snaps = [(sd, [cand(sd, 0, "半導體", ["處置股"]), cand(sd, 1, "半導體"), cand(sd, 2, "半導體")])
+             for sd in days[:10]]
+    bench = pd.Series(1.0, index=days)
+    eq, b, trades, expo = F.portfolio(days, snaps, bench, days[0])
+    taken = [x for x in trades if x["taken"]]
+    per_day = {}
+    for x in taken:
+        per_day[x["entry_date"]] = per_day.get(x["entry_date"], 0) + 1
+    peak = max(sum(1 for x in taken if x["entry_date"] <= d and (x["exit_date"] or "9") > d)
+               for d in days)
+    check("標成處置股的不買", not any(x["code"].endswith("0") for x in taken))
+    check("一天最多新買 1 檔", max(per_day.values()) == 1, str(per_day))
+    check("同產業最多同時 2 檔（也就不會超過 3 檔上限）", peak <= 2, str(peak))
+    check("每筆部位 = 本金 × 0.5% ÷ 停損距離（5% -> 10%）",
+          all(abs(x["weight"] - 10.0) < 0.2 for x in taken), str([x["weight"] for x in taken][:3]))
+    check("持平的交易出場後扣掉來回成本",
+          all(abs(x["pnl_cap"] + 0.1 * S.COST) < 0.01 for x in taken if x["exit_date"]))
+    check("跳過的都有寫原因", all(x.get("why") for x in trades if not x["taken"]))
+    snaps = [(sd, [cand(sd, i, "產業%d%s" % (i, sd)) for i in range(3)]) for sd in days[:10]]
+    _, _, tr2, _ = F.portfolio(days, snaps, bench, days[0])
+    tk2 = [x for x in tr2 if x["taken"]]
+    peak = max(sum(1 for x in tk2 if x["entry_date"] <= d and (x["exit_date"] or "9") > d) for d in days)
+    check("不同產業時，最多同時持有 3 檔", peak == 3, str(peak))
+
+    m = F.summarize(eq, b, trades, "arm0", expo)
+    check("天數不到 120 -> 累積中", m["status"]["label"] == "累積中")
+    fake = {"days": 130, "excess": -0.5, "t": -2.5}
+    check("第 120 天：落後 ≥ 0.3% 且 t ≤ −2 -> 停用", F.status(fake, "arm1")["label"] == "停用")
+    fake = {"days": 250, "excess": 1.0, "t": 3.0, "mdd": -10.0, "hit": 50.0}
+    check("第 250 天：Arm 0 達標率不到 55% -> 未通過", F.status(fake, "arm0")["label"] == "未通過")
+    check("第 250 天：其他臂不看達標率 -> 成功", F.status(fake, "arm3")["label"] == "成功")
+
+
+def test_risk_lists(check):
+    print("\n處置股／注意股名單（risk_lists）")
+    import risk_lists as R
+    j = {"fields": ["編號", "公布日期", "證券代號", "證券名稱", "處置起迄時間"],
+         "data": [["1", "115/09/10", "1111", "a", "115/09/11～115/09/24"],
+                  ["2", "115/09/01", "2222", "b", "115/09/02～115/09/15"],
+                  ["3", "115/09/20", "3333", "c", "壞掉的欄位"]]}
+    check("處置期間涵蓋當天的才算，壞掉的列跳過", R.parse_punish(j, "2026-09-22") == ["1111"])
+    check("欄位名稱對不上 -> 空名單（不猜位置）", R.parse_punish({"fields": ["x"], "data": [[1]]}, "2026-09-22") == [])
+    j = {"fields": ["編號", "證券代號", "證券名稱"], "data": [["1", "3094 ", "a"], ["2", "3094", "a"], ["3", "6168", "b"]]}
+    check("注意股去重、去空白", R.parse_notice(j) == ["3094", "6168"])
+    check("民國日期轉換", R._roc("115/09/22") == "2026-09-22" and R._roc("115.9.2") == "2026-09-02")
+
+
 def run(check):
     test_barrier(check)
     test_score(check)
     test_exrights_rows(check)
+    test_forward(check)
+    test_risk_lists(check)
 
 
 if __name__ == "__main__":

@@ -362,6 +362,9 @@ color:var(--faint);cursor:help;white-space:nowrap}
 .evb.validated{color:var(--ok);border-color:var(--ok)}
 .evb.pending{color:var(--warn);border-color:var(--warn)}
 .evb.weak{color:var(--warn);border-color:var(--warn)}
+/* 規範 v1 的排除標記（處置股、注意股） */
+.flag{display:inline-block;font-size:11.5px;padding:0 6px;border-radius:4px;background:var(--warn);color:#fff;margin-left:4px;font-weight:400;white-space:nowrap}
+.flag .tip{color:inherit;border-bottom-color:rgba(255,255,255,.6)}
 .wfbar{position:relative;height:26px}
 .wfkeep{position:absolute;left:0;top:0;bottom:0;background:var(--fg)}
 .wfkeep.final{background:var(--mint)}

@@ -108,9 +108,16 @@ function rank(p) {
     return y - x;
   });
   out = out.slice(0, p.top_n);
+  var R = T.risk || {}, seen = {};
   out.forEach(function (o, i) {
     var pr = refPrices(o.r.close, o.r.atrp14, p);
     o.rank = i + 1; o.stop = pr[0]; o.target = pr[1]; o.why = reasons(o.r, o.s, p);
+    /* 規範 v1 第 4 節：處置股、注意股不買（跟 forward.py 的 flag_map 同一套）。
+       同產業只是提醒：組合裡同產業已有 2 檔時才不買，清單上先標出第幾檔。 */
+    o.flags = [];
+    if ((R.disposal || []).indexOf(o.r.code) >= 0) o.flags.push('處置股');
+    if ((R.attention || []).indexOf(o.r.code) >= 0) o.flags.push('注意股');
+    if (o.r.ind) { seen[o.r.ind] = (seen[o.r.ind] || 0) + 1; o.indn = seen[o.r.ind]; }
   });
   return out;
 }
@@ -127,8 +134,8 @@ function calcPanel() {
     '<select class="snap" id="c_pick" style="flex:1">' + opts + '</select></div>' +
     '<div class="prow" style="max-width:520px"><label for="c_px">你的成交價</label>' +
     '<input type="number" id="c_px" step="0.01" min="0"><span class="u">元</span></div>' +
-    '<div class="prow" style="max-width:520px"><label for="c_amt">下單金額（可不填）</label>' +
-    '<input type="number" id="c_amt" step="10" min="0"><span class="u">萬元</span></div>' +
+    '<div class="prow" style="max-width:520px"><label for="c_cap">' + App.tip('本金', '停損距離') + '（可不填）</label>' +
+    '<input type="number" id="c_cap" step="10" min="0" value="' + App.esc(loadCap()) + '"><span class="u">萬元</span></div>' +
     '<div id="c_out" class="note" style="margin-top:10px"></div>';
 }
 
@@ -152,26 +159,41 @@ function calcRender() {
         App.num((pr[1] - px) / px * 100, 2) + '%，賣掉後淨賺 ' +
         App.num((pr[1] / px - 1) * 100 - COST, 2) + '%）') +
     '<br><span class="mut">最多抱 ' + P.hold_days + ' 個交易日；兩個價位都沒碰到就到期賣出。</span>' +
-    sizeNote(o);
+    (o.flags.length ? '<br><span class="up"><b>這檔被標記：' + App.esc(o.flags.join('、')) + '</b>，規範規定不買。</span>' : '') +
+    sizeNote(o, px, pr[0]);
 }
 
-/* 下單金額 vs 這檔平常的成交量。回測用固定成本 0.585%，沒有把「你的單子
-   自己推動價格」算進去 —— 單筆金額佔日均成交額越高，實際成本就越高於回測。
-   業界常用的保守上限是 1%。 */
-function sizeNote(o) {
-  var amt = parseFloat(document.getElementById('c_amt').value);
-  if (!isNum(amt) || amt <= 0) return '';
-  var money = amt * 1e4, adtv = o.r.amt20;
-  if (!isNum(adtv) || adtv <= 0) return '';
-  var pct = money / adtv * 100;
-  var lv = pct <= 1 ? 'ok' : (pct <= 5 ? 'warn' : 'bad');
-  var msg = pct <= 1 ? '這個金額相對這檔的成交量很小，滑價影響有限。'
-    : pct <= 5 ? '這個金額偏大，進出可能推動價格，實際成本會高於回測假設的 ' + COST + '%。'
-    : '<b>這個金額太大</b>：等於這檔平常一天成交量的 ' + App.num(pct, 0) +
-      '%，分批也很難不影響價格。回測的成本假設在這個規模下不成立。';
-  return '<br><span class="' + (lv === 'ok' ? 'mut' : lv === 'warn' ? 'up' : 'up') + '">' +
-    '下單 ' + App.num(amt, 0) + ' 萬 ＝ 這檔日均成交額的 ' + App.num(pct, 2) + '%。' + msg +
-    '</span>';
+/* 部位大小（規範 v1 第 5 節）：每筆碰到停損時最多賠本金的 0.5%，
+   所以 金額 = 本金 × 0.5% ÷ 停損距離，再受「單檔 ≤ 本金 20%」限制。
+   另外對照這檔平常的成交量：回測用固定成本 0.585%，沒有把「你的單子自己推動價格」
+   算進去 —— 金額佔日均成交額超過 1%（規範的排除線）時，實際成本會明顯高於回測。 */
+var RISK = 0.005, CAP = 0.20;
+function loadCap() { try { return localStorage.getItem('short_capital') || ''; } catch (e) { return ''; } }
+function sizeNote(o, px, stop) {
+  var capW = parseFloat(document.getElementById('c_cap').value);
+  try { localStorage.setItem('short_capital', isNum(capW) ? String(capW) : ''); } catch (e) {}
+  if (!isNum(capW) || capW <= 0) return '<br><span class="mut">填入本金，會依規範算出這筆該買多少。</span>';
+  var cap = capW * 1e4, dist = (px - stop) / px;
+  var byRisk = cap * RISK / dist, amt = Math.min(byRisk, cap * CAP);
+  var sh = Math.floor(amt / px), lots = Math.floor(sh / 1000), odd = sh % 1000;
+  var loss = sh * (px - stop) + sh * px * COST / 100;
+  var out = '<br><b>依規範該買：約 ' + Math.round(sh * px).toLocaleString() + ' 元</b>（' +
+    (lots ? lots + ' 張' : '') + (lots && odd ? ' + ' : '') + (odd ? odd + ' 股零股' : '') +
+    (sh ? '' : '不到 1 股') + '）' +
+    '<br><span class="mut">本金 × 0.5% ÷ 停損距離 ' + App.num(dist * 100, 1) + '% = ' +
+    Math.round(byRisk).toLocaleString() + ' 元' +
+    (byRisk > cap * CAP ? '，超過單檔上限（本金 20%），改用 ' + Math.round(cap * CAP).toLocaleString() + ' 元' : '') +
+    '。碰到停損約賠 ' + Math.round(loss).toLocaleString() + ' 元（含手續費和稅，約本金的 ' +
+    App.num(loss / cap * 100, 2) + '%）。</span>';
+  var adtv = o.r.amt20;
+  if (isNum(adtv) && adtv > 0 && sh) {
+    var pct = sh * px / adtv * 100;
+    out += pct <= 1
+      ? '<br><span class="mut">這筆金額是日均成交額的 ' + App.num(pct, 2) + '%，滑價影響有限。</span>'
+      : '<br><span class="up"><b>這筆金額是日均成交額的 ' + App.num(pct, 1) + '%，超過規範的 1%</b>：' +
+        '進出會推動價格，實際成本會高於回測假設的 ' + COST + '%，規範規定這種情況不買。</span>';
+  }
+  return out;
 }
 
 function calcBind() {
@@ -180,7 +202,7 @@ function calcBind() {
   box.innerHTML = calcPanel();
   document.getElementById('c_pick').addEventListener('change', calcRender);
   document.getElementById('c_px').addEventListener('input', calcRender);
-  document.getElementById('c_amt').addEventListener('input', calcRender);
+  document.getElementById('c_cap').addEventListener('input', calcRender);
   calcRender();
 }
 
@@ -233,6 +255,7 @@ var COLS = [
   ['code', '代號', function (o) { return o.r.code; }],
   ['name', '名稱', function (o) { return o.r.name; }],
   ['kind', '類型', function (o) { return o.r.kind; }],
+  ['ind', '產業', function (o) { return o.r.ind || ''; }],
   ['score', '總分', function (o) { return o.s.score; }],
   ['close', '收盤（參考進場價）', function (o) { return o.r.close; }],
   ['stop', '參考停損', function (o) { return o.stop; }],
@@ -256,10 +279,13 @@ function listTable(rows) {
   return '<div class="scroll" data-per="20"><table><thead><tr>' + head +
     '</tr></thead><tbody>' + rows.map(function (o) {
       var r = o.r;
-      return '<tr><td class="mut">' + o.rank + '</td>' +
-        '<td><a href="stock.html?c=' + r.code + '"><strong>' + r.code + '</strong></a></td>' +
+      return '<tr' + (o.flags.length ? ' style="opacity:.6"' : '') + '><td class="mut">' + o.rank + '</td>' +
+        '<td><a href="stock.html?c=' + r.code + '"><strong>' + r.code + '</strong></a>' +
+        o.flags.map(function (f) { return ' <span class="flag">' + App.tip(f) + '</span>'; }).join('') + '</td>' +
         '<td><a href="stock.html?c=' + r.code + '">' + App.esc(r.name) + '</a></td>' +
         '<td class="mut">' + r.kind + '</td>' +
+        '<td class="mut">' + App.esc(r.ind || '—') +
+        (o.indn > 2 ? '<br><span style="font-size:12px" class="up">同產業第 ' + o.indn + ' 檔</span>' : '') + '</td>' +
         '<td class="sorted">' + App.num(o.s.score, 0) + '</td>' +
         '<td>' + f2(r.close) + '</td><td class="dn">' + f2(o.stop) + '</td>' +
         '<td class="up">' + (o.target == null ? '<span class="mut">不設</span>' : f2(o.target)) + '</td>' +
@@ -276,7 +302,7 @@ function paintList() {
     th.onclick = function () {
       var k = th.getAttribute('data-k');
       if (SORT.k === k) SORT.dir = -SORT.dir;
-      else { SORT.k = k; SORT.dir = (k === 'code' || k === 'name' || k === 'kind' || k === 'rank') ? 1 : -1; }
+      else { SORT.k = k; SORT.dir = (k === 'code' || k === 'name' || k === 'kind' || k === 'ind' || k === 'rank') ? 1 : -1; }
       paintList();
     };
   });
@@ -305,6 +331,29 @@ function btLine(bt) {
     '</span><a class="more" href="backtest.html">看回測報告 →</a></div>';
 }
 
+/* 規範 v1 第 8 節：目前在哪個階段。階段 0 = 只紙上記錄，不下單。 */
+function stageLine() {
+  var S = T.stage;
+  if (!S) return '';
+  return '<div class="statusbar warn"><span class="txt"><b>目前階段：' + App.esc(S.current + ' ' + S.name) + '</b>　' +
+    '依「短線交易與研究規範 v1」，這份清單現在只用來紙上追蹤，還沒到可以下單的階段。' +
+    '</span><a class="more" href="history.html">看前瞻實測 →</a></div>';
+}
+
+/* 處置股/注意股名單的狀態。抓不到或還沒公布時要講清楚，不能當成「今天沒有」。 */
+function riskLine() {
+  var R = T.risk;
+  if (!R) return '';
+  var bad = [];
+  if (R.disposal_status !== 'ok') bad.push('處置股名單' + (R.disposal_status === 'unavailable' ? '抓不到' : '沒有資料'));
+  if (R.notice_status === 'pending') bad.push('注意股名單可能還沒公布');
+  else if (R.notice_status !== 'ok') bad.push('注意股名單' + (R.notice_status === 'unavailable' ? '抓不到' : '沒有資料'));
+  var ok = '今天的處置股 ' + (R.disposal || []).length + ' 檔、注意股 ' + (R.attention || []).length + ' 檔（名單日期 ' + App.esc(R.date) + '），清單裡有標記的不要買。';
+  return '<div class="statusbar ' + (bad.length ? 'bad' : 'ok') + '"><span class="txt">' +
+    (bad.length ? '<b>' + App.esc(bad.join('、')) + '</b>，下單前請自己到證交所網站確認。' : ok) +
+    '全額交割股沒有穩定的資料來源，<b>請自行確認</b>。</span></div>';
+}
+
 App.boot('short', function (meta) {
   return Promise.all([App.get('short/today.json'),
                       App.get('short/backtest.json').catch(function () { return null; })])
@@ -327,7 +376,7 @@ App.boot('short', function (meta) {
       '停損、目標價是依公式算的參考值，<b>不是買賣建議</b></div></div>' +
       (drift ? '<div class="statusbar bad"><span class="txt"><b>網頁算出的清單和後端不一致</b>：' +
         '兩邊的計算規則對不上，這份清單不可信。</span></div>' : '') +
-      btLine(res[1]) +
+      btLine(res[1]) + stageLine() + riskLine() +
       '<div class="card"><h2>今天符合條件的股票</h2>' +
       '<p class="lead">四個條件各佔一份分數，不必全部符合，依總分排序（同分時成交金額大的在前）。' +
       '點表頭可以換排序方式。</p>' +
@@ -349,7 +398,10 @@ App.boot('short', function (meta) {
       '想關掉就把它設成 0。<br>' +
       '這兩個價位是用<b>今天的收盤價</b>估的（收盤後還不知道明天開盤多少）。' +
       '實際成交後，請用自己的成交價 × 1.0559 當目標、成交價 − 3 × ATR 當停損。' +
-      '<a href="backtest.html">回測報告</a>有完整數字與取捨。</p>' +
+      '<a href="backtest.html">回測報告</a>有完整數字與取捨。<br>' +
+      '<b>規範 v1 的買法</b>（前瞻實測也照這個算）：由上往下，挑第一檔沒被標成' + App.tip('處置股') +
+      '、' + App.tip('注意股') + '的；一天最多新買 1 檔、同時最多抱 3 檔、同產業最多 2 檔；' +
+      '每筆的金額用下面的計算機依本金算（碰到停損只賠本金 0.5%）。</p>' +
       '<div id="list"></div>' +
       '<details id="calcbox"><summary>用我的實際成交價計算停損與目標</summary>' +
       '<div class="inner"><div id="calc"></div></div></details>' +

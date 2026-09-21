@@ -79,7 +79,7 @@
   var NAV = [
     ['short.html', '今日清單', 'short'],
     ['backtest.html', '回測報告', 'backtest'],
-    ['history.html', '歷史清單', 'history'],
+    ['history.html', '前瞻實測', 'history'],
     ['lists.html', '其他排行', 'lists']
   ];
   // 本機（python server.py）才有後端：可以按鈕更新、用自訂參數回測

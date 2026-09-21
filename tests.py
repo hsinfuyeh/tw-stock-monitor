@@ -208,6 +208,7 @@ def test_framework(nd):
 
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(encoding="utf-8")   # Windows 主控台預設 cp950，印不出 −
     print("=" * 66)
     print("TWSE 量化系統 — 正確性測試")
     print("=" * 66)

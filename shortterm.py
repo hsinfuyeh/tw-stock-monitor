@@ -132,7 +132,24 @@ def features():
     # 除權息調整係數：總報酬指數 / 原始收盤。回測損益用「原始價 × 係數」算，
     # 除息日的價格跳空才不會被當成虧損（配發的現金本來就是持有人的）。
     d["k"] = d["adj"] / d["close"]
-    return d
+
+    # 規範 v1 要用的欄位（forward.py）：
+    #   Arm 2 短期反轉  20 日成交額中位數、5 日報酬相對自己過去一年的 z 值、大盤狀態
+    #   同產業最多 2 檔 產業別
+    # 定義跟 barrier.py（第 1、7 輪研究）完全一樣，前瞻實測才是在測同一件事。
+    import barrier
+    g = d.groupby("code", sort=False)
+    d["adtv20"] = g["amount"].transform(lambda s: s.rolling(20, min_periods=20).median())
+    d["ret5"] = d["adj"] / g["adj"].shift(5) - 1
+    g5 = d.groupby("code", sort=False)["ret5"]
+    mu = g5.transform(lambda s: s.shift(1).rolling(250, min_periods=120).mean())
+    sd = g5.transform(lambda s: s.shift(1).rolling(250, min_periods=120).std())
+    d["ret5_z"] = (d["ret5"] - mu) / sd
+    m = barrier.market()
+    d = d.merge(m[["regime"]], left_on="date", right_index=True, how="left")
+    ind = barrier.industry_map()
+    d["ind"] = d["code"].map(ind).map(barrier.IND_NAME)
+    return d.sort_values(["code", "date"]).reset_index(drop=True)
 
 
 # --------------------------------------------------------------------- 評分
@@ -437,7 +454,7 @@ def windows(d, p, recent=60):
 
 FEATURE_COLS = ["code", "name", "kind", "close", "ma5", "ma10", "ma20",
                 "hi20_prev", "volume", "vol5_prev", "vol20_lots", "amt20",
-                "streak_f", "streak_t", "yoy", "rev_high12", "atrp14"]
+                "streak_f", "streak_t", "yoy", "rev_high12", "atrp14", "adtv20", "ind"]
 
 # 拆解測試：每個條件單獨用、以及拿掉停損停利，看虧損是出在選股還是出場規則
 ABLATION = [
@@ -481,65 +498,6 @@ def _r(v, nd=2):
     return None if v is None or not np.isfinite(v) else round(float(v), nd)
 
 
-def track(d, snap):
-    """一份快照之後的實際表現。規則和回測完全相同：隔天開盤進場，
-    碰到停損或目標出場，最多持有 hold_days 天。還沒走完的標成「持有中」，
-    報酬用最新收盤算。一律扣來回成本、含除權息。"""
-    date = pd.Timestamp(snap["date"])
-    hold = int(snap["params"].get("hold_days", DEFAULTS["hold_days"]))
-    codes = [r["code"] for r in snap["top"]] + ["0050"]
-    g = d[(d["date"] > date) & d["code"].isin(codes)]
-    by = {c: x.reset_index(drop=True) for c, x in g.groupby("code")}
-    b = by.get("0050")
-    b = b.set_index("date") if b is not None else None
-    rows = []
-    for r in snap["top"]:
-        x = by.get(r["code"])
-        row = dict(r, status="等待進場", entry_date=None, entry=None, exit_date=None,
-                   exit=None, days=0, ret=None, bench=None)
-        if x is None or not len(x):
-            rows.append(row)
-            continue
-        o, h, lo, c, k = (x[col].to_numpy() for col in ("open", "high", "low", "close", "k"))
-        stop = r["stop"]
-        target = r["target"] if r.get("target") is not None else float("inf")
-        e_px = o[0]
-        status, xi, px = None, None, None
-        for j in range(min(hold, len(x))):
-            if o[j] <= stop:
-                status, xi, px = "停損出場", j, o[j]
-            elif lo[j] <= stop:
-                status, xi, px = "停損出場", j, stop
-            elif o[j] >= target:
-                status, xi, px = "達到目標", j, o[j]
-            elif h[j] >= target:
-                status, xi, px = "達到目標", j, target
-            elif j == hold - 1:
-                status, xi, px = "時間到出場", j, c[j]
-            if status:
-                break
-        if status is None:
-            status, xi, px = "持有中", len(x) - 1, c[-1]
-        ret = (px * k[xi] / (e_px * k[0]) - 1) * 100 - COST
-        bret = None
-        if b is not None:
-            d0, d1 = x["date"][0], x["date"][xi]
-            if d0 in b.index and d1 in b.index:
-                bret = (b.at[d1, "close"] * b.at[d1, "k"] /
-                        (b.at[d0, "open"] * b.at[d0, "k"]) - 1) * 100 - ETF_COST
-        row.update(status=status, entry_date=str(x["date"][0])[:10], entry=_r(e_px),
-                   exit_date=None if status == "持有中" else str(x["date"][xi])[:10],
-                   exit=_r(px), days=int(xi + 1), ret=_r(ret), bench=_r(bret))
-        rows.append(row)
-    done = [x for x in rows if x["ret"] is not None]
-    avg = lambda k: _r(float(np.mean([x[k] for x in done if x[k] is not None]))) if done else None
-    return {"date": snap["date"], "n": len(rows), "hold": hold,
-            "backfilled": bool(snap.get("backfilled")),
-            "open": sum(x["status"] == "持有中" for x in rows),
-            "waiting": sum(x["status"] == "等待進場" for x in rows),
-            "avg": avg("ret"), "bench": avg("bench"), "rows": rows}
-
-
 def _top_rows(rows):
     """快照裡的 top 欄位。今天的清單與補算的缺日共用同一份格式。"""
     return [{"code": r["code"], "name": r["name"], "kind": r["kind"],
@@ -549,15 +507,14 @@ def _top_rows(rows):
             for _, r in rows.iterrows()]
 
 
-def compute(d=None, snap_dir=None):
-    """算出網頁用的 JSON 與當日快照內容（不寫檔），並做自我檢查。
+def compute(d=None):
+    """算出網頁用的 JSON（不寫檔），並做自我檢查。
 
       short/today.json     當日全部可評分標的的特徵 —— 網頁調參時在瀏覽器裡重算分數，
                            不用重抓資料（PRD：調參只重算分數）
       short/backtest.json  預設參數的回測（近 60 日 + 整段歷史）與拆解測試
-      snapshots/<日期>.json 當日清單快照，存進 repo，之後可以對照當天到底選了什麼
+    每日快照與前瞻實測在 forward.py。
     """
-    import json
     d = features() if d is None else d
     p = dict(DEFAULTS)
     date = d["date"].max()
@@ -567,7 +524,10 @@ def compute(d=None, snap_dir=None):
 
     feat = []
     for r in day[FEATURE_COLS].itertuples(index=False):
-        feat.append([r.code, r.name, r.kind] + [_r(getattr(r, c), 4) for c in FEATURE_COLS[3:]])
+        # 產業別是文字，其餘是數字（規範 v1：同產業最多 2 檔，網頁要知道每檔的產業）
+        feat.append([r.code, r.name, r.kind] +
+                    [(getattr(r, c) if isinstance(getattr(r, c), str) else None) if c == "ind"
+                     else _r(getattr(r, c), 4) for c in FEATURE_COLS[3:]])
     top = _top_rows(rows)
     today_json = {"date": ds, "cols": FEATURE_COLS,
                   "params": [dict(zip(("key", "label", "default", "min", "max", "step",
@@ -603,34 +563,8 @@ def compute(d=None, snap_dir=None):
                          "持有天數", "報酬%", "0050%", "贏過 0050%"],
           "trades": trades}
 
-    snap = {"date": ds, "params": p, "top": top}
     check(day, today_json, bt)
-
-    # 歷史清單：每一份過去的快照，之後實際走得怎樣
-    snaps = {ds: snap}
-    existing = {}
-    if snap_dir is not None and snap_dir.exists():
-        for f in snap_dir.glob("*.json"):
-            if f.stem != ds:
-                existing[f.stem] = json.loads(f.read_text(encoding="utf-8"))
-
-    # 缺日補算：CI 某天沒跑（或電腦關著）就會缺一天，歷史清單會從此斷掉。
-    # 用那天的資料重算補上 —— 特徵全都是當天收盤就已知的，不會偷看未來，
-    # 但畢竟不是「當天真的產出的」，所以標記 backfilled，頁面上分開標示。
-    if existing:
-        first = min(existing)
-        cal = [str(x)[:10] for x in np.sort(d["date"].unique())]
-        missing = [x for x in cal if first < x < ds and x not in existing]
-        for m in missing:
-            snaps[m] = {"date": m, "params": p, "backfilled": True,
-                        "top": _top_rows(today(d, p, pd.Timestamp(m)))}
-        if missing:
-            print("補算缺少的快照 {} 天：{}".format(
-                len(missing), "、".join(missing[:5]) + ("…" if len(missing) > 5 else "")),
-                flush=True)
-    snaps.update(existing)
-    hist = [track(d, snaps[k]) for k in sorted(snaps, reverse=True)]
-    return today_json, bt, snaps, hist
+    return today_json, bt
 
 
 class Inconsistent(Exception):
@@ -661,28 +595,18 @@ def check(day, today_json, bt):
         len(today_json["expected"]), bt["all"]["n"]), flush=True)
 
 
-def write(out, snap_dir, today_json, bt, snaps, hist):
-    """寫出 JSON 與快照。out 是網站的 data/ 目錄，snaps 是 日期 -> 快照。"""
+def write(out, today_json, bt):
+    """寫出今日清單與回測的 JSON。out 是網站的 data/ 目錄。
+    每日快照、歷史清單與前瞻實測由 forward.py 負責（規範 v1）。"""
     import json
-    ds = today_json["date"]
     (out / "short").mkdir(parents=True, exist_ok=True)
-    for name, obj in (("today.json", today_json), ("backtest.json", bt),
-                      ("history.json", hist)):
+    for name, obj in (("today.json", today_json), ("backtest.json", bt)):
         # allow_nan=False：NaN / Infinity 都不是合法 JSON，瀏覽器會整頁載入失敗。
         # 寧可在這裡直接爆掉，也不要發佈一個打不開的頁面（2026-09-20 就是這樣中的）。
         (out / "short" / name).write_text(
             json.dumps(_json_safe(obj), ensure_ascii=False, separators=(",", ":"),
                        allow_nan=False),
             encoding="utf-8")
-
-    # 快照：當天的重跑會覆寫（資料若事後修正，快照跟著修正）；
-    # 補算的缺日只在還沒有檔案時才寫，不會蓋掉當天真的產生的那份。
-    snap_dir.mkdir(parents=True, exist_ok=True)
-    for day, one in snaps.items():
-        f = snap_dir / (day + ".json")
-        if day == ds or not f.exists():
-            f.write_text(json.dumps(_json_safe(one), ensure_ascii=False, indent=1),
-                         encoding="utf-8")
 
 
 if __name__ == "__main__":
