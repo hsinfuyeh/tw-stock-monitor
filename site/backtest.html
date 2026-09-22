@@ -85,6 +85,34 @@ function runCustom(P) {
   }).then(function () { btn.disabled = false; btn.textContent = '用我的參數回測'; });
 }
 
+/* 第 9 輪：五個改進方案（RESEARCH_LOG 事前登記）。回測只是記錄，
+   方案 1–4 是看過全部歷史才想到的，回測一定偏樂觀；真正的判定在策略追蹤。 */
+function r9Card(bt) {
+  var R = bt.round9;
+  if (!R || !R.length) return '';
+  var names = ['2008–2018', '2019–2025', '2026'];
+  function cell(p) { return p ? money(p.excess) + '<br><span class="mut" style="font-size:12px">t ' + App.num(p.t, 1, true) + '・' + p.n.toLocaleString() + ' 筆</span>' : '<span class="mut">沒有交易</span>'; }
+  var rows = R.map(function (r, i) {
+    var verdict = i === 0 ? '<span class="mut">比較基準</span>' :
+      r.support == null ? '<span class="mut">' + App.esc(r.note || '資料不足') + '</span>' :
+      (r.better ? '<span class="up">兩段都比 Arm 0 好</span>' : '<span class="mut">沒有兩段都比較好</span>') +
+      (r.support ? '<br><b class="up">回測支持</b>' : '');
+    return '<tr' + (i === 0 ? ' style="font-weight:500"' : '') + '><td style="text-align:left">' + App.esc(r.label) + '</td>' +
+      names.map(function (n) { return '<td>' + cell(r.periods[n]) + '</td>'; }).join('') +
+      '<td class="sorted">' + money(r.excess) + '<br><span class="mut" style="font-size:12px">t ' + App.num(r.t, 1, true) + '</span></td>' +
+      '<td style="text-align:left;font-size:13px">' + verdict + '</td></tr>';
+  });
+  return '<div class="card" id="r9"><h2>五個改進方案（第 9 輪）</h2>' +
+    '<p class="lead">每個方案都是在網站預設（Arm 0）上只改一件事，數字是每筆比同期 0050 多賺或少賺多少（已扣手續費和稅）。' +
+    '五個方案也在<a href="history.html">策略追蹤</a>裡從 2026-09-23 起紙上跑（Arm 4–8），那邊的結果才是真正的判定。</p>' +
+    simpleTable([['方案', 0], ['2008–2018', 0], ['2019–2025', 0], ['2026', 0], ['全期', 1], ['回測怎麼說', 0]], rows) +
+    '<ul class="note" style="margin-top:14px">' +
+    '<li><b>方案 1–4 的回測偏樂觀</b>：它們是看過 2008–2026 全部資料的拆解之後才想到的，沒有一段是「沒看過的資料」。</li>' +
+    '<li><b>模型選股</b>的回測是真的樣本外：預測某一年只用那年以前的資料訓練。但它很少有把握（機率 ≥ 50% 的只佔 1% 左右），所以交易少。</li>' +
+    '<li><b>只看月營收</b>：月營收資料 2018 年才有，所以 2008–2018 沒有交易，只能看 2019 年後。</li>' +
+    '<li>「回測支持」= 2008–2018 與 2019–2025 兩段都贏 0050，而且全期可信度 ≥ 2（事前登記的標準）。</li></ul></div>';
+}
+
 function customCard(today) {
   var DEF = {}, P = {}, changed = [];
   today.params.forEach(function (x) { DEF[x.key] = x.default; P[x.key] = x.default; });
@@ -164,7 +192,7 @@ App.boot('backtest', function (meta) {
       '才分得出是規則的效果還是運氣。</p>' +
       '<p>也因為這樣，<b>不建議一直調參數調到近 60 日贏 0050</b> —— 樣本這麼少，總調得出一組贏的，' +
       '但那是把過去的巧合背下來，不是找到規則。調完請看整段歷史有沒有跟著變好。</p></div></details>' +
-      cc.html +
+      (App.local ? cc.html : '') + r9Card(bt) +
       '<div class="card"><h2>這些規則是怎麼定出來的</h2>' +
       '<p class="lead">2026-09 依一份研究規格重做了一輪驗證：先寫好假設，再一次測完 23 種選股組合 × 7 種停損，' +
       '好壞結果都記在 repo 的 RESEARCH_LOG.md。三個主要結論：</p>' +

@@ -39,6 +39,7 @@ ETF_OK = ("domestic", "dividend", "active", "foreign")
 # (key, 標籤, 預設, 最小, 最大, 步進, 單位, 分組)
 PARAMS = [
     ("liq_lots",  "近 20 日平均每天至少",  1000, 0,   20000, 100, "張",     "成交量門檻"),
+    ("big_n",     "只挑成交額前幾名（0 = 不限）", 0, 0, 1000, 50, "名",   "成交量門檻"),
     ("w_rev",     "佔分",                  25,   0,   100,   5,   "分",     "① 月營收強勢"),
     ("rev_yoy",   "比去年同月至少成長",    20,   0,   300,   5,   "%",      "① 月營收強勢"),
     ("rev_bonus", "創 12 個月新高再加",    20,   0,   100,   5,   "% 的分", "① 月營收強勢"),
@@ -54,7 +55,18 @@ PARAMS = [
     ("hold_days", "最多持有",              20,   3,   30,    1,   "個交易日", "參考價位"),
     ("use_target", "設定目標價（0 關 1 開）", 1,   0,   1,     1,   "",       "參考價位"),
     ("target_net", "目標淨賺（已扣手續費和稅）", 5, 1,  30,    0.5, "%",      "參考價位"),
+    ("skip_wide", "停損超過 10% 就不買（0 關 1 開）", 0, 0, 1,  1,   "",       "參考價位"),
+    ("use_model", "改用模型選股（0 關 1 開）", 0,  0,   1,     1,   "",       "⑤ 模型選股"),
 ]
+# 第 9 輪的五個方案（RESEARCH_LOG），今日清單可以一鍵套用，前瞻實測是 Arm 4–8
+PRESETS = [
+    ("big",   "只挑大型股",       {"big_n": 150}),
+    ("score", "總分至少 70",      {"min_score": 70}),
+    ("wide",  "停損超過 10% 不買", {"skip_wide": 1}),
+    ("rev",   "只看月營收、不設目標", {"w_inst": 0, "w_brk": 0, "w_ma": 0, "use_target": 0}),
+    ("model", "模型選股",         {"use_model": 1}),
+]
+MODEL_COEFS = {}      # features() 之後填：每年模型的係數（網頁顯示模型在看什麼）
 STOP_MIN, STOP_MAX = 0.02, 0.10    # 停損距離的上下限（ATR 太小或太大時夾住）
 DEFAULTS = {k: d for k, _, d, *_ in PARAMS}
 # 不出現在網頁表單、只給回測拆解用：固定百分比停損（0 = 用 ATR）。
@@ -149,7 +161,14 @@ def features():
     d = d.merge(m[["regime"]], left_on="date", right_index=True, how="left")
     ind = barrier.industry_map()
     d["ind"] = d["code"].map(ind).map(barrier.IND_NAME)
-    return d.sort_values(["code", "date"]).reset_index(drop=True)
+    d = d.sort_values(["code", "date"]).reset_index(drop=True)
+    # 第 9 輪：成交額排名（Arm 4 只挑大型股）與模型機率（Arm 8，逐年往前訓練，不偷看未來）
+    d["adtv_rank"] = d.groupby("date")["adtv20"].rank(ascending=False, method="first")
+    import model
+    d["mprob"], coefs = model.walk_forward(d)
+    MODEL_COEFS.clear()
+    MODEL_COEFS.update(coefs)
+    return d
 
 
 # --------------------------------------------------------------------- 評分
@@ -163,6 +182,10 @@ def score(d, p):
     # （樣本外 2023–2025），平均每筆也變好。見 RESEARCH_LOG.md 第 5 輪。
     liq = (d["vol20_lots"] >= p["liq_lots"]) & (
         d["atrp14"] * 100 >= p["min_atrp"] if p.get("min_atrp") else True)
+    if p.get("big_n"):                 # Arm 4：只挑成交額前 N 名
+        liq &= d["adtv_rank"] <= p["big_n"]
+    if p.get("skip_wide"):             # Arm 6：停損會超過上限的不買（原本是夾住）
+        liq &= d["atrp14"] * p["atr_mult"] <= STOP_MAX
     c1 = d["yoy"] >= p["rev_yoy"]
     hi = c1 & (d["rev_high12"] == 1)
     c2 = (d["streak_f"] >= p["inst_days"]) | (d["streak_t"] >= p["inst_days"])
@@ -180,6 +203,8 @@ def score(d, p):
     sc = np.where(is_etf,
                   (raw - s1) * 100.0 / etf_full if etf_full else 0.0,
                   raw * 100.0 / full if full else 0.0)
+    if p.get("use_model"):             # Arm 8：分數 = 模型估的機率 × 100（沒有模型的列 0 分）
+        sc = (d["mprob"].fillna(0) * 100).to_numpy()
     return pd.DataFrame({"liq": liq.to_numpy(), "c1": c1.to_numpy(),
                          "c1hi": hi.to_numpy(), "c2": c2.to_numpy(),
                          "c3": c3.to_numpy(), "c4": c4.to_numpy(),
@@ -247,6 +272,8 @@ def ref_prices(close, atrp, p):
 def reasons(r, p):
     """逐條列出符合的條件與數值。"""
     out = []
+    if p.get("use_model") and r.get("mprob") == r.get("mprob") and r.get("mprob") is not None:
+        out.append("模型估 20 天後贏過 0050 的機率 {:.0f}%".format(r["mprob"] * 100))
     if r.get("c1") and p["w_rev"] > 0:
         s = "營收年增 {:.0f}%".format(r["yoy"])
         if r.get("c1hi"):
@@ -454,7 +481,8 @@ def windows(d, p, recent=60):
 
 FEATURE_COLS = ["code", "name", "kind", "close", "ma5", "ma10", "ma20",
                 "hi20_prev", "volume", "vol5_prev", "vol20_lots", "amt20",
-                "streak_f", "streak_t", "yoy", "rev_high12", "atrp14", "adtv20", "ind"]
+                "streak_f", "streak_t", "yoy", "rev_high12", "atrp14", "adtv20", "ind",
+                "adtv_rank", "mprob"]
 
 # 拆解測試：每個條件單獨用、以及拿掉停損停利，看虧損是出在選股還是出場規則
 ABLATION = [
@@ -507,6 +535,46 @@ def _top_rows(rows):
             for _, r in rows.iterrows()]
 
 
+PERIODS = [("2008–2018", "2008-01-01", "2018-12-31"), ("2019–2025", "2019-01-01", "2025-12-31"),
+           ("2026", "2026-01-01", "2026-12-31")]
+
+
+def round9(d, arr, bench, s0, s1):
+    """第 9 輪：五個方案 vs Arm 0，分三段（RESEARCH_LOG 事前登記的判定）。"""
+    hold = int(DEFAULTS["hold_days"])
+    out = []
+    for key, label, kw in [("base", "Arm 0 現行版", {})] + PRESETS:
+        t, sm = backtest(d, params(**kw), s0, s1, arr, bench)
+        per = {}
+        for name, a, b in PERIODS:
+            x = t[(t["signal"] >= a) & (t["signal"] <= b)]
+            if len(x):
+                m = summarize(x, hold)
+                per[name] = {k: m.get(k) for k in ("n", "win", "excess", "t")}
+        out.append({"key": key, "label": label, "params": kw, "periods": per,
+                    **{k: sm.get(k) for k in ("n", "win", "avg", "excess", "t")}})
+    base = out[0]["periods"]
+    for r in out[1:]:
+        p = r["periods"]
+        # 某一段沒有交易（例如月營收 2018 年才有資料）就是「資料不足」，不能當成沒過
+        if any(n not in p or not p[n].get("n") for n, *_ in PERIODS[:2]):
+            r["support"] = r["better"] = None
+            r["note"] = "資料不足：" + "、".join(n for n, *_ in PERIODS[:2]
+                                            if n not in p or not p[n].get("n")) + " 沒有交易"
+            continue
+        r["support"] = bool(all(p[n]["excess"] > 0 for n, *_ in PERIODS[:2])
+                            and (r.get("t") or 0) >= 2)
+        r["better"] = bool(all(p[n]["excess"] > base[n]["excess"] for n, *_ in PERIODS[:2]))
+    return out
+
+
+def _model_info(date):
+    """今天用的模型：哪一年訓練的、每個特徵的係數（網頁顯示模型在看什麼）。"""
+    yr = pd.Timestamp(date).year
+    c = MODEL_COEFS.get(yr)
+    return {"year": yr, "coefs": c} if c else None
+
+
 def compute(d=None):
     """算出網頁用的 JSON（不寫檔），並做自我檢查。
 
@@ -532,7 +600,12 @@ def compute(d=None):
     today_json = {"date": ds, "cols": FEATURE_COLS,
                   "params": [dict(zip(("key", "label", "default", "min", "max", "step",
                                        "unit", "group"), x)) for x in PARAMS],
-                  "cost": COST, "rows": feat, "expected": [t["code"] for t in top]}
+                  "cost": COST, "rows": feat, "expected": [t["code"] for t in top],
+                  # 每個方案 Python 算出的清單：網頁載入時逐一比對，兩邊規則長歪就警告
+                  "presets": [{"key": k, "label": lb, "params": kw,
+                               "expected": [str(c) for c in today(d, params(**kw), date)["code"]]}
+                              for k, lb, kw in PRESETS],
+                  "model": _model_info(date)}
 
     # 回測
     w = windows(d, p)
@@ -544,6 +617,7 @@ def compute(d=None):
         _, sm = backtest(d, params(**kw), s0, s1, arr, bench)
         abl.append({"label": label, **{k: sm.get(k) for k in
                     ("n", "win", "avg", "bench", "excess", "worst", "t")}})
+    r9 = round9(d, arr, bench, s0, s1)
     ta = w["all"][0]
     yr = ta.groupby(ta["signal"].dt.year).agg(
         n=("ret", "size"), win=("ret", lambda s: (s > 0).mean() * 100),
@@ -555,7 +629,7 @@ def compute(d=None):
               for r in tr.sort_values(["signal", "score"], ascending=[False, False])
               .itertuples(index=False)]
     bt = {"date": ds, "cost": COST, "etf_cost": ETF_COST,
-          "recent": w["recent"][1], "all": w["all"][1], "ablation": abl,
+          "recent": w["recent"][1], "all": w["all"][1], "ablation": abl, "round9": r9,
           "years": [{"year": int(y), **{k: _r(v) for k, v in r.items()}}
                     for y, r in yr.iterrows()],
           "trade_cols": ["選出日", "代號", "名稱", "類型", "分數", "選出日收盤", "停損",

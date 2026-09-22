@@ -138,6 +138,50 @@ def test_score(check):
           got["a"] is None and got["b"] is None and got["c"] == 3)
 
 
+def test_round9(check):
+    """第 9 輪的三個新參數與模型（RESEARCH_LOG 事前登記的定義）。"""
+    print("\n第 9 輪方案")
+    import shortterm as S
+    import model as M
+    base = dict(vol20_lots=5000, atrp14=0.03, yoy=50, rev_high12=1, streak_f=5, streak_t=0,
+                close=110, hi20_prev=100, volume=3000, vol5_prev=1000, ma5=105, ma10=100, ma20=95,
+                kind="個股", adtv_rank=100, mprob=0.6)
+    d = pd.DataFrame([base, dict(base, adtv_rank=300), dict(base, atrp14=0.05),
+                      dict(base, mprob=0.3), dict(base, mprob=np.nan)])
+    sc = S.score(d, S.params(big_n=150))
+    check("只挑大型股：成交額排名 300 的排除、100 的留下", bool(sc["liq"][0]) and not sc["liq"][1])
+    sc = S.score(d, S.params(skip_wide=1))
+    check("停損太寬不買：3×ATR 5% = 15% > 10% 的排除，9% 的留下", bool(sc["liq"][0]) and not sc["liq"][2])
+    sc = S.score(d, S.params())
+    check("預設不受新參數影響（四條件全中 100 分、都留下）",
+          sc["score"][0] == 100 and bool(sc["liq"][1]) and bool(sc["liq"][2]))
+    sc = S.score(d, S.params(use_model=1))
+    check("模型選股：分數 = 機率 × 100，沒有模型的 0 分",
+          abs(sc["score"][0] - 60) < 1e-9 and abs(sc["score"][3] - 30) < 1e-9 and sc["score"][4] == 0)
+
+    # 模型不偷看未來：某一年的預測，訓練資料的標籤結束日一定早於那年 1 月 1 日
+    rng = np.random.default_rng(1)
+    days = pd.bdate_range("2008-01-01", "2012-12-31")
+    rows = []
+    for c in ["0050"] + ["S%02d" % i for i in range(12)]:
+        px = 100 * np.exp(np.cumsum(rng.normal(0, 0.02, len(days))))
+        rows.append(pd.DataFrame({"date": days, "code": c, "open": px, "close": px, "k": 1.0, "adj": px}))
+    p = pd.concat(rows, ignore_index=True).sort_values(["code", "date"]).reset_index(drop=True)
+    y, end = M.labels(p)
+    last = p[p["date"] == days[-1]]
+    check("模型標籤：最後 20 天還不知道結果 -> 沒有標籤", y[last.index].isna().all())
+    i = p.index[(p["code"] == "S01") & (p["date"] == days[100])][0]
+    b = p.set_index(["code", "date"])
+    want = ((b.loc[("S01", days[120]), "close"] / b.loc[("S01", days[101]), "open"]) -
+            (b.loc[("0050", days[120]), "close"] / b.loc[("0050", days[101]), "open"])) * 100 > M.COST
+    check("模型標籤 = 隔天開盤買、第 20 天收盤賣，減掉同期 0050 > 成本", bool(y[i]) == bool(want)
+          and end[i] == days[120])
+    cut = pd.Timestamp(2012, 1, 1)
+    used = y.notna() & (end < cut - pd.Timedelta(days=30))
+    check("預測 2012 年時，訓練資料全部在 2011-12 之前就已經知道答案", (end[used] < cut).all()
+          and (p.loc[used, "date"] < cut).all())
+
+
 def test_exrights_rows(check):
     """TWT49U 的欄位位置會隨年份變 —— 寫死索引會安靜地解析錯。"""
     print("\n除權息解析（exrights）")
@@ -305,6 +349,7 @@ def run(check):
     test_barrier(check)
     test_score(check)
     test_exrights_rows(check)
+    test_round9(check)
     test_forward(check)
     test_risk_lists(check)
 

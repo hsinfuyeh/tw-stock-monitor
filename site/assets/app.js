@@ -73,15 +73,19 @@
   }
 
   /* ---------- 外框 ---------- */
-  /* 導覽列依 PRD 的產出排：今天的清單、回測、過去的清單、其他排行。
-     每一格點進去都是不同的頁面，不是同一頁的捷徑。
-     查個股不佔一格：頂部的搜尋框隨時可用，品牌名稱回首頁。 */
+  /* 導覽列依「每天用到的頻率」排：今日清單、交易紀錄每天用；策略追蹤每週看；
+     回測報告是查資料用的。其他排行、中長期候選池不常用，收進「更多」。
+     查個股不佔一格：頂部的搜尋框隨時可用，品牌名稱回今日清單。 */
   var NAV = [
     ['short.html', '今日清單', 'short'],
-    ['backtest.html', '回測報告', 'backtest'],
-    ['history.html', '前瞻實測', 'history'],
-    ['journal.html', '我的交易', 'journal'],
-    ['lists.html', '其他排行', 'lists']
+    ['journal.html', '交易紀錄', 'journal'],
+    ['history.html', '策略追蹤', 'history'],
+    ['backtest.html', '回測報告', 'backtest']
+  ];
+  var MORE = [
+    ['lists.html', '其他排行', 'lists', '營收優於預期、成交金額、法人買賣…'],
+    ['funnel.html', '中長期候選池', 'funnel', '一層層刷掉不適合長抱的股票'],
+    ['index.html?about=1', '網站導覽', 'about', '每一頁在做什麼']
   ];
   // 本機（python server.py）才有後端：可以按鈕更新、用自訂參數回測
   var LOCAL = !/github\.io$/.test(location.hostname);
@@ -91,8 +95,14 @@
       return '<a class="navlink' + (n[2] === active ? ' on' : '') +
         '" href="' + n[0] + '">' + n[1] + '</a>';
     }).join('');
+    var inMore = MORE.some(function (n) { return n[2] === active; });
+    var more = '<details class="navmore"><summary class="navlink' + (inMore ? ' on' : '') + '">更多 ▾</summary>' +
+      '<div class="menu">' + MORE.map(function (n) {
+        return '<a href="' + n[0] + '"' + (n[2] === active ? ' class="on"' : '') + '><b>' + n[1] +
+          '</b><span>' + n[3] + '</span></a>';
+      }).join('') + '</div></details>';
     return '<div class="top"><div class="in">' +
-      '<a class="brand" href="index.html">台股觀測</a>' + links +
+      '<a class="brand" href="short.html">台股觀測</a><nav class="navs">' + links + '</nav>' + more +
       searchbox(q || '') +
       '<button id="updbtn2" class="themebtn" type="button" title="立即更新資料">⟳</button>' +
       '<button id="themebtn" class="themebtn" type="button">☾</button>' +
@@ -411,6 +421,10 @@
   /* ---------- 啟動 ---------- */
   function boot(active, render) {
     document.body.insertAdjacentHTML('afterbegin', shell(active, qs('c') || ''));
+    document.addEventListener('click', function (e) {
+      var m = document.querySelector('.navmore');
+      if (m && m.open && !m.contains(e.target)) m.open = false;
+    });
     theme();
     tooltips();
     initSearch();
@@ -542,31 +556,59 @@
     if (b) b.addEventListener('click', runUpdate);
   }
 
-  /* 「其他排行」的分頁列。排行頁（lists.html）與層層篩選頁（funnel.html）
-     共用，兩頁在導覽列上都屬於「其他排行」。 */
-  function otherTabs(meta, current) {
+  /* 「更多」裡的名單（lists.html 與 funnel.html 共用）。
+     桌機是左側清單、手機是下拉選單：原本一排排的分組標籤會隨寬度亂換行，看起來參差不齊。
+     每組名單的性質用同一種標籤標出來 —— 「過去有效」跟「只是今天的事實」是兩回事。 */
+  var GROUP_BADGE = {
+    '中長期': ['long', '中長期：持有幾個月的候選'],
+    '過去表現較好': ['ok', '過去有效：之後平均贏過大盤'],
+    '今日行情': ['fact', '今天的事實，不是預測'],
+    '法人動向': ['fact', '今天的事實，不是預測'],
+    '其他': ['fact', '今天的事實，不是預測'],
+    '過去表現較差': ['bad', '過去反向：之後平均輸大盤，別照著買']
+  };
+  function listGroups(meta) {
     var info = {};
     (meta.screens || []).forEach(function (s) { info[s.key] = s; });
-    var groups = [['篩選', [['funnel', 'funnel.html', '層層篩選']]]].concat(
+    return [['中長期', [['funnel', 'funnel.html', '中長期候選池']]]].concat(
       (meta.tab_groups || []).map(function (g) {
         return [g.label, g.keys.filter(function (k) { return info[k]; }).map(function (k) {
           return [k, 'lists.html?s=' + k, info[k].tab || info[k].title];
         })];
       }));
-    return '<div class="tabs">' + groups.map(function (g) {
-      return '<div class="tabgrp"><span class="glabel">' + esc(g[0]) + '</span>' +
+  }
+  function listBadge(meta, current) {
+    var gs = listGroups(meta);
+    for (var i = 0; i < gs.length; i++)
+      for (var j = 0; j < gs[i][1].length; j++)
+        if (gs[i][1][j][0] === current) {
+          var b = GROUP_BADGE[gs[i][0]] || ['fact', gs[i][0]];
+          return '<span class="lbadge ' + b[0] + '">' + esc(b[1]) + '</span>';
+        }
+    return '';
+  }
+  function otherTabs(meta, current) {
+    var gs = listGroups(meta);
+    var side = gs.map(function (g) {
+      return '<div class="lgrp"><span class="glabel">' + esc(g[0]) + '</span>' +
         g[1].map(function (t) {
-          var warn = info[t[0]] && info[t[0]].cat === 'score';
-          var c = (t[0] === current ? 'on ' : '') + (warn ? 'warnTab' : '');
-          return '<a href="' + t[1] + '" class="' + c.trim() + '">' + esc(t[2]) + '</a>';
+          return '<a href="' + t[1] + '" class="litem' + (t[0] === current ? ' on' : '') +
+            (g[0] === '過去表現較差' ? ' bad' : '') + '">' + esc(t[2]) + '</a>';
         }).join('') + '</div>';
-    }).join('') + '</div>';
+    }).join('');
+    var sel = '<select class="lsel" aria-label="選擇名單" onchange="location.href=this.value">' +
+      gs.map(function (g) {
+        return '<optgroup label="' + esc(g[0]) + '">' + g[1].map(function (t) {
+          return '<option value="' + t[1] + '"' + (t[0] === current ? ' selected' : '') + '>' + esc(t[2]) + '</option>';
+        }).join('') + '</optgroup>';
+      }).join('') + '</select>';
+    return '<aside class="lside">' + side + '</aside>' + sel;
   }
 
   window.App = {
     get: get, esc: esc, num: num, pct: pct, cls: cls, yi: yi, qs: qs,
     tip: tip, pager: pager, boot: boot, searchbox: searchbox,
-    otherTabs: otherTabs, local: LOCAL,
+    otherTabs: otherTabs, listBadge: listBadge, local: LOCAL,
     glossary: function () { return GLOSSARY; }
   };
 })();

@@ -7,7 +7,30 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:wght@400;500&display=swap">
 <link rel="stylesheet" href="assets/style.css">
-<title>今日清單</title></head><body>
+<title>今日清單</title>
+<style>
+.pickcard{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:6px 28px;
+  border:1px solid var(--line2);border-radius:var(--r);padding:20px 22px;margin:18px 0;background:var(--card)}
+.pickcard .eyebrow{font-size:12.5px;letter-spacing:.08em;color:var(--mut)}
+.pk-t{font-size:26px;font-weight:500;letter-spacing:-.02em;margin:4px 0 6px}
+.pk-t a{color:inherit;text-decoration:none}
+.pk-row{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--line2);font-size:14px}
+.pk-row span{color:var(--mut);font-weight:300}
+.pk-row b{font-weight:500;text-align:right;font-variant-numeric:tabular-nums}
+.pk-foot{grid-column:1/-1;font-size:13px;margin-top:6px}
+.mcards{display:none}
+@media (max-width:680px){
+  .pickcard{grid-template-columns:1fr;padding:16px}
+  #list .scroll,#list .pager{display:none}
+  .mcards{display:grid;gap:10px}
+  .mcard{border:1px solid var(--line2);border-radius:var(--r);padding:12px 14px}
+  .mcard .h{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+  .mcard .h a{font-weight:500;color:inherit;text-decoration:none}
+  .mcard .p{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-top:8px;font-size:13px;font-variant-numeric:tabular-nums}
+  .mcard .p span{display:block;color:var(--mut);font-size:11.5px}
+  .mcard .w{font-size:12.5px;color:var(--mut);margin-top:6px;line-height:1.6}
+}
+</style></head><body>
 <div class="wrap" id="app"></div>
 <script src="assets/app.js"></script>
 <script>
@@ -55,6 +78,9 @@ function scoreRow(r, p) {
      平常一天只動 1% 的股票很難做到，但手續費和稅一樣要付。 */
   var liq = isNum(r.vol20_lots) && r.vol20_lots >= p.liq_lots &&
     (!p.min_atrp || (isNum(r.atrp14) && r.atrp14 * 100 >= p.min_atrp));
+  /* 第 9 輪的方案（跟 shortterm.score 同一套）：只挑大型股、停損太寬不買 */
+  if (p.big_n) liq = liq && isNum(r.adtv_rank) && r.adtv_rank <= p.big_n;
+  if (p.skip_wide) liq = liq && isNum(r.atrp14) && r.atrp14 * p.atr_mult <= STOP_MAX;
   var c1 = isNum(r.yoy) && r.yoy >= p.rev_yoy;
   var hi = c1 && r.rev_high12 === 1;
   var c2 = (isNum(r.streak_f) && r.streak_f >= p.inst_days) ||
@@ -74,12 +100,16 @@ function scoreRow(r, p) {
     var full = p.w_rev + p.w_inst + p.w_brk + p.w_ma;
     sc = full ? (s1 + rest) * 100 / full : 0;
   }
+  /* 模型選股：分數 = 模型估的機率 × 100（ETF 與沒有模型的 0 分） */
+  if (p.use_model) sc = isNum(r.mprob) ? r.mprob * 100 : 0;
   return { liq: liq, c1: c1, hi: hi, c2: c2, c3: c3, c4: c4,
            score: Math.round(sc * 10) / 10 };
 }
 
 function reasons(r, s, p) {
   var out = [];
+  if (p.use_model && isNum(r.mprob))
+    out.push('模型估 20 天後贏過 0050 的機率 ' + Math.round(r.mprob * 100) + '%');
   if (s.c1 && p.w_rev > 0)
     out.push('營收年增 ' + Math.round(r.yoy) + '%' + (s.hi ? '（創 12 個月新高）' : ''));
   if (s.c2 && p.w_inst > 0) {
@@ -203,7 +233,7 @@ function calcBind() {
   box.innerHTML = calcPanel();
   document.getElementById('c_pick').addEventListener('change', calcRender);
   document.getElementById('c_px').addEventListener('input', calcRender);
-  document.getElementById('c_cap').addEventListener('input', calcRender);
+  document.getElementById('c_cap').addEventListener('input', function () { calcRender(); paintPick(); });
   calcRender();
 }
 
@@ -237,7 +267,22 @@ function paramForm() {
     }).join('') + '</div>';
   }).join('') + '</div>' +
   '<div class="pbar"><button class="btn" id="preset" type="button">恢復預設</button>' +
-  '<span class="note" id="pnote" style="font-size:13px"></span></div>';
+  (T.presets || []).map(function (x) {
+    return '<button class="btn" type="button" data-preset="' + x.key + '">' + App.esc(x.label) + '</button>';
+  }).join('') +
+  '<span class="note" id="pnote" style="font-size:13px"></span></div>' +
+  '<p class="note" style="font-size:13px;margin-top:8px">這五個按鈕是第 9 輪研究的五個方案' +
+  '（在預設之上只改一件事），它們也在<a href="history.html">策略追蹤</a>裡紙上跑，' +
+  '回測結果在<a href="backtest.html#r9">回測報告</a>。</p>';
+}
+
+function applyParams(kw) {
+  Object.keys(DEF).forEach(function (k) { P[k] = DEF[k]; });
+  Object.keys(kw || {}).forEach(function (k) { if (k in P) P[k] = +kw[k]; });
+  document.querySelectorAll('.prow input').forEach(function (el) {
+    el.value = P[el.getAttribute('data-k')];
+  });
+  saveParams(); renderList(); markChanged();
 }
 
 function markChanged() {
@@ -291,7 +336,18 @@ function listTable(rows) {
         '<td>' + f2(r.close) + '</td><td class="dn">' + f2(o.stop) + '</td>' +
         '<td class="up">' + (o.target == null ? '<span class="mut">不設</span>' : f2(o.target)) + '</td>' +
         '<td class="why">' + App.esc(o.why.join('；')) + '</td></tr>';
-    }).join('') + '</tbody></table></div>';
+    }).join('') + '</tbody></table></div>' +
+    /* 手機：表格太寬，改成每檔一張卡片 */
+    '<div class="mcards">' + rows.map(function (o) {
+      var r = o.r;
+      return '<div class="mcard"' + (o.flags.length ? ' style="opacity:.6"' : '') + '><div class="h">' +
+        '<a href="stock.html?c=' + r.code + '">' + o.rank + '. ' + r.code + ' ' + App.esc(r.name) + '</a>' +
+        '<span class="mut" style="font-size:12.5px">' + App.esc(r.ind || r.kind) + '　' + App.num(o.s.score, 0) + ' 分</span></div>' +
+        (o.flags.length ? '<div>' + o.flags.map(function (f) { return '<span class="flag" style="margin:4px 4px 0 0">' + App.esc(f) + '</span>'; }).join('') + '</div>' : '') +
+        '<div class="p"><div><span>收盤</span>' + f2(r.close) + '</div><div><span>停損</span><b class="dn">' + f2(o.stop) +
+        '</b></div><div><span>目標</span><b class="up">' + (o.target == null ? '不設' : f2(o.target)) + '</b></div></div>' +
+        '<div class="w">' + App.esc(o.why.join('；')) + '</div></div>';
+    }).join('') + '</div>';
 }
 
 var CUR = [];
@@ -312,7 +368,69 @@ function renderList() {
   CUR = rank(P);
   document.getElementById('lcount').textContent = CUR.length;
   paintList();
+  paintPick();
   calcBind();
+}
+
+/* ---------- 今天照規則該買哪一檔（規範 v1 的買法） ----------
+ * 由上往下第一檔：沒有排除標記、你還沒持有、金額不超過日均成交額 1%。
+ * 持有檔數讀「交易紀錄」頁存在這台瀏覽器的資料；本金讀計算機存的那一份。 */
+function journal() { try { return JSON.parse(localStorage.getItem('journal_v1') || '[]'); } catch (e) { return []; } }
+function paintPick() {
+  var box = document.getElementById('pick');
+  if (!box) return;
+  var cap = parseFloat(loadCap()) * 1e4, J = journal();
+  var held = J.filter(function (t) { return !t.sell_date; });
+  var heldCodes = held.map(function (t) { return t.code; });
+  var head = '<div class="pickcard"><div class="pk-l">';
+  if (held.length >= 3) {
+    box.innerHTML = head + '<span class="eyebrow">今天照規則</span><div class="pk-t">不買</div>' +
+      '<div class="note">你在<a href="journal.html">交易紀錄</a>裡已經持有 ' + held.length +
+      ' 檔（上限 3 檔）。等有一檔賣出再說。</div></div></div>';
+    return;
+  }
+  var why = [], o = null;
+  for (var i = 0; i < CUR.length; i++) {
+    var c = CUR[i];
+    if (c.flags.length) { why.push(c.r.code + ' ' + c.flags.join('、')); continue; }
+    if (heldCodes.indexOf(c.r.code) >= 0) { why.push(c.r.code + ' 已持有'); continue; }
+    if (cap > 0 && isNum(c.r.amt20)) {
+      var d0 = (c.r.close - c.stop) / c.r.close, amt0 = Math.min(cap * RISK / d0, cap * CAP);
+      if (amt0 > c.r.amt20 * 0.01) { why.push(c.r.code + ' 金額超過日均成交額 1%'); continue; }
+    }
+    o = c; break;
+  }
+  if (!o) {
+    box.innerHTML = head + '<span class="eyebrow">今天照規則</span><div class="pk-t">沒有可買的</div>' +
+      '<div class="note">' + (CUR.length ? '清單上的都被排除了：' + App.esc(why.join('；')) : '今天沒有股票達到門檻。') +
+      '</div></div></div>';
+    return;
+  }
+  var r = o.r, dist = (r.close - o.stop) / r.close, size = '';
+  if (cap > 0) {
+    var amt = Math.min(cap * RISK / dist, cap * CAP), sh = Math.floor(amt / r.close);
+    var lots = Math.floor(sh / 1000), odd = sh % 1000;
+    size = '<div class="pk-row"><span>依你的本金 ' + (cap / 1e4).toLocaleString() + ' 萬</span><b>約 ' +
+      (lots ? lots + ' 張' : '') + (lots && odd ? ' + ' : '') + (odd ? odd + ' 股' : '') + (sh ? '' : '不到 1 股') +
+      '（' + Math.round(sh * r.close).toLocaleString() + ' 元）</b></div>' +
+      '<div class="pk-row"><span>碰到停損約賠</span><b>' +
+      Math.round(sh * (r.close - o.stop) + sh * r.close * COST / 100).toLocaleString() + ' 元</b></div>';
+  } else {
+    size = '<div class="pk-row"><span>要買多少</span><b>在下面的計算機填一次本金，這裡就會算好</b></div>';
+  }
+  box.innerHTML = head + '<span class="eyebrow">今天照規則可以買' + (held.length ? '（你已持有 ' + held.length + ' 檔）' : '') + '</span>' +
+    '<div class="pk-t"><a href="stock.html?c=' + r.code + '">' + r.code + ' ' + App.esc(r.name) + '</a></div>' +
+    '<div class="mut" style="font-size:13.5px">' + App.esc(r.ind || r.kind) + '　總分 ' + App.num(o.s.score, 0) +
+    '　' + App.esc(o.why.join('；')) + '</div></div><div class="pk-r">' +
+    '<div class="pk-row"><span>明天開盤買（參考今天收盤）</span><b>' + f2(r.close) + '</b></div>' +
+    '<div class="pk-row"><span>參考停損</span><b class="dn">' + f2(o.stop) + '（−' + App.num(dist * 100, 1) + '%）</b></div>' +
+    '<div class="pk-row"><span>參考目標</span><b class="up">' + (o.target == null ? '不設' : f2(o.target)) + '</b></div>' +
+    size + '</div>' +
+    '<div class="pk-foot note">開盤就一字漲停的話不買。成交後用下面的計算機以成交價重算停損與目標，' +
+    '再到<a href="journal.html">交易紀錄</a>記一筆。' +
+    (why.length ? '（跳過：' + App.esc(why.join('；')) + '）' : '') +
+    (isDefault() ? '' : '<br><b>注意：你改過參數</b>，這一檔是照你的參數選的，不是策略追蹤裡 Arm 0 的那一檔。') +
+    '</div></div>';
 }
 
 /* 回測結論的一行摘要：清單旁邊就要看得到「這套規則過去表現如何」，
@@ -338,7 +456,7 @@ function stageLine() {
   if (!S) return '';
   return '<div class="statusbar warn"><span class="txt"><b>目前階段：' + App.esc(S.current + ' ' + S.name) + '</b>　' +
     '依「短線交易與研究規範 v1」，這份清單現在只用來紙上追蹤，還沒到可以下單的階段。' +
-    '</span><a class="more" href="history.html">看前瞻實測 →</a></div>';
+    '</span><a class="more" href="history.html">看策略追蹤 →</a></div>';
 }
 
 /* 處置股/注意股名單的狀態。抓不到或還沒公布時要講清楚，不能當成「今天沒有」。 */
@@ -371,6 +489,14 @@ App.boot('short', function (meta) {
     // 兩份實作的一致性檢查（用預設參數，不受使用者調整影響）
     var mine = rank(DEF).map(function (o) { return o.r.code; }).join(',');
     var drift = mine !== T.expected.join(',');
+    (T.presets || []).forEach(function (x) {
+      var q = {}; Object.keys(DEF).forEach(function (k) { q[k] = DEF[k]; });
+      Object.keys(x.params).forEach(function (k) { q[k] = +x.params[k]; });
+      if (x.expected && rank(q).map(function (o) { return o.r.code; }).join(',') !== x.expected.join(',')) {
+        drift = true;
+        if (window.console) console.warn('方案不一致：' + x.label);
+      }
+    });
 
     document.getElementById('app').innerHTML =
       '<div class="fnhero"><span class="eyebrow">今日清單 &middot; ' + App.esc(T.date) + ' 收盤</span>' +
@@ -380,7 +506,7 @@ App.boot('short', function (meta) {
       '停損、目標價是依公式算的參考值，<b>不是買賣建議</b></div></div>' +
       (drift ? '<div class="statusbar bad"><span class="txt"><b>網頁算出的清單和後端不一致</b>：' +
         '兩邊的計算規則對不上，這份清單不可信。</span></div>' : '') +
-      btLine(res[1]) + stageLine() + riskLine() +
+      btLine(res[1]) + stageLine() + riskLine() + '<div id="pick"></div>' +
       '<div class="card"><h2>今天符合條件的股票</h2>' +
       '<p class="lead">四個條件各佔一份分數，不必全部符合，依總分排序（同分時成交金額大的在前）。' +
       '點表頭可以換排序方式。</p>' +
@@ -403,7 +529,7 @@ App.boot('short', function (meta) {
       '這兩個價位是用<b>今天的收盤價</b>估的（收盤後還不知道明天開盤多少）。' +
       '實際成交後，請用自己的成交價 × 1.0559 當目標、成交價 − 3 × ATR 當停損。' +
       '<a href="backtest.html">回測報告</a>有完整數字與取捨。<br>' +
-      '<b>規範 v1 的買法</b>（前瞻實測也照這個算）：由上往下，挑第一檔沒被標成' + App.tip('處置股') +
+      '<b>規範 v1 的買法</b>（策略追蹤也照這個算）：由上往下，挑第一檔沒被標成' + App.tip('處置股') +
       '、' + App.tip('注意股') + '、' + App.tip('全額交割') + '的；一天最多新買 1 檔、同時最多抱 3 檔、同產業最多 2 檔；' +
       '每筆的金額用下面的計算機依本金算（碰到停損只賠本金 0.5%）。</p>' +
       '<div id="list"></div>' +
@@ -422,12 +548,12 @@ App.boot('short', function (meta) {
         saveParams(); renderList(); markChanged();
       });
     });
-    document.getElementById('preset').addEventListener('click', function () {
-      Object.keys(DEF).forEach(function (k) { P[k] = DEF[k]; });
-      document.querySelectorAll('.prow input').forEach(function (el) {
-        el.value = DEF[el.getAttribute('data-k')];
+    document.getElementById('preset').addEventListener('click', function () { applyParams({}); });
+    document.querySelectorAll('[data-preset]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var x = T.presets.filter(function (q) { return q.key === b.getAttribute('data-preset'); })[0];
+        applyParams(x.params);
       });
-      saveParams(); renderList(); markChanged();
     });
   });
 });

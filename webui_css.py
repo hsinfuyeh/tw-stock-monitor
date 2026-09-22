@@ -93,6 +93,17 @@ border-radius:var(--pill);border:1px solid transparent}
 .navlink.on{background:var(--pillbg);color:var(--pillfg);border-color:var(--pillbg);
 font-weight:500}
 .navlink.on:hover{text-decoration:none}
+.navs{display:flex;gap:2px;min-width:0}
+.navmore{position:relative}
+.navmore summary{list-style:none;cursor:pointer}
+.navmore summary::-webkit-details-marker{display:none}
+.navmore .menu{position:absolute;top:calc(100% + 6px);left:0;z-index:60;min-width:240px;
+background:var(--card);border:1px solid var(--line2);border-radius:12px;padding:6px;
+box-shadow:0 8px 28px rgba(0,0,0,.18)}
+.navmore .menu a{display:block;padding:9px 12px;border-radius:8px;color:var(--fg)}
+.navmore .menu a:hover,.navmore .menu a.on{background:var(--pillbg);color:var(--pillfg);text-decoration:none}
+.navmore .menu b{display:block;font-weight:500;font-size:14px}
+.navmore .menu span{display:block;font-size:12px;opacity:.7;font-weight:300}
 .searchbox{position:relative;flex:1;min-width:0}
 .searchbox input{width:100%;padding:11px 15px;border:1px solid var(--line2);
 border-radius:var(--rin);background:var(--bg);color:var(--fg);font-size:16px;
@@ -227,6 +238,28 @@ background:repeating-linear-gradient(180deg,var(--warn) 0 3px,transparent 3px 6p
 .tabs{display:flex;flex-wrap:wrap;gap:10px 20px;align-items:center;
 padding:0;margin:0 0 26px}
 .tabgrp{display:flex;align-items:center;gap:6px;flex-wrap:nowrap}
+/* 更多 → 名單：左側清單 + 內容；手機改下拉選單 */
+.lgrid{display:grid;grid-template-columns:190px minmax(0,1fr);gap:28px;align-items:start;margin-top:14px}
+.lside{position:sticky;top:78px}
+.lgrp{margin-bottom:16px}
+.lgrp .glabel{display:block;margin:0 0 4px 10px}
+.litem{display:block;padding:6px 10px;border-radius:8px;color:var(--mut);font-size:14px}
+.litem:hover{color:var(--fg);background:var(--line2);text-decoration:none}
+.litem.on{background:var(--pillbg);color:var(--pillfg);font-weight:500}
+.litem.bad{color:var(--up)}
+.litem.bad.on{background:var(--up);color:#fff}
+.lsel{display:none;width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--line2);
+background:var(--card);color:var(--fg);font:inherit;margin-bottom:12px}
+.lbadge{display:inline-block;font-size:12.5px;padding:2px 10px;border-radius:var(--pill);
+border:1px solid currentColor;vertical-align:4px;margin-left:10px;font-weight:400;letter-spacing:0}
+.lbadge.ok{color:var(--ok)}.lbadge.bad{color:var(--up)}.lbadge.fact,.lbadge.long{color:var(--mut)}
+table.ltable{table-layout:fixed;width:100%;min-width:760px}
+table.ltable td,table.ltable th{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:760px){
+  .lgrid{grid-template-columns:minmax(0,1fr);gap:0}
+  .lside{display:none}
+  .lsel{display:block}
+}
 .glabel{font-size:11px;letter-spacing:.11em;text-transform:uppercase;
 color:var(--faint);font-weight:500;white-space:nowrap;margin-right:2px}
 .tabs a{flex:0 0 auto;padding:8px 16px;border-radius:var(--pill);font-size:14px;
@@ -250,6 +283,11 @@ details summary::-webkit-details-marker{display:none}
 details summary::before{content:"+ "}
 details[open] summary::before{content:"\\2013 "}
 details .inner{margin-top:16px}
+/* 導覽列的「更多」也是 details，但不要沿用上面展開區塊的線、+ 號與小字 */
+details.navmore{border-top:0;margin-top:0;padding-top:0}
+details.navmore summary{font-size:14px;color:var(--mut);letter-spacing:0;text-transform:none}
+details.navmore summary.on{color:var(--pillfg)}
+details.navmore summary::before,details.navmore[open] summary::before{content:none}
 
 /* ---------- 表格：欄名用大寫小標，列用細線 ---------- */
 table{border-collapse:collapse;width:100%;font-size:14.5px}
@@ -468,7 +506,13 @@ background:var(--bg);color:var(--fg);font:inherit}
    原本五個元素擠同一行，搜尋框被壓到只剩兩個字寬，等於不能用。 */
 @media(max-width:700px){
   .top .in{flex-wrap:wrap;row-gap:9px}
-  .themebtn{margin-left:auto}
+  /* 第一行：品牌＋兩個按鈕；第二行：導覽（可左右滑）＋更多；第三行：搜尋 */
+  #updbtn2{margin-left:auto}
+  .navs{order:2;flex:1 1 calc(100% - 100px);overflow-x:auto;scrollbar-width:none;gap:0}
+  .navs .navlink,details.navmore summary{padding:6px 7px;font-size:13px}
+  .navs::-webkit-scrollbar{display:none}
+  .navmore{order:2}
+  .navmore .menu{left:auto;right:0}
   .searchbox{order:3;flex:1 0 100%}
 }
 

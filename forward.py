@@ -31,6 +31,7 @@ import shortterm as S
 ROOT = Path(__file__).parent
 SNAP = ROOT / "snapshots"          # Arm 0 沿用原本的位置；其他臂放子資料夾
 START = "2026-09-22"               # 規範 v1 的起算日（第一個訊號日）
+START9 = "2026-09-23"              # 第 9 輪新臂（Arm 4–8）的起算日
 
 ARMS = [
     dict(key="arm0", name="Arm 0 現行版", kind="prd", params={},
@@ -42,6 +43,24 @@ ARMS = [
          desc="超跌（5 日報酬 z ≤ −2.5）、成交額前 30%、大盤不是空頭；持有 10 日、不設目標"),
     dict(key="arm3", name="Arm 3 10 日版", kind="prd", params={"hold_days": 10},
          desc="跟 Arm 0 只差一件事：最長持有 10 個交易日"),
+    # 第 9 輪（RESEARCH_LOG 事前登記）：五個改進方案，2026-09-23 起算。
+    # 同時跑的臂變多，靠運氣過關的機會變大，所以最終判定要 t ≥ 3（其他臂 2.5）。
+    dict(key="arm4", name="Arm 4 只挑大型股", kind="prd", params={"big_n": 150},
+         start=START9, final_t=3.0,
+         desc="跟 Arm 0 只差一件事：只挑成交額全市場前 150 名的股票"),
+    dict(key="arm5", name="Arm 5 總分 70 以上", kind="prd", params={"min_score": 70},
+         start=START9, final_t=3.0,
+         desc="跟 Arm 0 只差一件事：總分至少 70（四個條件至少中三個左右）"),
+    dict(key="arm6", name="Arm 6 停損太寬不買", kind="prd", params={"skip_wide": 1},
+         start=START9, final_t=3.0,
+         desc="跟 Arm 0 只差一件事：3×ATR 超過 10% 的不買，而不是把停損硬夾在 10%"),
+    dict(key="arm7", name="Arm 7 只看月營收", kind="prd",
+         params={"w_inst": 0, "w_brk": 0, "w_ma": 0, "use_target": 0},
+         start=START9, final_t=3.0,
+         desc="只用月營收條件選股、不設目標價（最長 20 日）"),
+    dict(key="arm8", name="Arm 8 模型選股", kind="prd", params={"use_model": 1},
+         start=START9, final_t=3.0,
+         desc="用逐年重訓的模型估「20 天後贏 0050」的機率，≥ 50% 才選；停損與目標同 Arm 0"),
 ]
 ARM = {a["key"]: a for a in ARMS}
 
@@ -346,7 +365,8 @@ def status(m, key):
                     "note": "中期檢查未過：對 0050 {:+.2f}%、t = {:.2f}（規範：≤ −0.3% 且 t ≤ −2 就停用）".format(ex, t)}
         return {"level": "watch", "label": "中期通過",
                 "note": "沒有觸發停用條件，繼續累積到第 {} 天做最終判定。".format(FINAL)}
-    ok = (ex is not None and ex > 0 and t is not None and t >= 2.5
+    need_t = ARM[key].get("final_t", 2.5) if key in ARM else 2.5
+    ok = (ex is not None and ex > 0 and t is not None and t >= need_t
           and m.get("mdd") is not None and m["mdd"] >= -15
           and (key != "arm0" or (m.get("hit") or 0) >= 55))
     return ({"level": "ok", "label": "成功", "note": "達到規範第 7 節的全部門檻。"} if ok else
@@ -379,6 +399,7 @@ def compute(d, risk_today, risk_fn=risk_lists.fetch):
     bench = bench["close"] * bench["k"]
     new, arms_out = {}, []
     recent = set([x for x in days if START <= x < today][-RISK_LOOKBACK:])
+    # （新臂起算日較晚，下面每一臂各用自己的 start）
     rcache = {}
 
     def risk_of(m):
@@ -393,12 +414,13 @@ def compute(d, risk_today, risk_fn=risk_lists.fetch):
 
     for a in ARMS:
         key = a["key"]
+        start = a.get("start", START)
         snaps = load_snaps(key)
         new[key] = {}
-        if today >= START:
+        if today >= start:
             new[key][today] = snapshot(d, key, pd.Timestamp(today), risk_today)
         # 缺日補算：起算日之後、今天之前沒有快照的交易日（例如那天 CI 沒跑）
-        for m in [x for x in days if START <= x < today and x not in snaps]:
+        for m in [x for x in days if start <= x < today and x not in snaps]:
             new[key][m] = snapshot(d, key, pd.Timestamp(m), risk_of(m), backfilled=True)
         # 前幾天產出時名單還沒確定的，回頭更新標記
         for m in sorted(recent):
@@ -411,8 +433,8 @@ def compute(d, risk_today, risk_fn=risk_lists.fetch):
         snaps.update(new[key])
         order = sorted(snaps)
         tracked = [(sd, track_snapshot(d, snaps[sd], by_code)) for sd in order]
-        live = [(sd, rows) for sd, rows in tracked if sd >= START]
-        eq, b, trades, expo = portfolio(days, live, bench, START, bench_open)
+        live = [(sd, rows) for sd, rows in tracked if sd >= start]
+        eq, b, trades, expo = portfolio(days, live, bench, start, bench_open)
         m = summarize(eq, b, trades, key, expo)
         # Arm 2 的影子：同一份清單「不停損」的逐筆平均（規範第 7 節）
         shadow = None
@@ -433,13 +455,14 @@ def compute(d, risk_today, risk_fn=risk_lists.fetch):
             rows = [{f: r.get(f) for f in keep} for r in rows]
             done = [r for r in rows if r.get("ret") is not None]
             days_list.append({
-                "date": sd, "pre": sd < START, "backfilled": bool(snaps[sd].get("backfilled")),
+                "date": sd, "pre": sd < start, "backfilled": bool(snaps[sd].get("backfilled")),
                 "risk": snaps[sd].get("risk"), "n": len(rows),
                 "waiting": sum(r["status"] == "等待進場" for r in rows),
                 "open": sum(r["status"] == "持有中" for r in rows),
                 "avg": S._r(float(np.mean([r["ret"] for r in done]))) if done else None,
                 "rows": rows})
-        arms_out.append(dict(key=key, name=a["name"], desc=a["desc"], start=START,
+        arms_out.append(dict(key=key, name=a["name"], desc=a["desc"], start=start,
+                             final_t=a.get("final_t", 2.5),
                              params=arm_params(key), metrics=m, shadow=shadow,
                              equity=[[dd, S._r(v, 5), S._r(bb, 5)]
                                      for (dd, v), bb in zip(eq, b)],

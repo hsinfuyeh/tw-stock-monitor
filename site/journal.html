@@ -7,7 +7,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:wght@400;500&display=swap">
 <link rel="stylesheet" href="assets/style.css">
-<title>我的交易</title>
+<title>交易紀錄</title>
 <style>
 .jgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 22px;max-width:760px}
 @media (max-width:760px){.jgrid{grid-template-columns:1fr}}
@@ -25,9 +25,9 @@ td .btn{padding:3px 10px;font-size:12.5px}
 <div class="wrap" id="app"></div>
 <script src="assets/app.js"></script>
 <script>
-/* 我的交易（規範 v1 第 6、8 節：實際下單的紀錄、違規次數、緊急停止）。
+/* 交易紀錄（規範 v1 第 6、8 節：實際下單的紀錄、違規次數、緊急停止）。
  *
- * 前瞻實測是「照規則假裝買」，這一頁是「你真的買了什麼」。規範的階段 1 要求
+ * 策略追蹤是「照規則假裝買」，這一頁是「你真的買了什麼」。規範的階段 1 要求
  * 違規每月 ≤ 1 筆、緊急停止要看連續停損與單筆虧損，這些都只能從真實交易算。
  *
  * 資料只存在這台瀏覽器（localStorage），不會上傳到任何地方 —— 公開網站沒有後端，
@@ -110,7 +110,7 @@ function render() {
   if (S.v30 >= 3) kill.push('近 30 天違規 ' + S.v30 + ' 筆（≥ 3 筆）');
   function kpi(l, v, bad) { return '<div class="kpi' + (bad ? ' bad' : '') + '"><div class="l">' + l + '</div><div class="v">' + v + '</div></div>'; }
   app.innerHTML =
-    '<h1 style="font-size:30px;letter-spacing:-.03em;font-weight:500;margin:0 0 4px">我的交易</h1>' +
+    '<h1 style="font-size:30px;letter-spacing:-.03em;font-weight:500;margin:0 0 4px">交易紀錄</h1>' +
     '<div class="meta">你實際下單的紀錄 —— 算違規次數與緊急停止條件（規範 v1 第 6、8 節）</div>' +
     (kill.length ? '<div class="statusbar bad"><span class="txt"><b>觸發緊急停止：' + App.esc(kill.join('；')) +
       '</b>。規範：全部停下來檢討，不再開新倉。</span></div>'

@@ -25,7 +25,6 @@
     python publish.py 20         只產前 20 檔，開發時用
 """
 import datetime as dt
-import gzip
 import json
 import shutil
 import sys
@@ -141,6 +140,7 @@ def emit_funnel(pfull):
         d["flags"] = [dict(level=c, title=t, detail=x)
                       for c, t, x in funnel.evidence_row(r)]
         rows.append(d)
+    _add_ind(rows)
     return dict(date=str(dt_)[:10], steps=steps, total=steps[0]["after"],
                 passed=steps[-1]["after"], rows=rows,
                 order_note=funnel.ORDER_NOTE)
@@ -197,7 +197,23 @@ def emit_screens(p):
         except Exception as e:                       # 單一榜單壞掉不該讓整批失敗
             out[key] = dict(key=key, title=title, desc=desc, cat=cat,
                             error=str(e)[:200], rows=[])
+    for v in out.values():
+        _add_ind(v.get("rows"))
+        _add_ind(v.get("rows_bottom"))
     return out
+
+
+def _add_ind(rows):
+    """每一列補上產業別（排行頁的表格統一欄位：代號、名稱、產業…）。"""
+    import barrier
+    if not rows:
+        return
+    ind = getattr(_add_ind, "_map", None)
+    if ind is None:
+        m = barrier.industry_map()
+        ind = _add_ind._map = {c: barrier.IND_NAME.get(v) for c, v in m.items()}
+    for r in rows:
+        r["ind"] = ind.get(r["code"])
 
 
 class Inconsistent(Exception):

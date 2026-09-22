@@ -7,6 +7,8 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:wght@400;500&display=swap">
 <link rel="stylesheet" href="assets/style.css">
+<script>/* 打開網站直接進今日清單；這一頁留給「更多 → 網站導覽」（?about=1） */
+if (!/[?&]about=1/.test(location.search)) location.replace('short.html' + location.hash);</script>
 <title>台股觀測</title></head><body>
 <div class="wrap" id="app"></div>
 <script src="assets/app.js"></script>
@@ -25,15 +27,15 @@ App.boot(null, function (meta) {
     '<div class="card"><h2>這個網站有什麼</h2>' +
       '<p class="lead">資料截止 ' + App.esc(meta.data_date) + '，每個交易日收盤後自動更新。</p>' +
       '<ul class="note">' +
-      '<li><a href="short.html"><strong>今日清單</strong></a>：依月營收、法人連續買超、' +
-      '突破前 20 日高、均線多頭排列四個條件打分數，列出今天分數最高的 20 檔，' +
-      '附參考停損價與目標價。條件和參數可以自己調。</li>' +
-      '<li><a href="backtest.html"><strong>回測報告</strong></a>：假設過去每天都照清單買，' +
-      '結果會怎樣、有沒有贏過買 0050。</li>' +
-      '<li><a href="history.html"><strong>前瞻實測</strong></a>：從 2026-09-22 起，四個版本的規則' +
-      '同時「紙上」往前跑，照資金規則算成組合跟 0050 比；第 120、250 天判定成敗。</li>' +
-      '<li><a href="lists.html"><strong>其他排行</strong></a>：另外整理的名單，' +
-      '例如營收優於預期、股價接近一年高點、今天成交金額最大、法人買最多、即將除權息。</li>' +
+      '<li><a href="short.html"><strong>今日清單</strong></a>：每天收盤後依四個條件打分數，列出前 20 檔，' +
+      '最上面直接寫出「今天照規則可以買哪一檔、買多少」，附參考停損與目標價。</li>' +
+      '<li><a href="journal.html"><strong>交易紀錄</strong></a>：記下你真的下的單，自動算違規次數和' +
+      '「該不該全部停下來」的條件。資料只存在你的瀏覽器。</li>' +
+      '<li><a href="history.html"><strong>策略追蹤</strong></a>：九種買法從 2026-09 起同時「紙上」往前跑' +
+      '（不花錢、照規則假裝買賣），看哪一種在沒看過的未來真的贏過 0050。</li>' +
+      '<li><a href="backtest.html"><strong>回測報告</strong></a>：假設過去 18 年每天都照清單買，結果如何。</li>' +
+      '<li><strong>更多</strong>：<a href="lists.html">其他排行</a>（營收優於預期、成交金額、法人買賣…）與' +
+      '<a href="funnel.html">中長期候選池</a>（適合長抱的股票，跟短線清單無關）。</li>' +
       '<li><strong>查個股</strong>：用上面或頂部的搜尋框，看一檔股票進場前該確認的事' +
       '（好不好買賣、波動大不大、有沒有要除權息…）。</li></ul></div>' +
     '<div class="card"><h2>先說清楚</h2><ul class="note">' +

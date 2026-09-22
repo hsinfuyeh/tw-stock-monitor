@@ -7,7 +7,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:wght@400;500&display=swap">
 <link rel="stylesheet" href="assets/style.css">
-<title>前瞻實測</title>
+<title>策略追蹤</title>
 <style>
 .arms{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:6px}
 @media (max-width:760px){.arms{grid-template-columns:1fr}}
@@ -22,6 +22,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 .bar i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--fg)}
 .bar b{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--warn)}
 .tabs{display:flex;gap:7px;flex-wrap:wrap;margin:4px 0 14px}
+.armgrp{font-size:16px;font-weight:500;margin:22px 0 10px}
 .tabs .chip.on{background:var(--pillbg);color:var(--pillfg);border-color:var(--pillbg)}
 .stages tr.on td{font-weight:600}
 svg.eq{width:100%;height:70px;display:block;margin-top:10px}
@@ -29,7 +30,7 @@ svg.eq{width:100%;height:70px;display:block;margin-top:10px}
 <div class="wrap" id="app"></div>
 <script src="assets/app.js"></script>
 <script>
-/* 前瞻實測（短線交易與研究規範 v1 第 3、5、7、8 節）。
+/* 策略追蹤（短線交易與研究規範 v1 第 3、5、7、8 節）。
  *
  * 18 年回測已經說明：這些規則在過去都沒贏過 0050。回測可以一直改到好看，
  * 往前走的紀錄改不了 —— 所以從起算日開始，四個版本（臂）同時「紙上」跑，
@@ -83,11 +84,25 @@ function card(a, F) {
     '<dt>10 日報酬為正的比例（目標 ≥ 55%）</dt><dd>' + n1(m.pos10, '%') + '</dd>' +
     (a.key === 'arm0' ? '<dt>達到目標的比例（目標 ≥ 55%）</dt><dd>' + n1(m.hit, '%') + '</dd>' : '') +
     '<dt>單筆最大虧損佔本金（上限 1%）</dt><dd>' + limit(m.worst_cap, m.worst_cap < -1) + '</dd>' +
-    '<dt>' + App.tip('可信度') + '（最終要 ≥ 2.5）</dt><dd>' + (m.t == null ? '累積 20 個訊號日才算' : App.num(m.t, 1, true)) + '</dd>' +
+    '<dt>' + App.tip('可信度') + '（最終要 ≥ ' + (a.final_t || 2.5) + '）</dt><dd>' + (m.t == null ? '累積 20 個訊號日才算' : App.num(m.t, 1, true)) + '</dd>' +
     '<dt>買進 / 已出場 / 持有中</dt><dd>' + (m.entered || 0) + ' / ' + (m.closed || 0) + ' / ' + (m.open || 0) + '</dd>' +
     '<dt>依規則跳過</dt><dd>' + (m.skipped || 0) + ' 次</dd>' +
     (a.shadow ? '<dt>影子版「不停損」逐筆平均</dt><dd>' + money(a.shadow.avg) + '（' + a.shadow.n + ' 筆）</dd>' : '') +
     '</dl></div>';
+}
+
+/* 一眼看完九個版本：天數、逐筆贏過 0050、可信度、狀態。細節在下面的卡片。 */
+function overview(F) {
+  var rows = F.arms.map(function (a) {
+    var m = a.metrics || {}, st = m.status || {};
+    return '<tr><td style="text-align:left"><a href="#" data-arm="' + a.key + '">' + App.esc(a.name) + '</a></td>' +
+      '<td>' + a.start.slice(5) + '</td><td>' + (m.days || 0) + '</td><td>' + (m.entered || 0) + '</td>' +
+      '<td class="sorted">' + money(m.excess) + '</td><td>' + (m.t == null ? '—' : App.num(m.t, 1, true)) + '</td>' +
+      '<td><span class="st ' + (st.level || 'todo') + '">' + App.esc(st.label || '累積中') + '</span></td></tr>';
+  }).join('');
+  return '<div class="card"><h2>總覽</h2><div class="scroll"><table><thead><tr><th style="text-align:left">版本</th>' +
+    '<th>起算</th><th>天數</th><th>買進</th><th class="sorted">逐筆贏過 0050</th><th>可信度</th><th>狀態</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table></div></div>';
 }
 
 function tradesTable(a) {
@@ -166,16 +181,20 @@ App.boot('history', function (meta) {
         '</td><td>' + App.esc(x[1]) + '</td><td style="text-align:left">' + App.esc(x[2]) + '</td><td>' + App.esc(x[3]) + '</td></tr>';
     }).join('');
     app.innerHTML =
-      '<h1 style="font-size:30px;letter-spacing:-.03em;font-weight:500;margin:0 0 4px">前瞻實測</h1>' +
+      '<h1 style="font-size:30px;letter-spacing:-.03em;font-weight:500;margin:0 0 4px">策略追蹤</h1>' +
       '<div class="meta">從 ' + F.start + ' 起往前走的紙上紀錄，資料到 ' + F.date + '</div>' +
       '<div class="statusbar warn"><span class="txt"><b>目前階段：' + S.current + ' ' + App.esc(S.name) + '</b>　' +
       '這頁的成績都是照規則「假裝」買賣算出來的，沒有真的下單。</span></div>' +
-      '<div class="card"><h2>四個版本同時跑</h2>' +
+      overview(F) +
+      '<div class="card"><h2>九種買法同時跑</h2>' +
       '<p class="lead">每個版本（臂）用同一套資金規則：最多同時 ' + R.max_hold + ' 檔、每筆最多賠本金的 ' +
       (R.risk * 100) + '%（部位 = 本金 × ' + (R.risk * 100) + '% ÷ 停損距離）、一天最多新買 ' + R.new_per_day +
       ' 檔、單檔最多佔本金 ' + (R.cap * 100) + '%、同產業最多 ' + R.ind_max + ' 檔、處置股、注意股、全額交割股不買、買進金額不超過日均成交額 1%（假設本金 ' + (R.capital / 1e4) + ' 萬）。' +
       '跟同一天起買進持有 0050 比，報酬都已扣手續費和稅。</p>' +
-      '<div class="arms">' + F.arms.map(function (a) { return card(a, F); }).join('') + '</div>' +
+      '<h3 class="armgrp">規範 v1 的四個版本（2026-09-22 起）</h3>' +
+      '<div class="arms">' + F.arms.filter(function (a) { return !a.final_t || a.final_t <= 2.5; }).map(function (a) { return card(a, F); }).join('') + '</div>' +
+      '<h3 class="armgrp">第 9 輪的五個改進方案（2026-09-23 起，門檻較嚴：t ≥ 3）</h3>' +
+      '<div class="arms">' + F.arms.filter(function (a) { return a.final_t > 2.5; }).map(function (a) { return card(a, F); }).join('') + '</div>' +
       '<p class="note" style="margin-top:14px;font-size:13.5px">' +
       '<b>判定看「逐筆平均贏過 0050」</b>：組合實際買的每一筆，跟同一段期間的 0050 比，再取平均' +
       '（跟回測報告的 −0.44% 同一種算法）。<b>組合總報酬</b>只當參考：這套規則每檔只放本金的幾 %，' +
@@ -215,6 +234,12 @@ App.boot('history', function (meta) {
       }
     }
     tabs.addEventListener('click', function (e) { var b = e.target.closest('[data-a]'); if (b) showArm(+b.getAttribute('data-a')); });
+    app.addEventListener('click', function (e) {
+      var l = e.target.closest('[data-arm]'); if (!l) return;
+      e.preventDefault();
+      var i = F.arms.map(function (a) { return a.key; }).indexOf(l.getAttribute('data-arm'));
+      showArm(i); tabs.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
     showArm(0);
   });
 });

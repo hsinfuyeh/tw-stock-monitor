@@ -38,6 +38,24 @@ HORIZONS = (1, 3, 5, 10)
 
 
 # --------------------------------------------------------------------- 資料
+_SHARED = {}
+
+
+def _shared(d):
+    """同一份面板的全市場中位數與「代號 → 列位置」只算一次。
+
+    批次產生 1,300 檔個股頁時，原本每一檔都重算一次全市場中位數、再掃過整份面板找那一檔，
+    CI 上光這一段就要 13 分鐘。用 id 當鍵：面板在 publish 期間不會被改動。"""
+    k = id(d)
+    if k not in _SHARED:
+        base = d.groupby("date")[[f"fwd{h}" for h in HORIZONS]].median()
+        base.columns = ["base{}".format(h) for h in HORIZONS]
+        if len(_SHARED) >= 4:          # common 與 etf 兩份面板會交替用到，不要互相擠掉
+            _SHARED.clear()
+        _SHARED[k] = (base, d.groupby("code", sort=False).indices, d)   # 留住 d，id 才不會被重用
+    return _SHARED[k][:2]
+
+
 def prepare(code, cat="common", subcats=None, panel=None):
     """取得個股面板，並附上同日全市場中位數報酬當基準線。
 
@@ -45,12 +63,11 @@ def prepare(code, cat="common", subcats=None, panel=None):
     批次產生 40 份報告時共用同一份面板可省下約 20 分鐘。
     """
     d = panel if panel is not None else factors.build(cat=cat, subcats=subcats)
-    if code not in set(d["code"]):
+    base, idx = _shared(d)
+    if code not in idx:
         return None, None
     # 基準線：同日全市場橫斷面中位數（比大盤指數更貼近「其他股票」）
-    base = d.groupby("date")[[f"fwd{h}" for h in HORIZONS]].median()
-    base.columns = ["base{}".format(h) for h in HORIZONS]
-    s = d[d["code"] == code].merge(base, on="date", how="left").sort_values("date")
+    s = d.iloc[idx[code]].merge(base, on="date", how="left").sort_values("date")
     for h in HORIZONS:
         s["ex{}".format(h)] = s["fwd{}".format(h)] - s["base{}".format(h)]
     return s, d

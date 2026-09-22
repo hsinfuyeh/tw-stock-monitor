@@ -18,12 +18,15 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 /* 表格產生抽成函式：綜合評分要畫兩張（分數最高 / 最低 25 名），
    兩張欄位完全一樣，複製一份遲早會有人只改到其中一張。 */
 function rowsTable(d, rows) {
-  var showInst = d.extra !== '法人買超';
-  return '<div class="scroll"><table><thead><tr><th>代號</th><th>名稱</th><th>' +
-    App.tip('收盤') + '</th><th>' + App.tip('今日') + '</th>' +
+  /* 每個榜單同一組欄位、同一組欄寬：代號、名稱、產業、收盤、今日、這個榜的指標、法人買超、日均成交額。
+     法人買的榜單，指標本身就是法人買超，那一欄留「—」而不是整欄拿掉，欄位才對得齊。 */
+  var instList = d.extra === '法人買超';
+  return '<div class="scroll"><table class="ltable"><colgroup><col style="width:64px"><col>' +
+    '<col style="width:92px"><col style="width:84px"><col style="width:78px"><col style="width:112px">' +
+    '<col style="width:86px"><col style="width:92px"></colgroup><thead><tr><th>代號</th><th style="text-align:left">名稱</th>' +
+    '<th>產業</th><th>' + App.tip('收盤') + '</th><th>' + App.tip('今日') + '</th>' +
     '<th class="sorted">' + App.tip(d.extra_title || '') + '</th>' +
-    (showInst ? '<th>' + App.tip('法人買超') + '</th>' : '') +
-    '<th>' + App.tip('日均成交額') + '</th></tr></thead><tbody>' +
+    '<th>' + App.tip('法人買超') + '</th><th>' + App.tip('日均成交額') + '</th></tr></thead><tbody>' +
     rows.map(function (r) {
       var ex = r.extra;
       var exTxt = ex == null ? '—' :
@@ -36,11 +39,10 @@ function rowsTable(d, rows) {
          d.extra === '法人買超' ? App.pct(ex * 100, 1) :
          App.pct(ex, d.extra === 'yoy' ? 1 : 2));
       return '<tr><td><a href="stock.html?c=' + r.code + '"><strong>' + r.code +
-        '</strong></a></td><td><a href="stock.html?c=' + r.code + '">' +
-        App.esc(r.name) + '</a></td><td>' + App.num(r.close) + '</td><td>' +
-        App.pct(r.chg_pct) + '</td><td class="sorted">' + exTxt + '</td>' +
-        (showInst ? '<td>' + (r['法人買超'] == null ? '—' :
-          App.pct(r['法人買超'] * 100, 1)) + '</td>' : '') +
+        '</strong></a></td><td style="text-align:left"><a href="stock.html?c=' + r.code + '">' +
+        App.esc(r.name) + '</a></td><td class="mut">' + App.esc(r.ind || '—') + '</td><td>' +
+        App.num(r.close) + '</td><td>' + App.pct(r.chg_pct) + '</td><td class="sorted">' + exTxt + '</td>' +
+        '<td>' + (instList || r['法人買超'] == null ? '—' : App.pct(r['法人買超'] * 100, 1)) + '</td>' +
         '<td class="mut">' + App.yi(r.amt20) + '</td></tr>';
     }).join('') + '</tbody></table></div>';
 }
@@ -63,12 +65,15 @@ App.boot('lists', function (meta) {
     if (!d.rows.length) {
       tbl = '<div class="empty"><div class="note">今天沒有符合條件的標的。</div></div>';
     } else if (isEx) {
-      tbl = '<div class="scroll"><table><thead><tr><th>代號</th><th>名稱</th>' +
+      tbl = '<div class="scroll"><table class="ltable"><colgroup><col style="width:64px"><col>' +
+        '<col style="width:92px"><col style="width:96px"><col style="width:84px"><col style="width:96px">' +
+        '<col style="width:96px"></colgroup><thead><tr><th>代號</th><th style="text-align:left">名稱</th><th>產業</th>' +
         '<th>' + App.tip('除權息日','除權息') + '</th><th>還有</th><th>' +
         App.tip('配發') + '</th><th>' + App.tip('換算幅度') + '</th></tr></thead><tbody>' +
         d.rows.map(function (r) {
           return '<tr><td><a href="stock.html?c=' + r.code + '"><strong>' + r.code +
-            '</strong></a></td><td>' + App.esc(r.name) + '</td><td>' +
+            '</strong></a></td><td style="text-align:left">' + App.esc(r.name) + '</td><td class="mut">' +
+            App.esc(r.ind || '—') + '</td><td>' +
             App.esc(r.date.slice(5)) + '</td><td>' + r.days_left + ' 天後</td><td>' +
             App.num(r.value) + ' 元</td><td>' + App.num(r.yield_pct) + '%</td></tr>';
         }).join('') + '</tbody></table></div>';
@@ -94,15 +99,13 @@ App.boot('lists', function (meta) {
     document.getElementById('app').innerHTML =
       '<h1 style="font-size:30px;letter-spacing:-.03em;font-weight:500;margin:0 0 4px">' +
       '其他排行</h1><div class="meta">' + metaline + '</div>' +
-      '<p class="note" style="margin:0 0 14px">這一頁不屬於短線清單，是另外整理的名單。' +
-      '分組依「過去表現」與「今天發生的事」區分，名單本身都不是買進建議。</p>' +
-      '<div class="tiphint">💡 帶有<span class="mark">虛線底線</span>的名詞，' +
-      '滑鼠移上去（手機點一下）會顯示白話解釋。</div>' +
-      tabs + note +
-      '<div class="card"><h2>' + App.esc(d.title) + '</h2>' +
+      '<p class="note" style="margin:0">跟短線清單無關、另外整理的名單。名單本身都不是買進建議；' +
+      '標題旁的標籤告訴你這份名單「過去照著買有沒有用」。</p>' +
+      '<div class="lgrid">' + tabs + '<div class="lmain">' + note +
+      '<div class="card"><h2>' + App.esc(d.title) + App.listBadge(meta, key) + '</h2>' +
       '<p class="lead">' + d.desc + '</p>' +
       (tbl2 ? '<h3 style="font-size:15px;margin:0 0 8px">分數最高 25 名</h3>' : '') +
-      tbl + tbl2 + '</div>';
+      tbl + tbl2 + '</div></div></div>';
 
     /* 可展開的警語細節 */
     var more = document.querySelector('.statusbar .more');

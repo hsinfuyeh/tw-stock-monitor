@@ -7,14 +7,14 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:wght@400;500&display=swap">
 <link rel="stylesheet" href="assets/style.css">
-<title>其他排行 · 層層篩選</title></head><body>
+<title>中長期候選池</title></head><body>
 <div class="wrap" id="app"></div>
 <script src="assets/app.js"></script>
 <script>
 var SHORT = {L0:'全部上市普通股',L1:'每天成交不到 2,000 萬',L1b:'整天鎖在漲跌停',
              L2a:'殖利率全市場最低 40%',L2b:'一年區間最低 30%',L3:'營收比去年少'};
 
-App.boot('lists', function (meta) {
+App.boot('funnel', function (meta) {
   return App.get('funnel.json').then(function (f) {
     var EV = meta.evidence_labels || {};
     var total = f.total || 1;
@@ -59,6 +59,7 @@ App.boot('lists', function (meta) {
       return '<tr><td><a href="stock.html?c=' + r.code + '"><strong>' + r.code +
         '</strong></a></td><td><a href="stock.html?c=' + r.code + '">' +
         App.esc(r.name) + '</a>' + flags + '</td>' +
+        '<td class="mut">' + App.esc(r.ind || '—') + '</td>' +
         '<td>' + (r.tier || 0) + ' / 5</td>' +
         '<td>' + App.num(r.close) + '</td><td>' + App.pct(r.chg_pct) + '</td>' +
         '<td>' + (r.div_yield == null ? '—' : App.num(r.div_yield) + '%') + '</td>' +
@@ -77,11 +78,14 @@ App.boot('lists', function (meta) {
     }
 
     document.getElementById('app').innerHTML =
-      '<h1 style="font-size:30px;letter-spacing:-.03em;font-weight:500;margin:0 0 4px">其他排行</h1>' +
+      '<h1 style="font-size:30px;letter-spacing:-.03em;font-weight:500;margin:0 0 4px">中長期候選池</h1>' +
       '<div class="meta">資料截止 ' + App.esc(f.date) + '</div>' +
-      App.otherTabs(meta, 'funnel') +
+      '<p class="note" style="margin:0">跟短線清單無關。這是這個工具最早的「中長期」系統：從全部上市股票開始，' +
+      '一層一層刷掉<b>不適合抱幾個月</b>的股票（太少人交易、整天鎖漲跌停、殖利率太低、股價在一年最低區、營收衰退）。' +
+      '這些條件是用幾個月到一年的持有期驗證的，每一層旁邊標著證據強弱。剩下的是「值得進一步研究」的候選，不是買進清單。</p>' +
+      '<div class="lgrid">' + App.otherTabs(meta, 'funnel') + '<div class="lmain">' +
       '<div class="fnhero">' +
-        '<span class="eyebrow">層層篩選 &middot; ' + App.esc(f.date) + ' 收盤</span>' +
+        '<span class="eyebrow">中長期候選池 &middot; ' + App.esc(f.date) + ' 收盤' + App.listBadge(meta, 'funnel') + '</span>' +
         '<span class="big">' + f.passed.toLocaleString() +
         '<span class="unit">檔留下</span></span>' +
         '<div class="sub">從 <b>' + total.toLocaleString() +
@@ -93,12 +97,12 @@ App.boot('lists', function (meta) {
       '<div class="card"><h2>留下的股票</h2>' +
       '<p class="lead">依「一年區間位置、月營收年增、營收優於預期」三項的排名平均排序。' +
       '名稱旁的標籤代表<strong>不同資料互相矛盾</strong>（例如營收成長但法人在賣），滑過看細節。</p>' +
-      '<div class="scroll"><table><thead><tr><th>代號</th><th>名稱</th>' +
+      '<div class="scroll"><table><thead><tr><th>代號</th><th>名稱</th><th>產業</th>' +
       '<th>' + App.tip('歷史勝率') + '</th><th>' + App.tip('收盤') +
       '</th><th>' + App.tip('今日') + '</th><th>' + App.tip('殖利率', '殖利率排名') +
       '</th><th>' + App.tip('月營收年增') + '</th><th>' + App.tip('法人買超') +
       '</th><th>' + App.tip('日均成交額') + '</th></tr></thead><tbody>' + body +
-      '</tbody></table></div></div>';
+      '</tbody></table></div></div></div></div>';
     App.pager(document.getElementById('app'));
     var more = document.querySelector('.statusbar .more');
     if (more) more.addEventListener('click', function () {
