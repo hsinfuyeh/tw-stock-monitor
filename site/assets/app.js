@@ -412,6 +412,17 @@
   /* 頁尾標示這份內容是什麼時候產出的。
      GitHub Pages 有 10 分鐘快取，沒有這個就無法分辨「今天還沒更新」
      和「更新了但我看到的是快取」。 */
+  /* 真的重新載入：GitHub Pages 對 html/js/css 有 10 分鐘快取，單純 reload 還是拿到舊的。
+     先用 cache:'reload' 把這一頁用到的檔案重抓一次，再載入頁面。
+     （這正是「改了樣式或連結，但畫面沒變」的原因。） */
+  function hardReload() {
+    var files = ['', 'assets/app.js', 'assets/style.css', 'assets/pick.js']
+      .map(function (f) { return f ? f : location.pathname; });
+    Promise.all(files.map(function (f) {
+      return fetch(f, { cache: 'reload' }).catch(function () {});
+    })).then(function () { location.reload(); });
+  }
+
   function buildStamp(meta) {
     if (document.getElementById('bstamp')) return;
     var d = document.createElement('div');
@@ -422,7 +433,7 @@
       '　·　<span class="reload">重新載入</span>';
     (document.querySelector('.wrap') || document.body).appendChild(d);
     d.querySelector('.reload').addEventListener('click', function () {
-      location.reload();
+      hardReload();
     });
   }
 
@@ -520,7 +531,7 @@
         msgbar('<b>更新完成</b><span>重新載入頁面看最新資料。</span>' +
           '<button class="updbtn" id="reloadbtn" type="button">重新載入</button>', 'ok');
         var rb = document.getElementById('reloadbtn');
-        if (rb) rb.addEventListener('click', function () { location.reload(); });
+        if (rb) rb.addEventListener('click', hardReload);
       } else {
         msgbar('<b>更新沒有成功（' + esc(run.conclusion || '') + '）</b>' +
           '<span>多半是 TWSE 當天的資料還沒發完，晚點再按一次即可。</span>' +
