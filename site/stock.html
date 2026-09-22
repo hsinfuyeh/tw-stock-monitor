@@ -17,7 +17,7 @@ App.boot(null, function (meta) {
   var code = (App.qs('c') || '').trim().toUpperCase();
   var app = document.getElementById('app');
   if (!code) { app.innerHTML = '<div class="empty"><h2>沒有指定代號</h2>' +
-    '<div class="note">在上面搜尋股票代號或名稱。</div></div>'; return; }
+    '<div class="note">輸入股票代號或名稱。</div></div>' + App.searchbox(''); App.initSearch && App.initSearch(); return; }
 
   return App.get('stocks/' + code + '.json').then(function (d) {
     document.title = d.code + ' ' + d.name;
@@ -76,6 +76,7 @@ App.boot(null, function (meta) {
     }
 
     app.innerHTML =
+      '<div class="stocksearch">' + App.searchbox(code) + '</div>' +
       '<div class="hero"><h1>' + App.esc(d.name) +
       ' <span class="code">' + d.code + '</span></h1>' +
       '<div class="px"><div class="v">' + Number(d.close).toLocaleString(
@@ -100,7 +101,8 @@ App.boot(null, function (meta) {
       '圖上兩條黃線是手續費和稅（0.6%）的位置，長條沒有超過黃線，就算方向對也賺不回成本。</p>' +
       bars + '<p class="note" style="margin-top:14px">' + verdict + '</p></div>';
   }).catch(function () {
-    app.innerHTML = '<div class="empty"><h2>' + App.esc(code) + '</h2>' +
+    app.innerHTML = '<div class="stocksearch">' + App.searchbox(code) + '</div>' +
+      '<div class="empty"><h2>' + App.esc(code) + '</h2>' +
       '<div class="note">這檔目前不在可分析範圍內。<br>' +
       '常見原因：成交量太小、上市時間太短、或是槓桿／反向／債券／海外型 ETF。</div></div>';
   });

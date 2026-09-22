@@ -7,46 +7,102 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:wght@400;500&display=swap">
 <link rel="stylesheet" href="assets/style.css">
-<script>/* 打開網站直接進今日清單；這一頁留給「更多 → 網站導覽」（?about=1） */
-if (!/[?&]about=1/.test(location.search)) location.replace('short.html' + location.hash);</script>
-<title>台股觀測</title></head><body>
+<title>台股觀測</title>
+<style>
+.hcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:12px;margin-top:4px}
+.hcard{border:1px solid var(--line2);border-radius:var(--r);padding:14px 16px;background:var(--card);
+  display:flex;flex-direction:column;gap:8px}
+.hcard.first{border-color:var(--ok);box-shadow:inset 0 0 0 1px var(--ok)}
+.hcard.off{opacity:.55}
+.hcard .top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.hcard .nm{font-size:17px;font-weight:500;letter-spacing:-.01em}
+.hcard .nm a{color:inherit;text-decoration:none}
+.hcard .sc{font-size:12.5px;color:var(--mut);white-space:nowrap}
+.hcard .px{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-variant-numeric:tabular-nums}
+.hcard .px div{font-size:15px;font-weight:500}
+.hcard .px span{display:block;font-size:11.5px;color:var(--mut);font-weight:300}
+.hcard .wy{font-size:12.5px;color:var(--mut);line-height:1.65}
+.hcard .tag{font-size:11.5px;padding:1px 8px;border-radius:var(--pill);background:var(--ok);color:var(--bg);font-weight:500}
+.hcard .size{font-size:12.5px;border-top:1px solid var(--line2);padding-top:7px}
+.homehero{padding:18px 0 6px}
+.homehero h1{font-size:clamp(28px,4vw,40px);letter-spacing:-.03em;font-weight:500;margin:0 0 14px}
+.homehero .hint{color:var(--mut);font-size:13.5px;margin-top:10px}
+</style></head><body>
 <div class="wrap" id="app"></div>
 <script src="assets/app.js"></script>
+<script src="assets/pick.js"></script>
 <script>
-App.boot(null, function (meta) {
-  var el = document.getElementById('app');
-  el.innerHTML =
-    '<div class="homehero">' +
-      '<span class="eyebrow">個股查詢</span>' +
-      '<h1>查一檔股票</h1>' +
-      App.searchbox('', true) +
+/* 首頁：今天符合條件的股票，用資訊卡列出來；上面是查個股的搜尋框。
+ *
+ * 評分跟「今日清單」共用 assets/pick.js —— 規則只有一份，不會兩頁長歪。
+ * 這裡一律用<b>預設參數</b>：首頁是「規則說今天有什麼」，調參數請到今日清單。 */
+function f2(v) { return v == null ? '—' : Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function cap() { try { return parseFloat(localStorage.getItem('short_capital')) * 1e4 || 0; } catch (e) { return 0; } }
+function held() {
+  try { return JSON.parse(localStorage.getItem('journal_v1') || '[]').filter(function (t) { return !t.sell_date; }); }
+  catch (e) { return []; }
+}
+
+function sizeLine(o) {
+  var c = cap();
+  if (!c) return '<div class="size mut">在<a href="short.html">今日清單</a>填一次本金，這裡會算出該買幾股</div>';
+  var dist = (o.r.close - o.stop) / o.r.close;
+  var amt = Math.min(c * 0.005 / dist, c * 0.2), sh = Math.floor(amt / o.r.close);
+  var lots = Math.floor(sh / 1000), odd = sh % 1000;
+  return '<div class="size">依本金 ' + (c / 1e4).toLocaleString() + ' 萬：<b>' +
+    (lots ? lots + ' 張' : '') + (lots && odd ? ' + ' : '') + (odd ? odd + ' 股' : '') + (sh ? '' : '不到 1 股') +
+    '</b>（' + Math.round(sh * o.r.close).toLocaleString() + ' 元，碰停損約賠 ' +
+    Math.round(sh * (o.r.close - o.stop) + sh * o.r.close * Pick.COST / 100).toLocaleString() + ' 元）</div>';
+}
+
+function card(o, first) {
+  var r = o.r;
+  return '<div class="hcard' + (first ? ' first' : '') + (o.flags.length ? ' off' : '') + '">' +
+    '<div class="top"><div class="nm"><a href="stock.html?c=' + r.code + '">' + r.code + ' ' + App.esc(r.name) + '</a>' +
+    o.flags.map(function (f) { return '<span class="xflag">' + App.esc(f) + '</span>'; }).join('') + '</div>' +
+    '<div class="sc">' + App.esc(r.ind || r.kind) + '　' + App.num(o.s.score, 0) + ' 分</div></div>' +
+    (first ? '<div><span class="tag">今天照規則可以買</span></div>' : '') +
+    '<div class="px"><div><span>今天收盤</span>' + f2(r.close) + '</div>' +
+    '<div><span>參考停損</span><b class="dn">' + f2(o.stop) + '</b></div>' +
+    '<div><span>參考目標</span><b class="up">' + (o.target == null ? '不設' : f2(o.target)) + '</b></div></div>' +
+    '<div class="wy">' + App.esc(o.why.join('；')) + '</div>' +
+    (first ? sizeLine(o) : '') + '</div>';
+}
+
+App.boot('home', function (meta) {
+  return App.get('short/today.json').then(function (T) {
+    T.objs = T.rows.map(function (a) {
+      var o = {}; T.cols.forEach(function (c, i) { o[c] = a[i]; }); return o;
+    });
+    var P = {};
+    T.params.forEach(function (x) { P[x.key] = x.default; });
+    var CUR = Pick.rank(T, P);
+    var H = held(), codes = H.map(function (t) { return t.code; });
+    var firstIdx = -1;
+    if (H.length < 3)
+      for (var i = 0; i < CUR.length; i++)
+        if (!CUR[i].flags.length && codes.indexOf(CUR[i].r.code) < 0) { firstIdx = i; break; }
+
+    var lead = H.length >= 3
+      ? '你在<a href="journal.html">交易紀錄</a>裡已經持有 ' + H.length + ' 檔（規則上限 3 檔），今天先不買。'
+      : firstIdx < 0 ? '今天清單上的股票都被規則排除了（處置股、注意股、全額交割股或你已持有）。'
+      : '綠框那一檔是照規則今天可以買的；其餘依分數排序。<b>都不是買賣建議</b>，' +
+        '這套規則過去 18 年還沒贏過 0050（見<a href="backtest.html">回測報告</a>）。';
+
+    document.getElementById('app').innerHTML =
+      '<div class="homehero"><h1>查一檔股票</h1>' + App.searchbox('', true) +
       '<div class="hint">輸入代號或名稱，例如 <strong>2330</strong> 或 <strong>台積電</strong>。' +
-      '任何時候按 <kbd>/</kbd> 都會跳回這個框。</div>' +
-      '<div class="chips" id="pop"></div>' +
-    '</div>' +
-    '<div class="card"><h2>這個網站有什麼</h2>' +
-      '<p class="lead">資料截止 ' + App.esc(meta.data_date) + '，每個交易日收盤後自動更新。</p>' +
-      '<ul class="note">' +
-      '<li><a href="short.html"><strong>今日清單</strong></a>：每天收盤後依四個條件打分數，列出前 20 檔，' +
-      '最上面直接寫出「今天照規則可以買哪一檔、買多少」，附參考停損與目標價。</li>' +
-      '<li><a href="journal.html"><strong>交易紀錄</strong></a>：記下你真的下的單，自動算違規次數和' +
-      '「該不該全部停下來」的條件。資料只存在你的瀏覽器。</li>' +
-      '<li><a href="history.html"><strong>策略追蹤</strong></a>：九種買法從 2026-09 起同時「紙上」往前跑' +
-      '（不花錢、照規則假裝買賣），看哪一種在沒看過的未來真的贏過 0050。</li>' +
-      '<li><a href="backtest.html"><strong>回測報告</strong></a>：假設過去 18 年每天都照清單買，結果如何。</li>' +
-      '<li><strong>更多</strong>：<a href="lists.html">其他排行</a>（營收優於預期、成交金額、法人買賣…）與' +
-      '<a href="funnel.html">中長期候選池</a>（適合長抱的股票，跟短線清單無關）。</li>' +
-      '<li><strong>查個股</strong>：用上面或頂部的搜尋框，看一檔股票進場前該確認的事' +
-      '（好不好買賣、波動大不大、有沒有要除權息…）。</li></ul></div>' +
-    '<div class="card"><h2>先說清楚</h2><ul class="note">' +
-      '<li>所有清單都是<strong>依規則篩出來的參考</strong>，不是買賣建議，也不會幫你下單。</li>' +
-      '<li>每一份清單都盡量附上「過去照著買的結果」。有些名單過去表現並不好，' +
-      '網站上會直接寫出來，不會藏起來。</li>' +
-      '<li>過去的表現不代表以後會一樣。</li></ul></div>';
-  var pop = ['2330','2317','2454','2308','0050','0056','2412','1101'];
-  document.getElementById('pop').innerHTML = pop.map(function (c) {
-    return '<a class="chip" href="stock.html?c=' + c + '">' + c + '</a>';
-  }).join('');
+      '任何時候按 <kbd>/</kbd> 都會跳回這個框。</div></div>' +
+      '<div class="card"><h2>今天符合條件的 ' + CUR.length + ' 檔</h2>' +
+      '<p class="lead">' + App.esc(T.date) + ' 收盤。依月營收、法人連續買超、突破前 20 日高、均線多頭排列四個條件打分數。' +
+      '停損與目標是依公式算的參考值，明天開盤才買得到。</p>' +
+      '<p class="note" style="margin-top:-8px">' + lead + '</p>' +
+      (CUR.length ? '<div class="hcards">' + CUR.map(function (o, i) { return card(o, i === firstIdx); }).join('') + '</div>'
+        : '<div class="empty"><div class="note">今天沒有股票達到門檻。</div></div>') +
+      '<p class="note" style="margin-top:16px;font-size:13.5px">想調條件、看入選理由全文、用成交價重算停損與目標，' +
+      '到<a href="short.html">今日清單</a>。想知道這些規則過去表現如何，看<a href="backtest.html">回測報告</a>；' +
+      '九種買法的紙上成績在<a href="history.html">策略追蹤</a>。</p></div>';
+  });
 });
 </script>
 </body></html>

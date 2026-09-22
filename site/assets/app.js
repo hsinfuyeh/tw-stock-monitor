@@ -77,6 +77,7 @@
      回測報告是查資料用的。其他排行、中長期候選池不常用，收進「更多」。
      查個股不佔一格：頂部的搜尋框隨時可用，品牌名稱回今日清單。 */
   var NAV = [
+    ['index.html', '首頁', 'home'],
     ['short.html', '今日清單', 'short'],
     ['journal.html', '交易紀錄', 'journal'],
     ['history.html', '策略追蹤', 'history'],
@@ -84,16 +85,16 @@
   ];
   var MORE = [
     ['lists.html', '其他排行', 'lists', '營收優於預期、成交金額、法人買賣…'],
-    ['funnel.html', '中長期候選池', 'funnel', '一層層刷掉不適合長抱的股票'],
-    ['index.html?about=1', '網站導覽', 'about', '每一頁在做什麼']
+    ['funnel.html', '中長期候選池', 'funnel', '一層層刷掉不適合長抱的股票']
   ];
   // 本機（python server.py）才有後端：可以按鈕更新、用自訂參數回測
   var LOCAL = !/github\.io$/.test(location.hostname);
 
   function shell(active, q) {
     var links = NAV.map(function (n) {
+      // 首頁在手機上不佔一格（點左上角的品牌就是回首頁），否則一行放不下
       return '<a class="navlink' + (n[2] === active ? ' on' : '') +
-        '" href="' + n[0] + '">' + n[1] + '</a>';
+        (n[2] === 'home' ? ' navhome' : '') + '" href="' + n[0] + '">' + n[1] + '</a>';
     }).join('');
     var inMore = MORE.some(function (n) { return n[2] === active; });
     var more = '<details class="navmore"><summary class="navlink' + (inMore ? ' on' : '') + '">更多 ▾</summary>' +
@@ -102,8 +103,7 @@
           '</b><span>' + n[3] + '</span></a>';
       }).join('') + '</div></details>';
     return '<div class="top"><div class="in">' +
-      '<a class="brand" href="short.html">台股觀測</a><nav class="navs">' + links + '</nav>' + more +
-      searchbox(q || '') +
+      '<a class="brand" href="index.html">台股觀測</a><nav class="navs">' + links + '</nav>' + more +
       '<button id="updbtn2" class="themebtn" type="button" title="立即更新資料">⟳</button>' +
       '<button id="themebtn" class="themebtn" type="button">☾</button>' +
       '</div></div><div class="stale" id="updbar" data-empty="1"><div class="in"></div></div>' +
@@ -383,6 +383,7 @@
   }
 
   var bound = new WeakSet();
+  var keyBound = false;
   function initSearch() {
     /* 可能被呼叫兩次：外框插入時一次、頁面渲染完再一次（首頁的大搜尋框是
        render 之後才存在的）。用 WeakSet 記住綁過的，避免重複綁事件。 */
@@ -391,13 +392,20 @@
       bound.add(bx);
       bindSearch(bx);
     });
+    /* 頂部列沒有搜尋框了（首頁與個股頁各有一個）。按 / 時：
+       這一頁有搜尋框就聚焦，沒有就回首頁的大搜尋框。 */
     var t = document.querySelector('.searchbox.big .qin') ||
       document.querySelector('.searchbox .qin');
-    if (!t) return;
+    if (keyBound) return;
+    keyBound = true;
     document.addEventListener('keydown', function (e) {
       var a = document.activeElement;
       if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')) return;
-      if (e.key === '/') { e.preventDefault(); t.focus(); }
+      if (e.key !== '/') return;
+      e.preventDefault();
+      var box = document.querySelector('.searchbox.big .qin') || document.querySelector('.searchbox .qin');
+      if (box) box.focus();
+      else location.href = 'index.html';
     });
   }
 
@@ -608,7 +616,7 @@
   window.App = {
     get: get, esc: esc, num: num, pct: pct, cls: cls, yi: yi, qs: qs,
     tip: tip, pager: pager, boot: boot, searchbox: searchbox,
-    otherTabs: otherTabs, listBadge: listBadge, local: LOCAL,
+    otherTabs: otherTabs, listBadge: listBadge, local: LOCAL, initSearch: initSearch,
     glossary: function () { return GLOSSARY; }
   };
 })();

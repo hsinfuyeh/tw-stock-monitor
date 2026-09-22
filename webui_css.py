@@ -82,7 +82,7 @@ text-transform:uppercase;color:var(--faint);display:block;margin-bottom:9px}
 /* ---------- 頂部列：齊邊、無置中導覽 ---------- */
 .top{position:sticky;top:0;z-index:50;background:var(--bg);
 border-bottom:1px solid var(--line2)}
-.top .in{max-width:1080px;margin:0 auto;padding:10px 22px;display:flex;
+.top .in{max-width:1200px;margin:0 auto;padding:10px 22px;display:flex;
 gap:10px;align-items:center}
 .brand{font-weight:600;font-size:16px;letter-spacing:-.02em;white-space:nowrap}
 .navlink{font-size:14px;color:var(--mut);white-space:nowrap;padding:7px 14px;
@@ -131,7 +131,7 @@ letter-spacing:.09em;text-transform:uppercase}
 /* 全站唯一會主動搶注意力的元素。它存在的理由是：這個工具是拿來決定下單的，
    安靜地顯示過期價格比顯示錯誤更危險。 */
 .stale{background:var(--warn);color:#fff}
-.stale .in{max-width:1080px;margin:0 auto;padding:10px 22px;font-size:13.5px;
+.stale .in{max-width:1200px;margin:0 auto;padding:10px 22px;font-size:13.5px;
 display:flex;gap:10px;flex-wrap:wrap;align-items:baseline;line-height:1.55}
 .stale b{font-weight:600;white-space:nowrap}
 .stale span{opacity:.92;font-weight:300}
@@ -166,7 +166,7 @@ line-height:1.02}
 kbd{font-family:inherit;font-size:12px;border:1px solid var(--hair);
 border-radius:4px;padding:1px 6px;color:var(--mut)}
 
-.wrap{max-width:1080px;margin:0 auto;padding:34px 22px 96px}
+.wrap{max-width:1200px;margin:0 auto;padding:34px 22px 96px}
 
 /* ---------- 標題 ---------- */
 .hero{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;margin-bottom:6px}
@@ -239,7 +239,7 @@ background:repeating-linear-gradient(180deg,var(--warn) 0 3px,transparent 3px 6p
 padding:0;margin:0 0 26px}
 .tabgrp{display:flex;align-items:center;gap:6px;flex-wrap:nowrap}
 /* 更多 → 名單：左側清單 + 內容；手機改下拉選單 */
-.lgrid{display:grid;grid-template-columns:190px minmax(0,1fr);gap:28px;align-items:start;margin-top:14px}
+.lgrid{display:grid;grid-template-columns:170px minmax(0,1fr);gap:28px;align-items:start;margin-top:14px}
 .lside{position:sticky;top:78px}
 .lgrp{margin-bottom:16px}
 .lgrp .glabel{display:block;margin:0 0 4px 10px}
@@ -250,6 +250,7 @@ padding:0;margin:0 0 26px}
 .litem.bad.on{background:var(--up);color:#fff}
 .lsel{display:none;width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--line2);
 background:var(--card);color:var(--fg);font:inherit;margin-bottom:12px}
+.stocksearch{max-width:520px;margin:0 0 18px}
 .lbadge{display:inline-block;font-size:12.5px;padding:2px 10px;border-radius:var(--pill);
 border:1px solid currentColor;vertical-align:4px;margin-left:10px;font-weight:400;letter-spacing:0}
 .lbadge.ok{color:var(--ok)}.lbadge.bad{color:var(--up)}.lbadge.fact,.lbadge.long{color:var(--mut)}
@@ -302,7 +303,14 @@ td{padding:11px 10px;border-bottom:1px solid var(--line);text-align:right;
 font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:400}
 tbody tr:last-child td{border-bottom:none}
 tbody tr:hover{background:var(--sunk)}
-.scroll{overflow-x:auto}
+.scroll{overflow-x:auto;scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
+/* 真的需要左右捲時（手機），捲軸細一點、顏色跟主題走，不要一條白色粗條 */
+.scroll::-webkit-scrollbar{height:6px}
+.scroll::-webkit-scrollbar-track{background:transparent}
+.scroll::-webkit-scrollbar-thumb{background:var(--line2);border-radius:3px}
+.scroll::-webkit-scrollbar-button{display:none}
+:root[data-theme="dark"]{color-scheme:dark}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){color-scheme:dark}}
 
 /* ---------- 表格分頁 ---------- */
 /* 純前端切頁：資料一次就全部送到瀏覽器，箭頭只是換顯示哪一段，
@@ -401,8 +409,8 @@ color:var(--faint);cursor:help;white-space:nowrap}
 .evb.pending{color:var(--warn);border-color:var(--warn)}
 .evb.weak{color:var(--warn);border-color:var(--warn)}
 /* 規範 v1 的排除標記（處置股、注意股） */
-.flag{display:inline-block;font-size:11.5px;padding:0 6px;border-radius:4px;background:var(--warn);color:#fff;margin-left:4px;font-weight:400;white-space:nowrap}
-.flag .tip{color:inherit;border-bottom-color:rgba(255,255,255,.6)}
+.xflag{display:inline-block;font-size:11.5px;padding:0 6px;border-radius:4px;background:var(--warn);color:var(--bg);font-weight:500;margin-left:4px;white-space:nowrap;line-height:1.6}
+.xflag .tip{color:inherit;border-bottom-color:currentColor}
 .wfbar{position:relative;height:26px}
 .wfkeep{position:absolute;left:0;top:0;bottom:0;background:var(--fg)}
 .wfkeep.final{background:var(--mint)}
@@ -510,6 +518,7 @@ background:var(--bg);color:var(--fg);font:inherit}
   #updbtn2{margin-left:auto}
   .navs{order:2;flex:1 1 calc(100% - 100px);overflow-x:auto;scrollbar-width:none;gap:0}
   .navs .navlink,details.navmore summary{padding:6px 7px;font-size:13px}
+  .navlink.navhome{display:none}
   .navs::-webkit-scrollbar{display:none}
   .navmore{order:2}
   .navmore .menu{left:auto;right:0}

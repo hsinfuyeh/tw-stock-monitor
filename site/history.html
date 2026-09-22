@@ -140,7 +140,7 @@ function dayDetail(a, h) {
     (hasWhy(a) ? '<th style="text-align:left">入選理由</th>' : '') + '</tr></thead><tbody>' +
     h.rows.map(function (r) {
       return '<tr><td><a href="stock.html?c=' + r.code + '"><strong>' + r.code + '</strong></a>' +
-        (r.flags || []).map(function (f) { return '<span class="flag">' + App.esc(f) + '</span>'; }).join('') + '</td>' +
+        (r.flags || []).map(function (f) { return '<span class="xflag">' + App.esc(f) + '</span>'; }).join('') + '</td>' +
         '<td>' + App.esc(r.name) + '</td><td class="mut">' + App.esc(r.ind || '—') + '</td>' +
         '<td>' + (r.score == null ? '—' : App.num(r.score, 0)) + '</td>' +
         '<td>' + f2(r.close) + '</td><td>' + f2(r.entry) + '</td>' +
