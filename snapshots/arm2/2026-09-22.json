@@ -23,7 +23,8 @@
  "backfilled": false,
  "risk": {
   "disposal_status": "ok",
-  "notice_status": "ok"
+  "notice_status": "ok",
+  "full_status": "ok"
  },
  "top": []
 }
