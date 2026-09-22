@@ -39,7 +39,7 @@ function f2(v) { return v == null ? '—' : Number(v).toLocaleString('en-US', { 
 function money(v) { return v == null ? '—' : App.pct(v); }
 function n1(v, suf) { return v == null ? '—' : App.num(v, 1) + (suf || ''); }
 var ST = { '持有中': 'mut', '等待進場': 'mut', '達到目標': 'up', '停損出場': 'dn', '時間到出場': '' };
-var RISKNAME = { pending: '名單可能還沒公布', unavailable: '名單抓不到', unknown: '補算的日子沒有當時的名單' };
+var RISKNAME = { pending: '名單可能還沒公布', unavailable: '名單抓不到', unknown: '沒有當時的名單', partial: '只查得到還在公告上的' };
 function hasWhy(a) { return a.key === 'arm0' || a.key === 'arm2'; }
 
 function spark(eq) {
@@ -75,15 +75,15 @@ function card(a, F) {
     '<div class="note" style="font-size:13px;line-height:1.6;margin-top:6px">' + App.esc(s.note || '') + '</div>' +
     spark(a.equity) +
     '<dl>' +
-    '<dt>組合報酬</dt><dd>' + money(m.port) + '</dd>' +
-    '<dt>同期 0050</dt><dd>' + money(m.bench) + '</dd>' +
-    '<dt><b>' + App.tip('贏過 0050') + '</b></dt><dd>' + money(m.excess) + '</dd>' +
+    '<dt><b>逐筆平均' + App.tip('贏過 0050') + '</b>（判定用）</dt><dd>' + money(m.excess) +
+      (m.n_excess ? '<span class="mut" style="font-size:12px">（' + m.n_excess + ' 筆）</span>' : '') + '</dd>' +
+    '<dt>組合總報酬 / 同期 0050</dt><dd>' + money(m.port) + ' / ' + money(m.bench) + '</dd>' +
     '<dt>' + App.tip('平均持股比重') + '</dt><dd>' + n1(m.expo, '%') + '</dd>' +
     '<dt>' + App.tip('最大回落') + '（上限 15%）</dt><dd>' + limit(m.mdd, m.mdd < -15) + '</dd>' +
     '<dt>10 日報酬為正的比例（目標 ≥ 55%）</dt><dd>' + n1(m.pos10, '%') + '</dd>' +
     (a.key === 'arm0' ? '<dt>達到目標的比例（目標 ≥ 55%）</dt><dd>' + n1(m.hit, '%') + '</dd>' : '') +
     '<dt>單筆最大虧損佔本金（上限 1%）</dt><dd>' + limit(m.worst_cap, m.worst_cap < -1) + '</dd>' +
-    '<dt>' + App.tip('可信度') + '（最終要 ≥ 2.5）</dt><dd>' + (m.t == null ? '滿 30 天才算' : App.num(m.t, 1, true)) + '</dd>' +
+    '<dt>' + App.tip('可信度') + '（最終要 ≥ 2.5）</dt><dd>' + (m.t == null ? '累積 20 個訊號日才算' : App.num(m.t, 1, true)) + '</dd>' +
     '<dt>買進 / 已出場 / 持有中</dt><dd>' + (m.entered || 0) + ' / ' + (m.closed || 0) + ' / ' + (m.open || 0) + '</dd>' +
     '<dt>依規則跳過</dt><dd>' + (m.skipped || 0) + ' 次</dd>' +
     (a.shadow ? '<dt>影子版「不停損」逐筆平均</dt><dd>' + money(a.shadow.avg) + '（' + a.shadow.n + ' 筆）</dd>' : '') +
@@ -97,15 +97,15 @@ function tradesTable(a) {
   });
   if (!T.length) return '<p class="note">還沒有交易。清單是收盤後產生的，隔天開盤才會「買進」。</p>';
   return '<div class="scroll" data-per="15"><table><thead><tr><th>訊號日</th><th>代號</th><th>名稱</th>' +
-    '<th>結果</th><th>進場日</th><th>出場日</th><th>佔本金</th><th>個股報酬</th>' +
+    '<th>結果</th><th>進場日</th><th>出場日</th><th>佔本金</th><th>個股報酬</th><th>同期 0050</th>' +
     '<th class="sorted">對本金的影響</th></tr></thead><tbody>' +
     T.map(function (t) {
       if (!t.taken) return '<tr class="mut"><td>' + t.signal + '</td><td>' + t.code + '</td><td>' + App.esc(t.name) +
-        '</td><td colspan="6" style="text-align:left">跳過：' + App.esc(t.why) + '</td></tr>';
+        '</td><td colspan="7" style="text-align:left">跳過：' + App.esc(t.why) + '</td></tr>';
       return '<tr><td>' + t.signal + '</td><td><a href="stock.html?c=' + t.code + '"><strong>' + t.code + '</strong></a></td>' +
         '<td>' + App.esc(t.name) + '</td><td class="' + (ST[t.status] || '') + '">' + App.esc(t.status) + '</td>' +
         '<td>' + (t.entry_date || '—') + '</td><td>' + (t.exit_date || '—') + '</td>' +
-        '<td>' + n1(t.weight, '%') + '</td><td>' + money(t.ret) + '</td>' +
+        '<td>' + n1(t.weight, '%') + '</td><td>' + money(t.ret) + '</td><td>' + money(t.bench) + '</td>' +
         '<td class="sorted">' + (t.pnl_cap == null ? '—' : App.pct(t.pnl_cap, 3)) + '</td></tr>';
     }).join('') + '</tbody></table></div>';
 }
@@ -173,13 +173,14 @@ App.boot('history', function (meta) {
       '<div class="card"><h2>四個版本同時跑</h2>' +
       '<p class="lead">每個版本（臂）用同一套資金規則：最多同時 ' + R.max_hold + ' 檔、每筆最多賠本金的 ' +
       (R.risk * 100) + '%（部位 = 本金 × ' + (R.risk * 100) + '% ÷ 停損距離）、一天最多新買 ' + R.new_per_day +
-      ' 檔、單檔最多佔本金 ' + (R.cap * 100) + '%、同產業最多 ' + R.ind_max + ' 檔、處置股和注意股不買。' +
+      ' 檔、單檔最多佔本金 ' + (R.cap * 100) + '%、同產業最多 ' + R.ind_max + ' 檔、處置股、注意股、全額交割股不買、買進金額不超過日均成交額 1%（假設本金 ' + (R.capital / 1e4) + ' 萬）。' +
       '跟同一天起買進持有 0050 比，報酬都已扣手續費和稅。</p>' +
       '<div class="arms">' + F.arms.map(function (a) { return card(a, F); }).join('') + '</div>' +
       '<p class="note" style="margin-top:14px;font-size:13.5px">' +
-      '<b>平均持股比重</b>要一起看：這套規則每檔只放本金的幾 %，平常大部分資金是現金，' +
-      '0050 則是 100% 在市場上。所以大盤上漲時組合幾乎一定落後 0050 —— 這是規範刻意選的「學費」規模，' +
-      '目的是先用小錢看清楚規則準不準，不是現在就要賺贏大盤。<br>' +
+      '<b>判定看「逐筆平均贏過 0050」</b>：組合實際買的每一筆，跟同一段期間的 0050 比，再取平均' +
+      '（跟回測報告的 −0.44% 同一種算法）。<b>組合總報酬</b>只當參考：這套規則每檔只放本金的幾 %，' +
+      '平常大部分是現金（看平均持股比重），0050 則是 100% 在市場上，大盤上漲時總報酬幾乎一定落後 —— ' +
+      '那是規範刻意選的「學費」規模造成的，跟選股準不準無關。<br>' +
       '<b>判定方式</b>：第 ' + F.mid + ' 個交易日時，如果贏過 0050 ≤ −0.3% 而且可信度 ≤ −2，這個臂就停用；' +
       '第 ' + F.final + ' 天要同時達到贏過 0050 &gt; 0、可信度 ≥ 2.5、最大回落不超過 15%' +
       '（Arm 0 另外要達到目標的比例 ≥ 55%）才算成功。任何參數一改，那個臂就要從第 1 天重新算。</p></div>' +
@@ -192,7 +193,7 @@ App.boot('history', function (meta) {
       '<h3 style="font-size:17px;margin:22px 0 6px">緊急停止（碰到任何一條就全部停下來檢討）</h3><ul class="note">' +
       F.kill.map(function (k) { return '<li>' + App.esc(k) + '</li>'; }).join('') + '</ul>' +
       '<p class="note" style="font-size:13.5px">標「補算」的日子是當天沒有順利產出（電腦沒開、自動更新沒跑），' +
-      '事後用當天收盤就已知的資料重算補上的，不會偷看之後的事；但補算的日子沒有當時的處置股/注意股名單。' +
+      '事後用當天收盤就已知的資料重算補上的，不會偷看之後的事；補算時會回頭查當天的處置股、注意股名單（最多回頭 10 個交易日）；產出時注意股還沒公布的，隔天也會回頭補上標記。' +
       '想看長期的結果，看<a href="backtest.html">回測報告</a>。</p></div>';
     var body = document.getElementById('armbody'), tabs = document.getElementById('tabs');
     function showArm(i) {

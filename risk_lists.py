@@ -15,7 +15,12 @@
 注意股在收盤後才陸續公布，產出網頁時可能還沒出來 —— 所以 0 筆時標成
 pending（可能還沒公布），不當成確定沒有。
 
-全額交割股沒有找到穩定的結構化來源，頁面上請你自己確認。
+全額交割股（變更交易）用 TWSE OpenAPI 的 TWT85U。這份只有「現在」的名單，
+而且名單很少變動，所以補抓過去幾天時也用它（標 current，不假裝是當天的）。
+
+補抓過去的日子（forward 補算缺日、或隔天回頭更新前一天）：
+  注意股  用日期查，拿得到當天的名單
+  處置股  公告清單裡還看得到的，用處置起迄日判斷；太久以前的可能已經不在清單上
 """
 import datetime as dt
 import gzip
@@ -23,6 +28,9 @@ import json
 import time
 
 import requests
+
+TPE = dt.timezone(dt.timedelta(hours=8))      # 抓取時間一律用台灣時間（CI 的機器是 UTC）
+OPENAPI = "https://openapi.twse.com.tw/v1"
 
 from config import BASE, RAW, UA
 
@@ -79,6 +87,19 @@ def parse_notice(j):
     return sorted({str(r[ic]).strip() for r in (j.get("data") or []) if len(r) > ic})
 
 
+def parse_full(rows):
+    """TWT85U：變更交易（全額交割）的代號。"""
+    return sorted({str(r.get("Code", "")).strip() for r in rows or [] if r.get("Code")})
+
+
+def _full():
+    s = requests.Session()
+    s.headers.update({"User-Agent": UA})
+    r = s.get(OPENAPI + "/exchangeReport/TWT85U", timeout=30)
+    r.raise_for_status()
+    return parse_full(r.json())
+
+
 def fetch(date, use_cache=True):
     """date 當天的處置股與注意股。date 是 YYYY-MM-DD（資料日）。
 
@@ -89,13 +110,15 @@ def fetch(date, use_cache=True):
     cache = DIR / "{}.json.gz".format(date)
     if use_cache and cache.exists():
         got = json.loads(gzip.decompress(cache.read_bytes()).decode())
-        if got.get("notice_status") == "ok":      # 注意股已確定，不用再抓
+        if got.get("notice_status") == "ok" and "full_status" in got:   # 都確定了，不用再抓
             return got
-    out = {"date": date, "fetched_at": dt.datetime.now().isoformat(timespec="seconds")}
+    out = {"date": date, "fetched_at": dt.datetime.now(TPE).isoformat(timespec="seconds")}
+    latest = date >= (dt.datetime.now(TPE).date() - dt.timedelta(days=4)).isoformat()
     ymd = date.replace("-", "")
     try:
         out["disposal"] = parse_punish(_get("/rwd/zh/announcement/punish", {}), date)
-        out["disposal_status"] = "ok"
+        # 舊日子：已經結束的處置可能已從公告清單消失，只能說「看得到的都排除了」
+        out["disposal_status"] = "ok" if latest else "partial"
     except Exception as e:
         out["disposal"], out["disposal_status"], out["disposal_error"] = [], "unavailable", str(e)[:200]
     time.sleep(2)
@@ -107,14 +130,28 @@ def fetch(date, use_cache=True):
         out["notice_status"] = "ok" if out["attention"] else "pending"
     except Exception as e:
         out["attention"], out["notice_status"], out["notice_error"] = [], "unavailable", str(e)[:200]
+    try:
+        out["full_delivery"] = _full()
+        out["full_status"] = "ok" if latest else "current"
+    except Exception as e:
+        out["full_delivery"], out["full_status"], out["full_error"] = [], "unavailable", str(e)[:200]
     cache.write_bytes(gzip.compress(json.dumps(out, ensure_ascii=False).encode()))
     return out
 
 
 def unknown(date):
     """補算的舊日子：沒有當時的名單，照實標成 unknown。"""
-    return {"date": date, "disposal": [], "attention": [],
-            "disposal_status": "unknown", "notice_status": "unknown"}
+    return {"date": date, "disposal": [], "attention": [], "full_delivery": [],
+            "disposal_status": "unknown", "notice_status": "unknown", "full_status": "unknown"}
+
+
+STATUS_KEYS = ("disposal_status", "notice_status", "full_status")
+
+
+def settled(risk):
+    """名單都確定了（之後不會再變）。"""
+    return (bool(risk) and risk.get("disposal_status") in ("ok", "partial")
+            and risk.get("notice_status") == "ok")
 
 
 if __name__ == "__main__":

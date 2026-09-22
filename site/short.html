@@ -117,6 +117,7 @@ function rank(p) {
     o.flags = [];
     if ((R.disposal || []).indexOf(o.r.code) >= 0) o.flags.push('處置股');
     if ((R.attention || []).indexOf(o.r.code) >= 0) o.flags.push('注意股');
+    if ((R.full_delivery || []).indexOf(o.r.code) >= 0) o.flags.push('全額交割');
     if (o.r.ind) { seen[o.r.ind] = (seen[o.r.ind] || 0) + 1; o.indn = seen[o.r.ind]; }
   });
   return out;
@@ -348,10 +349,13 @@ function riskLine() {
   if (R.disposal_status !== 'ok') bad.push('處置股名單' + (R.disposal_status === 'unavailable' ? '抓不到' : '沒有資料'));
   if (R.notice_status === 'pending') bad.push('注意股名單可能還沒公布');
   else if (R.notice_status !== 'ok') bad.push('注意股名單' + (R.notice_status === 'unavailable' ? '抓不到' : '沒有資料'));
-  var ok = '今天的處置股 ' + (R.disposal || []).length + ' 檔、注意股 ' + (R.attention || []).length + ' 檔（名單日期 ' + App.esc(R.date) + '），清單裡有標記的不要買。';
+  if (R.full_status && R.full_status !== 'ok' && R.full_status !== 'current') bad.push('全額交割股名單抓不到');
+  var ok = '今天的處置股 ' + (R.disposal || []).length + ' 檔、注意股 ' + (R.attention || []).length +
+    ' 檔、全額交割股 ' + (R.full_delivery || []).length + ' 檔（名單日期 ' + App.esc(R.date) + '），清單裡有標記的不要買。';
   return '<div class="statusbar ' + (bad.length ? 'bad' : 'ok') + '"><span class="txt">' +
-    (bad.length ? '<b>' + App.esc(bad.join('、')) + '</b>，下單前請自己到證交所網站確認。' : ok) +
-    '全額交割股沒有穩定的資料來源，<b>請自行確認</b>。</span></div>';
+    (bad.length ? '<b>' + App.esc(bad.join('、')) + '</b>，下單前請自己到證交所網站確認。' +
+      (R.notice_status === 'pending' ? '明天產出時會回頭補上標記。' : '') : ok) +
+    '</span></div>';
 }
 
 App.boot('short', function (meta) {
@@ -400,7 +404,7 @@ App.boot('short', function (meta) {
       '實際成交後，請用自己的成交價 × 1.0559 當目標、成交價 − 3 × ATR 當停損。' +
       '<a href="backtest.html">回測報告</a>有完整數字與取捨。<br>' +
       '<b>規範 v1 的買法</b>（前瞻實測也照這個算）：由上往下，挑第一檔沒被標成' + App.tip('處置股') +
-      '、' + App.tip('注意股') + '的；一天最多新買 1 檔、同時最多抱 3 檔、同產業最多 2 檔；' +
+      '、' + App.tip('注意股') + '、' + App.tip('全額交割') + '的；一天最多新買 1 檔、同時最多抱 3 檔、同產業最多 2 檔；' +
       '每筆的金額用下面的計算機依本金算（碰到停損只賠本金 0.5%）。</p>' +
       '<div id="list"></div>' +
       '<details id="calcbox"><summary>用我的實際成交價計算停損與目標</summary>' +

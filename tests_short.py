@@ -237,6 +237,44 @@ def test_forward(check):
     peak = max(sum(1 for x in tk2 if x["entry_date"] <= d and (x["exit_date"] or "9") > d) for d in days)
     check("不同產業時，最多同時持有 3 檔", peak == 3, str(peak))
 
+    # 成交額 1%：本金 100 萬、部位 10% = 10 萬，日均成交額 500 萬的 1% 只有 5 萬 -> 不買
+    thin = [(sd, [dict(cand(sd, 1, "產業%s" % sd), adtv20=5e6)]) for sd in days[:3]]
+    _, _, tr3, _ = F.portfolio(days, thin, bench, days[0])
+    check("買進金額超過日均成交額 1% -> 不買",
+          tr3 and all(not x["taken"] and "1%" in x["why"] for x in tr3), str(tr3[:1]))
+
+    # 名單晚公布：產出時注意股 pending，隔天回頭補上標記
+    import risk_lists as RL
+    snap = {"top": [{"code": "1111", "flags": []}, {"code": "2222", "flags": []}],
+            "risk": {"disposal_status": "ok", "notice_status": "pending"}}
+    later = {"disposal": [], "attention": ["2222"], "full_delivery": ["1111"],
+             "disposal_status": "ok", "notice_status": "ok", "full_status": "ok"}
+    check("注意股還沒公布 -> 名單不算確定", not RL.settled(snap["risk"]))
+    F.apply_risk(snap, later)
+    check("回頭更新後補上注意股與全額交割標記",
+          snap["top"][0]["flags"] == ["全額交割"] and snap["top"][1]["flags"] == ["注意股"]
+          and RL.settled(snap["risk"]), str(snap["top"]))
+    import os
+    old = {k: os.environ.pop(k, None) for k in ("GITHUB_ACTIONS", "FORWARD_PERSIST")}
+    check("本機產網頁不寫快照檔（避免跟 CI 衝突）", not F.persist())
+    os.environ["GITHUB_ACTIONS"] = "true"
+    check("CI 上才寫快照檔", F.persist())
+    os.environ.pop("GITHUB_ACTIONS")
+    for k, v in old.items():
+        if v is not None:
+            os.environ[k] = v
+
+    # 「對 0050 超額」是逐筆的：0050 在期間漲 20%，但每筆持有期間 0050 只漲一點點，
+    # 超額不能被「組合大部分是現金」拖累（那是部位大小，不是選股）
+    up = pd.Series(np.linspace(100, 120, len(days)), index=days)
+    eqU, bU, trU, exU = F.portfolio(days, snaps, up, days[0])
+    mU = F.summarize(eqU, bU, trU, "arm0", exU)
+    done = [x for x in trU if x["taken"] and x["exit_date"]]
+    want = np.mean([x["ret"] - x["bench"] for x in done])
+    check("超額 = 每筆報酬減同期 0050 的平均（不是組合總報酬減 0050）",
+          abs(mU["excess"] - want) < 0.01 and mU["excess"] > mU["gap"],
+          "逐筆 {} vs 總報酬差 {}".format(mU["excess"], mU["gap"]))
+
     m = F.summarize(eq, b, trades, "arm0", expo)
     check("天數不到 120 -> 累積中", m["status"]["label"] == "累積中")
     fake = {"days": 130, "excess": -0.5, "t": -2.5}
@@ -258,6 +296,9 @@ def test_risk_lists(check):
     j = {"fields": ["編號", "證券代號", "證券名稱"], "data": [["1", "3094 ", "a"], ["2", "3094", "a"], ["3", "6168", "b"]]}
     check("注意股去重、去空白", R.parse_notice(j) == ["3094", "6168"])
     check("民國日期轉換", R._roc("115/09/22") == "2026-09-22" and R._roc("115.9.2") == "2026-09-02")
+    check("全額交割（變更交易）代號解析",
+          R.parse_full([{"Code": "2314", "Name": "x"}, {"Code": " 1213"}, {"Name": "壞的"}]) == ["1213", "2314"])
+    check("補算的日子標 unknown，三份名單都是", all(R.unknown("2026-01-01")[k] == "unknown" for k in R.STATUS_KEYS))
 
 
 def run(check):

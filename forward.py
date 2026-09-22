@@ -19,6 +19,7 @@
     最終 250 個交易日：超額 > 0、t ≥ 2.5、最大回落 ≤ 15%（Arm 0 另加達標率 ≥ 55%）
 """
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -45,7 +46,11 @@ ARMS = [
 ARM = {a["key"]: a for a in ARMS}
 
 # 規範第 5 節（部位與風險上限）
-RULES = dict(max_hold=3, risk=0.005, new_per_day=1, cap=0.20, ind_max=2)
+RULES = dict(max_hold=3, risk=0.005, new_per_day=1, cap=0.20, ind_max=2,
+             # 第 4 節：買進金額 > 日均成交額 1% 不買。組合是用比例算的，
+             # 要換成金額才能檢查，所以假設一個本金（學費規模下幾乎不會碰到這條）。
+             capital=1_000_000, adtv_max=0.01)
+RISK_LOOKBACK = 10     # 補算／更新名單時最多回頭幾個交易日（再舊的公告清單已經查不到）
 # 規範第 7 節（判定門檻）
 MID, FINAL = 120, 250
 KEEP_DAYS = 30                     # 頁面上逐日清單最多保留幾天（避免檔案一年後太大）
@@ -100,6 +105,7 @@ def _row(r, flags):
             "score": S._r(r.get("score"), 1), "close": float(r["close"]),
             "atrp14": S._r(r.get("atrp14"), 5),
             "stop": float(r["stop"]), "target": S._r(r["target"]),
+            "adtv20": S._r(r.get("adtv20"), 0),
             "why": r["why"], "flags": flags.get(code, [])}
 
 
@@ -110,7 +116,18 @@ def flag_map(risk):
         out.setdefault(c, []).append("處置股")
     for c in risk.get("attention") or []:
         out.setdefault(c, []).append("注意股")
+    for c in risk.get("full_delivery") or []:
+        out.setdefault(c, []).append("全額交割")
     return out
+
+
+def apply_risk(snap, risk):
+    """用新拿到的名單重標一份快照（隔天回頭補上前一天還沒公布的注意股）。"""
+    fm = flag_map(risk)
+    for r in snap["top"]:
+        r["flags"] = fm.get(r["code"], [])
+    snap["risk"] = {k: risk.get(k) for k in risk_lists.STATUS_KEYS}
+    return snap
 
 
 def snapshot(d, key, date, risk, backfilled=False):
@@ -118,7 +135,7 @@ def snapshot(d, key, date, risk, backfilled=False):
     fm = flag_map(risk)
     return {"date": str(date)[:10], "arm": key, "params": arm_params(key),
             "backfilled": backfilled,
-            "risk": {k: risk.get(k) for k in ("disposal_status", "notice_status")},
+            "risk": {k: risk.get(k) for k in risk_lists.STATUS_KEYS},
             "top": [_row(r, fm) for _, r in rows.iterrows()]}
 
 
@@ -189,7 +206,7 @@ def track_snapshot(d, snap, by_code=None):
 
 
 # --------------------------------------------------------------------- 組合模擬
-def portfolio(days, snaps_tracked, bench, start):
+def portfolio(days, snaps_tracked, bench, start, bench_open=None):
     """有資金限制的紙上組合。snaps_tracked：[(訊號日, [追蹤後的 row…])]，依日期排序。
 
     跟第 8 輪 round8_sim.simulate 同一套規則，另外加上規範第 4 節的
@@ -217,6 +234,10 @@ def portfolio(days, snaps_tracked, bench, start):
                 skip = "已持有"
             elif r.get("ind") and sum(p["ind"] == r["ind"] for p in open_) >= RULES["ind_max"]:
                 skip = "同產業已有 {} 檔".format(RULES["ind_max"])
+            elif r.get("adtv20") and (eq_prev * RULES["capital"] * min(
+                    RULES["risk"] / max((r["entry"] - r["stop_used"]) / r["entry"], 1e-9), RULES["cap"])
+                    > RULES["adtv_max"] * r["adtv20"]):
+                skip = "金額超過日均成交額 1%"
             if skip:
                 trades.append(dict(signal=sd, code=r["code"], name=r["name"], taken=False,
                                    why=skip))
@@ -238,9 +259,15 @@ def portfolio(days, snaps_tracked, bench, start):
             if r.get("exit_date") == D:           # 出場：扣來回成本
                 fin = pos["val"] - pos["notion"] * S.COST / 100
                 cash += fin
+                # 同一段期間的 0050（進場日開盤買、出場日收盤賣，扣 ETF 成本），跟回測頁同一套
+                bo = (bench_open if bench_open is not None else bench).get(r["entry_date"])
+                bc = bench.get(D)
+                bret = (bc / bo - 1) * 100 - S.ETF_COST if bo and bc else None
                 trades.append(dict(signal=pos["sd"], code=r["code"], name=r["name"], taken=True,
                                    entry_date=r["entry_date"], exit_date=D, status=r["status"],
-                                   ret=r["ret"], weight=S._r(pos["notion"] / pos["eq_in"] * 100),
+                                   ret=r["ret"], bench=S._r(bret),
+                                   excess=S._r(r["ret"] - bret) if bret is not None else None,
+                                   weight=S._r(pos["notion"] / pos["eq_in"] * 100),
                                    pnl_cap=S._r((fin - pos["notion"]) / pos["eq_in"] * 100, 3)))
             else:
                 still.append(pos)
@@ -261,7 +288,14 @@ def portfolio(days, snaps_tracked, bench, start):
 
 
 def summarize(eq, b, trades, key, expo=()):
-    """規範第 3、7 節的指標與目前狀態。"""
+    """規範第 3、7 節的指標與目前狀態。
+
+    「對 0050 超額」照規範是**逐筆**：組合實際買的每一筆，減掉同一段期間 0050 的報酬，再取平均
+    （跟回測頁的 −0.44% 同一個尺度，中期門檻 −0.3%、t ≥ 2.5 也是依這個尺度訂的）。
+    t 值跟回測一樣：同一個訊號日的交易先平均成一個觀察值，Newey-West、lag = 持有天數。
+
+    組合總報酬 vs 0050 總報酬（port / bench / gap）另外列出來給人看，但不拿來判定：
+    組合平常只有一成多資金在股票上，大盤漲時一定落後，那是部位規模不是選股好壞。"""
     n = len(eq)
     taken = [t for t in trades if t.get("taken")]
     closed = [t for t in taken if t.get("exit_date")]
@@ -275,22 +309,26 @@ def summarize(eq, b, trades, key, expo=()):
         # 平均持股比重。規範的「學費」規模（3 檔 × 每檔約 5%）平常只有約 15% 在市場上，
         # 跟 100% 持有的 0050 比，多頭時一定落後 —— 頁面要把這個數字放在成績旁邊。
         out["expo"] = S._r(float(np.mean(expo)) * 100, 1)
+    ex = [t for t in closed if t.get("excess") is not None]
+    if ex:
+        out["excess"] = S._r(float(np.mean([t["excess"] for t in ex])))
+        out["n_excess"] = len(ex)
+        sig = pd.DataFrame(ex).groupby("signal")["excess"].mean()
+        if len(sig) >= 20:                   # 太少時 NW 的變異數估計不可靠
+            import validate
+            out["t"] = S._r(float(validate.newey_west_t(
+                sig.to_numpy(), lag=int(arm_params(key)["hold_days"]))[1]))
     if n:
         e = np.array([v for _, v in eq])
         out["port"] = S._r((e[-1] - 1) * 100)
         out["bench"] = S._r((b[-1] - 1) * 100) if len(b) else None
-        out["excess"] = S._r(out["port"] - out["bench"]) if out["bench"] is not None else None
+        out["gap"] = S._r(out["port"] - out["bench"]) if out["bench"] is not None else None
         peak = np.maximum.accumulate(np.concatenate([[1.0], e]))[1:]
         out["mdd"] = S._r(((e / peak) - 1).min() * 100)
         if n >= 10:
             e0 = np.concatenate([[1.0], e])
             r10 = e0[10:] / e0[:-10] - 1
             out["pos10"] = S._r((r10 > 0).mean() * 100, 1)
-        if n >= 30 and len(b) == n:
-            import validate
-            rp = np.diff(np.concatenate([[1.0], e])) / np.concatenate([[1.0], e[:-1]])
-            rb = np.diff(np.concatenate([[1.0], b])) / np.concatenate([[1.0], b[:-1]])
-            out["t"] = S._r(float(validate.newey_west_t((rp - rb) * 100, lag=10)[1]))
     out["status"] = status(out, key)
     return out
 
@@ -325,14 +363,34 @@ def load_snaps(key):
     return snaps
 
 
-def compute(d, risk_today):
-    """各臂今天的快照、缺日補算、追蹤與組合成績。回傳 (要寫的快照, forward.json)。"""
+def compute(d, risk_today, risk_fn=risk_lists.fetch):
+    """各臂今天的快照、缺日補算、追蹤與組合成績。回傳 (要寫的快照, forward.json)。
+
+    risk_fn(日期)：回頭抓某天的處置／注意／全額交割名單。用在兩個地方：
+      補算缺日 —— 不再一律標「不知道」（那樣等於那天完全不排除）
+      更新前幾天 —— 產出時注意股可能還沒公布，之後回頭補上標記
+    這不算偷看未來：這些名單在「隔天開盤進場」之前就已經公布了。
+    """
     days = [str(x)[:10] for x in np.sort(d["date"].unique())]
     today = days[-1]
     by_code = {c: g.sort_values("date") for c, g in d.groupby("code", sort=False)}
     bench = d[d["code"] == "0050"].set_index(d[d["code"] == "0050"]["date"].astype(str).str[:10])
+    bench_open = (bench["open"] * bench["k"]).to_dict()
     bench = bench["close"] * bench["k"]
     new, arms_out = {}, []
+    recent = set([x for x in days if START <= x < today][-RISK_LOOKBACK:])
+    rcache = {}
+
+    def risk_of(m):
+        if m not in rcache:
+            rcache[m] = risk_lists.unknown(m)
+            if m in recent and risk_fn is not None:
+                try:
+                    rcache[m] = risk_fn(m)
+                except Exception as e:          # 抓不到就照實標 unknown，不中斷產出
+                    print("  名單 {} 抓不到：{}".format(m, e))
+        return rcache[m]
+
     for a in ARMS:
         key = a["key"]
         snaps = load_snaps(key)
@@ -341,12 +399,20 @@ def compute(d, risk_today):
             new[key][today] = snapshot(d, key, pd.Timestamp(today), risk_today)
         # 缺日補算：起算日之後、今天之前沒有快照的交易日（例如那天 CI 沒跑）
         for m in [x for x in days if START <= x < today and x not in snaps]:
-            new[key][m] = snapshot(d, key, pd.Timestamp(m), risk_lists.unknown(m), backfilled=True)
+            new[key][m] = snapshot(d, key, pd.Timestamp(m), risk_of(m), backfilled=True)
+        # 前幾天產出時名單還沒確定的，回頭更新標記
+        for m in sorted(recent):
+            sn = snaps.get(m)
+            if sn is None or m in new[key] or risk_lists.settled(sn.get("risk")):
+                continue
+            r = risk_of(m)
+            if risk_lists.settled(r):
+                new[key][m] = dict(apply_risk(sn, r), risk_refreshed=True)
         snaps.update(new[key])
         order = sorted(snaps)
         tracked = [(sd, track_snapshot(d, snaps[sd], by_code)) for sd in order]
         live = [(sd, rows) for sd, rows in tracked if sd >= START]
-        eq, b, trades, expo = portfolio(days, live, bench, START)
+        eq, b, trades, expo = portfolio(days, live, bench, START, bench_open)
         m = summarize(eq, b, trades, key, expo)
         # Arm 2 的影子：同一份清單「不停損」的逐筆平均（規範第 7 節）
         shadow = None
@@ -383,13 +449,21 @@ def compute(d, risk_today):
     return new, fwd
 
 
+def persist():
+    """快照檔只由 CI 寫（它會 commit 回 repo）。本機產網頁時照樣算進 forward.json，
+    但不寫檔 —— 否則本機跟 CI 各寫一份同名檔案，下次 git pull 就會衝突。
+    本機真的要寫（例如 CI 壞了要手動補）就設 FORWARD_PERSIST=1。"""
+    return bool(os.environ.get("GITHUB_ACTIONS") or os.environ.get("FORWARD_PERSIST"))
+
+
 def write(out, new, fwd):
-    for key, snaps in new.items():
+    for key, snaps in (new.items() if persist() else ()):
         folder = arm_dir(key)
         folder.mkdir(parents=True, exist_ok=True)
         for day, snap in snaps.items():
             f = folder / (day + ".json")
-            if day == fwd["date"] or not f.exists():     # 補算的不蓋掉當天即時產生的
+            # 補算的不蓋掉當天即時產生的；名單更新過的要蓋掉
+            if day == fwd["date"] or not f.exists() or snap.get("risk_refreshed"):
                 f.write_text(json.dumps(S._json_safe(snap), ensure_ascii=False, indent=1),
                              encoding="utf-8")
     (out / "short").mkdir(parents=True, exist_ok=True)

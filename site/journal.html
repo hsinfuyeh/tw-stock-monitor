@@ -1,0 +1,215 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script>/* 在 body 渲染前就套用主題，避免切換時閃一下白底 */
+(function(){try{var t=localStorage.getItem('theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:wght@400;500&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<title>我的交易</title>
+<style>
+.jgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 22px;max-width:760px}
+@media (max-width:760px){.jgrid{grid-template-columns:1fr}}
+.jgrid .prow label{min-width:110px}
+.jgrid input[type=date]{width:170px}
+.jgrid input[type=checkbox]{width:auto}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin:6px 0 4px}
+.kpi{border:1px solid var(--line2);border-radius:var(--r);padding:12px 14px}
+.kpi .l{color:var(--mut);font-size:12.5px}.kpi .v{font-size:20px;margin-top:2px}
+.kpi.bad{border-color:var(--up)}.kpi.bad .v{color:var(--up)}
+.vio{color:var(--up);font-size:12.5px}
+.jbtns{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+td .btn{padding:3px 10px;font-size:12.5px}
+</style></head><body>
+<div class="wrap" id="app"></div>
+<script src="assets/app.js"></script>
+<script>
+/* 我的交易（規範 v1 第 6、8 節：實際下單的紀錄、違規次數、緊急停止）。
+ *
+ * 前瞻實測是「照規則假裝買」，這一頁是「你真的買了什麼」。規範的階段 1 要求
+ * 違規每月 ≤ 1 筆、緊急停止要看連續停損與單筆虧損，這些都只能從真實交易算。
+ *
+ * 資料只存在這台瀏覽器（localStorage），不會上傳到任何地方 —— 公開網站沒有後端，
+ * 而交易紀錄也不該放在公開的 repo。換電腦或清瀏覽器資料前請先「匯出備份」。 */
+var KEY = 'journal_v1', CAPKEY = 'short_capital';
+var RISK = 0.005, CAP = 0.20, MAXH = 3, NEWD = 1, COST = 0.585;
+var REASONS = ['停損', '達到目標', '持有到期', '自己提早賣', '其他'];
+
+function load() { try { return JSON.parse(localStorage.getItem(KEY) || '[]'); } catch (e) { return []; } }
+function save(J) { try { localStorage.setItem(KEY, JSON.stringify(J)); } catch (e) { alert('存不進瀏覽器：' + e.message); } }
+function capital() { var v = 0; try { v = parseFloat(localStorage.getItem(CAPKEY)); } catch (e) {} return v > 0 ? v * 1e4 : 0; }
+function money(v) { return v == null || isNaN(v) ? '—' : Math.round(v).toLocaleString(); }
+function f2(v) { return v == null || isNaN(v) ? '—' : Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function today() { var d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); }
+
+/* 每筆的損益（已扣手續費和稅，還沒賣的是 null） */
+function pnl(t) {
+  if (t.sell_px == null) return null;
+  var buy = t.shares * t.buy_px, sell = t.shares * t.sell_px;
+  return sell - buy - buy * 0.001425 - sell * (0.001425 + 0.003);
+}
+
+/* 自動檢查的違規。回傳文字陣列。 */
+function violations(t, J, cap) {
+  var v = [];
+  if (!t.on_list) v.push('不在當天清單上');
+  if (t.flagged) v.push('買了有排除標記的股票');
+  if (cap) {
+    var risk = t.shares * (t.buy_px - t.stop) + t.shares * t.buy_px * COST / 100;
+    if (risk > cap * RISK * 1.1) v.push('碰停損會賠本金 ' + (risk / cap * 100).toFixed(2) + '%（上限 0.5%）');
+    if (t.shares * t.buy_px > cap * CAP * 1.02) v.push('單檔佔本金 ' + (t.shares * t.buy_px / cap * 100).toFixed(0) + '%（上限 20%）');
+  }
+  var sameDay = J.filter(function (x) { return x.buy_date === t.buy_date && x.id <= t.id; }).length;
+  if (sameDay > NEWD) v.push('同一天買第 ' + sameDay + ' 檔（上限 1 檔）');
+  var open = J.filter(function (x) {
+    return x.id !== t.id && x.buy_date <= t.buy_date && (!x.sell_date || x.sell_date > t.buy_date) &&
+      (x.buy_date < t.buy_date || x.id < t.id);
+  }).length + 1;
+  if (open > MAXH) v.push('買進時同時持有 ' + open + ' 檔（上限 3 檔）');
+  if (t.sell_date && t.followed === false) v.push('沒有照規則賣出');
+  if (t.stop >= t.buy_px) v.push('停損價不低於買進價');
+  return v;
+}
+
+function stats(J, cap) {
+  var closed = J.filter(function (t) { return t.sell_date; }).sort(function (a, b) {
+    return (a.sell_date + a.id).localeCompare(b.sell_date + b.id);
+  });
+  var eq = cap, peak = cap, mdd = 0, worst = null, streak = 0, maxStreak = 0, sum = 0;
+  closed.forEach(function (t) {
+    var p = pnl(t); sum += p;
+    if (cap) {
+      eq += p; peak = Math.max(peak, eq); mdd = Math.min(mdd, eq / peak - 1);
+      worst = worst == null ? p / cap : Math.min(worst, p / cap);
+    }
+    streak = t.reason === '停損' ? streak + 1 : 0;
+    maxStreak = Math.max(maxStreak, streak);
+  });
+  var month = today().slice(0, 7), d30 = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
+  var vMonth = 0, v30 = 0, byMonth = {};
+  J.forEach(function (t) {
+    var n = violations(t, J, cap).length ? 1 : 0, d = t.sell_date || t.buy_date;
+    if (!n) return;
+    if (d.slice(0, 7) === month) vMonth++;
+    if (d >= d30) v30++;
+    byMonth[d.slice(0, 7)] = (byMonth[d.slice(0, 7)] || 0) + 1;
+  });
+  return { n: J.length, closed: closed.length, sum: sum, ret: cap ? sum / cap * 100 : null,
+           mdd: mdd * 100, worst: worst == null ? null : worst * 100, streak: streak,
+           maxStreak: maxStreak, vMonth: vMonth, v30: v30, byMonth: byMonth,
+           open: J.length - closed.length };
+}
+
+function render() {
+  var J = load(), cap = capital(), S = stats(J, cap), app = document.getElementById('app');
+  var kill = [];
+  if (cap && S.mdd <= -15) kill.push('帳戶從高點回落 ' + App.num(-S.mdd, 1) + '%（≥ 15%）');
+  if (S.streak >= 5) kill.push('目前連續 ' + S.streak + ' 筆停損（≥ 5 筆）');
+  if (S.worst != null && S.worst < -1) kill.push('有一筆虧損 ' + App.num(-S.worst, 2) + '% 本金（> 1%）');
+  if (S.v30 >= 3) kill.push('近 30 天違規 ' + S.v30 + ' 筆（≥ 3 筆）');
+  function kpi(l, v, bad) { return '<div class="kpi' + (bad ? ' bad' : '') + '"><div class="l">' + l + '</div><div class="v">' + v + '</div></div>'; }
+  app.innerHTML =
+    '<h1 style="font-size:30px;letter-spacing:-.03em;font-weight:500;margin:0 0 4px">我的交易</h1>' +
+    '<div class="meta">你實際下單的紀錄 —— 算違規次數與緊急停止條件（規範 v1 第 6、8 節）</div>' +
+    (kill.length ? '<div class="statusbar bad"><span class="txt"><b>觸發緊急停止：' + App.esc(kill.join('；')) +
+      '</b>。規範：全部停下來檢討，不再開新倉。</span></div>'
+      : '<div class="statusbar ok"><span class="txt">沒有觸發任何緊急停止條件。</span></div>') +
+    '<div class="statusbar warn"><span class="txt"><b>資料只存在這台瀏覽器</b>，不會上傳。' +
+    '換電腦、換瀏覽器或清除網站資料前，請先按下面的「匯出備份」。</span></div>' +
+    '<div class="card"><h2>現況</h2>' +
+    (cap ? '' : '<p class="note">還沒設定本金 —— 到<a href="short.html">今日清單</a>的計算機填一次，這裡的風險檢查才算得出來。</p>') +
+    '<div class="kpis">' +
+    kpi('本金', cap ? money(cap) + ' 元' : '未設定') +
+    kpi('已實現損益', money(S.sum) + ' 元' + (S.ret == null ? '' : '（' + App.num(S.ret, 2, true) + '%）')) +
+    kpi(App.tip('最大回落') + '（上限 15%）', cap ? App.num(S.mdd, 1) + '%' : '—', cap && S.mdd <= -15) +
+    kpi('單筆最大虧損（上限本金 1%）', S.worst == null ? '—' : App.num(S.worst, 2) + '%', S.worst != null && S.worst < -1) +
+    kpi('目前連續停損（上限 5 筆）', S.streak + ' 筆', S.streak >= 5) +
+    kpi('本月違規（階段 1 要 ≤ 1 筆）', S.vMonth + ' 筆', S.vMonth > 1) +
+    kpi('近 30 天違規（≥ 3 筆就停）', S.v30 + ' 筆', S.v30 >= 3) +
+    kpi('交易 / 持有中', S.n + ' / ' + S.open) +
+    '</div><p class="note" style="font-size:13px">回落與損益只算已經賣掉的（持有中的還沒實現）。' +
+    '違規以「有任何一項違規的交易」計 1 筆。</p></div>' +
+    '<div class="card"><h2>記一筆買進</h2><div class="jgrid">' +
+    '<div class="prow"><label for="j_date">買進日</label><input type="date" id="j_date" value="' + today() + '"></div>' +
+    '<div class="prow"><label for="j_code">代號</label><input type="text" id="j_code" maxlength="8" style="width:110px"></div>' +
+    '<div class="prow"><label for="j_shares">股數</label><input type="number" id="j_shares" min="1" step="1"><span class="u">股</span></div>' +
+    '<div class="prow"><label for="j_px">買進價</label><input type="number" id="j_px" min="0" step="0.01"><span class="u">元</span></div>' +
+    '<div class="prow"><label for="j_stop">停損價</label><input type="number" id="j_stop" min="0" step="0.01"><span class="u">元</span></div>' +
+    '<div class="prow"><label for="j_on">在當天清單上</label><input type="checkbox" id="j_on" checked></div>' +
+    '<div class="prow"><label for="j_flag">有排除標記（處置／注意／全額交割）</label><input type="checkbox" id="j_flag"></div>' +
+    '</div><div class="jbtns"><button class="btn" id="j_add" type="button">加入</button>' +
+    '<span class="note" id="j_msg" style="font-size:13px"></span></div></div>' +
+    '<div class="card"><h2>交易紀錄</h2>' + table(J, cap) +
+    '<div class="jbtns"><button class="btn" id="j_exp" type="button">匯出備份</button>' +
+    '<label class="btn" style="cursor:pointer">匯入備份<input type="file" id="j_imp" accept=".json" style="display:none"></label></div></div>';
+  bind();
+}
+
+function table(J, cap) {
+  if (!J.length) return '<p class="note">還沒有紀錄。</p>';
+  var rows = J.slice().sort(function (a, b) { return (b.buy_date + b.id).localeCompare(a.buy_date + a.id); });
+  return '<div class="scroll"><table><thead><tr><th>買進日</th><th>代號</th><th>股數</th><th>買進價</th><th>停損</th>' +
+    '<th>賣出日</th><th>賣出價</th><th>原因</th><th class="sorted">損益（元）</th><th>佔本金</th>' +
+    '<th style="text-align:left">違規</th><th></th></tr></thead><tbody>' +
+    rows.map(function (t) {
+      var p = pnl(t), v = violations(t, J, cap);
+      var sell = t.sell_date ? '<td>' + t.sell_date + '</td><td>' + f2(t.sell_px) + '</td><td>' + App.esc(t.reason) + '</td>'
+        : '<td colspan="3"><button class="btn" data-sell="' + t.id + '" type="button">記賣出</button></td>';
+      return '<tr><td>' + t.buy_date + '</td><td><a href="stock.html?c=' + App.esc(t.code) + '"><strong>' + App.esc(t.code) + '</strong></a></td>' +
+        '<td>' + t.shares.toLocaleString() + '</td><td>' + f2(t.buy_px) + '</td><td class="dn">' + f2(t.stop) + '</td>' + sell +
+        '<td class="sorted">' + (p == null ? '持有中' : '<span class="' + App.cls(p) + '">' + money(p) + '</span>') + '</td>' +
+        '<td>' + (p == null || !cap ? '—' : App.pct(p / cap * 100, 2)) + '</td>' +
+        '<td class="vio" style="text-align:left">' + App.esc(v.join('；')) + '</td>' +
+        '<td><button class="btn" data-del="' + t.id + '" type="button">刪除</button></td></tr>';
+    }).join('') + '</tbody></table></div>';
+}
+
+function bind() {
+  document.getElementById('j_add').onclick = function () {
+    var g = function (id) { return document.getElementById(id); };
+    var t = { id: Date.now(), buy_date: g('j_date').value, code: g('j_code').value.trim(),
+              shares: parseInt(g('j_shares').value, 10), buy_px: parseFloat(g('j_px').value),
+              stop: parseFloat(g('j_stop').value), on_list: g('j_on').checked, flagged: g('j_flag').checked };
+    if (!t.buy_date || !t.code || !(t.shares > 0) || !(t.buy_px > 0) || !(t.stop > 0)) {
+      g('j_msg').textContent = '買進日、代號、股數、買進價、停損價都要填。'; return;
+    }
+    var J = load(); J.push(t); save(J); render();
+  };
+  document.querySelectorAll('[data-del]').forEach(function (b) {
+    b.onclick = function () {
+      if (!confirm('刪除這筆紀錄？')) return;
+      var id = +b.getAttribute('data-del');
+      save(load().filter(function (t) { return t.id !== id; })); render();
+    };
+  });
+  document.querySelectorAll('[data-sell]').forEach(function (b) {
+    b.onclick = function () {
+      var id = +b.getAttribute('data-sell'), J = load(), t = J.filter(function (x) { return x.id === id; })[0];
+      var d = prompt('賣出日（YYYY-MM-DD）', today()); if (!d) return;
+      var px = parseFloat(prompt('賣出價', '')); if (!(px > 0)) return;
+      var r = prompt('原因：輸入數字\n1 停損　2 達到目標　3 持有到期　4 自己提早賣　5 其他', '1');
+      var reason = REASONS[(parseInt(r, 10) || 5) - 1] || '其他';
+      var ok = confirm('這筆有照規則賣嗎？\n（碰到停損就賣、達標就賣、到期就賣 → 按「確定」；\n沒照規則 → 按「取消」）');
+      t.sell_date = d; t.sell_px = px; t.reason = reason; t.followed = ok;
+      save(J); render();
+    };
+  });
+  document.getElementById('j_exp').onclick = function () {
+    var blob = new Blob([JSON.stringify(load(), null, 1)], { type: 'application/json' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = 'my-trades-' + today() + '.json'; a.click();
+  };
+  document.getElementById('j_imp').onchange = function (e) {
+    var f = e.target.files[0]; if (!f) return;
+    f.text().then(function (s) {
+      var J = JSON.parse(s);
+      if (!Array.isArray(J)) throw new Error('格式不對');
+      if (confirm('用檔案裡的 ' + J.length + ' 筆取代目前的紀錄？')) { save(J); render(); }
+    }).catch(function (err) { alert('匯入失敗：' + err.message); });
+  };
+}
+
+App.boot('journal', function () { render(); return Promise.resolve(); });
+</script>
+</body></html>
