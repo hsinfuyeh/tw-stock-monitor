@@ -1,0 +1,33 @@
+{
+ "date": "2026-09-23",
+ "arm": "arm8",
+ "params": {
+  "liq_lots": 1000,
+  "big_n": 0,
+  "w_rev": 25,
+  "rev_yoy": 20,
+  "rev_bonus": 20,
+  "w_inst": 25,
+  "inst_days": 3,
+  "w_brk": 25,
+  "brk_vol": 1.5,
+  "w_ma": 25,
+  "min_score": 50,
+  "top_n": 20,
+  "min_atrp": 2.5,
+  "atr_mult": 3.0,
+  "hold_days": 20,
+  "use_target": 1,
+  "target_net": 5,
+  "skip_wide": 0,
+  "use_model": 1.0,
+  "fixed_stop_pct": 0
+ },
+ "backfilled": false,
+ "risk": {
+  "disposal_status": "ok",
+  "notice_status": "ok",
+  "full_status": "ok"
+ },
+ "top": []
+}
