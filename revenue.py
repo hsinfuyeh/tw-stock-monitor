@@ -84,10 +84,22 @@ def fetch_month(y, m, force=False):
     p = _path(y, m)
     if p.exists() and not force:
         return True
-    try:
-        r = requests.get(BASE.format(y - 1911, m), headers={"User-Agent": UA}, timeout=60)
-    except Exception as e:
-        print("  {}-{:02d} 連線失敗：{}".format(y, m, e), flush=True)
+    # 實測整批抓 236 個月，每次都有一兩個月偶發 502，隔幾秒再試就好
+    for attempt in range(3):
+        try:
+            r = requests.get(BASE.format(y - 1911, m), headers={"User-Agent": UA}, timeout=60)
+        except Exception as e:
+            r = None
+            err = "連線失敗：{}".format(e)
+        if r is not None and r.status_code == 200:
+            break
+        if r is not None:
+            err = "HTTP {}".format(r.status_code)
+            if r.status_code == 404:
+                break
+        time.sleep(5 * (attempt + 1))
+    if r is None:
+        print("  {}-{:02d} {}".format(y, m, err), flush=True)
         return False
     if r.status_code != 200:
         print("  {}-{:02d} HTTP {}".format(y, m, r.status_code), flush=True)
