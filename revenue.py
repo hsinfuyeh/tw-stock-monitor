@@ -1,4 +1,4 @@
-"""月營收擷取（FinMind）。
+"""月營收擷取（公開資訊觀測站 MOPS 的月報表）。
 
 為什麼需要這個 —— 它是「剔除價值陷阱」那一層的核心：
 
@@ -6,13 +6,28 @@
     我的統計層會把這種股票評為高分，但那不是便宜，是公司在爛掉。
     加上營收趨勢才分得出「便宜的好公司」與「價值陷阱」。
 
+資料來源：MOPS 每月一頁的「上市公司營業收入統計表」，一頁就是當月<b>全部</b>
+上市公司（含 KY 公司），一個月一次請求，2007 年起都有。
+
+    舊版用 FinMind 逐檔抓，而且只抓「最近 30 天成交額前 570 檔」。
+    那等於只有活到今天、現在還熱門的公司才有歷史營收 —— 存活者偏誤。
+    實測 2019 年後，有抓營收的股票之後 20 天比全體平均 +0.37%，
+    沒抓的 −1.42%：營收訊號的回測好看，有一大塊是這個偏誤給的。
+    而且快取抓過就不再更新，9/16 之後的新月份永遠進不來 ——
+    超過 75 天會變缺值，營收那 25 分會在某一天整批靜靜歸零。
+
+    月報表是「那個月當時有申報的所有公司」，後來下市的也在，
+    所以用它建出來的歷史沒有存活者偏誤。
+
+年增率用同一頁的「去年當月營收」算，不用自己拿 12 個月前那筆去除：
+2013 年起上市公司改用 IFRS 合併營收，同一家公司前後的數字不是同一個基準，
+直接相除會在 2013 年製造出一整年的假成長。頁面上的去年同月是公司在同一個
+基準下申報的。上月營收也一樣。
+
 可用日（avail_date）—— 這筆營收何時才真的看得到：
 
-    月營收依規定在次月 10 日前公布。若直接用 revenue_year/month 對應報酬，
+    月營收依規定在次月 10 日前公布。若直接用營收所屬月份對應報酬，
     等於在營收還沒公布時就知道了它 —— 那是 look-ahead bias。
-
-    FinMind 有 create_time 欄位，但實測只有最近幾筆有值，歷史全是空字串，
-    所以不能拿來當回測依據。改用法規期限推算：
 
         可用日 = 次月 10 日之後的第一個交易日，再往後推 1 個交易日
 
@@ -20,145 +35,175 @@
     寧可晚一天看到資料，也不要在回測裡拿到當時不存在的資訊 ——
     偏保守只會低估效果，偏樂觀則會製造假的績效。
 
-速率限制：FinMind 免費版無 token 300 次/小時，註冊取得 token 後 600 次/小時。
-逐檔抓，所以做了本地快取 —— 已抓過的月份不會重抓。
+    已知的小缺口：月報表顯示的是<b>現在</b>的數字，公司事後更正過的會是更正後的值。
+    更正很少見、幅度通常很小，先記下來不處理。
+
+原始網頁原封不動 gzip 存在 raw/revenue_mops/YYYYMM.html.gz。已經結束的月份
+不會再變；最近兩個月每次都重抓，因為公司還在陸續申報（10 日截止，有人晚交）。
 """
+import datetime as dt
 import gzip
-import json
-import os
+import re
+import sys
 import time
 
 import numpy as np
 import pandas as pd
 import requests
 
-from config import RAW
+from config import RAW, UA
 
-API = "https://api.finmindtrade.com/api/v4/data"
-DIR = RAW / "revenue"
+DIR = RAW / "revenue_mops"
 DIR.mkdir(exist_ok=True)
-
-# 沒 token 是 300/hr，設 12 秒間隔 -> 每小時 300 次，剛好貼齊上限。
-# 有 token（環境變數 FINMIND_TOKEN）可設 6 秒 -> 600/hr。
-TOKEN = os.environ.get("FINMIND_TOKEN", "")
-DELAY = 6.0 if TOKEN else 12.0
-
-
-def _path(code):
-    return DIR / "{}.json.gz".format(code)
+START = (2007, 1)          # 2008 年的年增率與 12 個月新高需要前一年
+DELAY = 2.0
+BASE = "https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_{}_{}.html"
+_CODE = re.compile(r"[0-9A-Z]{4,6}")
 
 
-def have(code):
-    p = _path(code)
-    return p.exists() and p.stat().st_size > 60
+def _path(y, m):
+    return DIR / "{:04d}{:02d}.html.gz".format(y, m)
 
 
-def fetch_one(code, start="2018-01-01", retries=3):
-    """抓單一檔的月營收。已有快取就直接回傳。"""
-    if have(code):
-        try:
-            return json.loads(gzip.decompress(_path(code).read_bytes()).decode())
-        except Exception:
-            pass
-    params = {"dataset": "TaiwanStockMonthRevenue", "data_id": code,
-              "start_date": start}
-    if TOKEN:
-        params["token"] = TOKEN
-    for attempt in range(retries):
-        try:
-            r = requests.get(API, params=params, timeout=45)
-            if r.status_code == 402 or "limit" in r.text.lower()[:200]:
-                # 撞到額度，等久一點再試
-                time.sleep(60 * (attempt + 1))
-                continue
-            j = r.json()
-            if j.get("status") == 200:
-                data = j.get("data") or []
-                _path(code).write_bytes(
-                    gzip.compress(json.dumps(data, ensure_ascii=False).encode()))
-                return data
-            return []
-        except Exception:
-            time.sleep(5 * (attempt + 1))
-    return []
+def months(end=None):
+    """START 到 end（含）的每個 (年, 月)。end 預設為上個月。"""
+    t = end or (dt.date.today().replace(day=1) - dt.timedelta(days=1))
+    y, m = START
+    out = []
+    while (y, m) <= (t.year, t.month):
+        out.append((y, m))
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return out
 
 
-def backfill(codes, verbose=True):
-    """批次抓取，冪等可中斷續跑。"""
-    todo = [c for c in codes if not have(c)]
+def fetch_month(y, m, force=False):
+    """抓一個月的月報表。回傳 True 表示檔案已就緒（有資料列）。
+
+    網址不帶 _0/_1 後綴的那份是國內＋國外公司合併的完整版；
+    _0 只有國內、_1 只有 KY，早年也沒有 _0 版本。"""
+    p = _path(y, m)
+    if p.exists() and not force:
+        return True
+    try:
+        r = requests.get(BASE.format(y - 1911, m), headers={"User-Agent": UA}, timeout=60)
+    except Exception as e:
+        print("  {}-{:02d} 連線失敗：{}".format(y, m, e), flush=True)
+        return False
+    if r.status_code != 200:
+        print("  {}-{:02d} HTTP {}".format(y, m, r.status_code), flush=True)
+        return False
+    # 還沒有公司申報的月份會回一頁空表 —— 不存檔，下次再試
+    if not parse(r.content):
+        return False
+    p.write_bytes(gzip.compress(r.content))
+    return True
+
+
+def update(refresh=2, verbose=True):
+    """補齊缺的月份，並重抓最近 refresh 個月。冪等、可中斷續跑。"""
+    ms = months()
+    recent = set(ms[-refresh:]) if refresh else set()
+    todo = [x for x in ms if x in recent or not _path(*x).exists()]
     if verbose:
-        print("月營收：需抓 {} / {} 檔（已快取 {}）".format(
-            len(todo), len(codes), len(codes) - len(todo)), flush=True)
-    t0 = time.time()
-    for i, c in enumerate(todo):
-        fetch_one(c)
-        time.sleep(DELAY)
-        if verbose and (i + 1) % 20 == 0:
-            el = time.time() - t0
-            left = (len(todo) - i - 1) * (el / (i + 1))
-            print("  [{}/{}] 剩餘約 {:.0f} 分".format(i + 1, len(todo), left / 60),
-                  flush=True)
+        print("月營收：{} 個月，要抓 {} 個（其中重抓最近 {} 個）".format(
+            len(ms), len(todo), len(recent)), flush=True)
+    bad = []
+    for i, (y, m) in enumerate(todo):
+        if not fetch_month(y, m, force=(y, m) in recent):
+            bad.append("{}-{:02d}".format(y, m))
+        if i + 1 < len(todo):
+            time.sleep(DELAY)
+        if verbose and (i + 1) % 24 == 0:
+            print("  [{}/{}]".format(i + 1, len(todo)), flush=True)
+    have = sum(1 for x in ms if _path(*x).exists())
     if verbose:
-        print("完成，共 {} 檔有資料".format(sum(1 for c in codes if have(c))), flush=True)
+        print("完成：{} / {} 個月有資料{}".format(
+            have, len(ms), "；沒抓到 " + ", ".join(bad) if bad else ""), flush=True)
+    return have, bad
 
 
-def avail_dates(rev_months, trading_days):
-    """把「營收所屬月份」換算成「可用日」。
+def _num(s):
+    s = s.replace(",", "").strip()
+    try:
+        return float(s)
+    except ValueError:
+        return np.nan
 
-    次月 10 日 -> 之後第一個交易日 -> 再推 1 個交易日（保守緩衝）。
-    """
-    td = pd.DatetimeIndex(sorted(pd.unique(trading_days)))
-    deadline = (pd.DatetimeIndex(rev_months) + pd.DateOffset(months=1)).map(
-        lambda d: d.replace(day=10))
-    idx = td.searchsorted(deadline, side="left") + 1     # +1 = 緩衝一個交易日
-    idx = idx.clip(0, len(td) - 1)
-    out = td[idx]
-    # 超出交易日曆範圍的（最新一筆營收可能還沒對應的交易日）標為缺值
-    return pd.Series(out).where(pd.Series(deadline) <= td[-1], pd.NaT)
+
+def parse(content):
+    """月報表 -> [(代號, 當月營收, 上月營收, 去年當月營收)]，金額單位千元。
+
+    同一家公司在舊版頁面會出現在兩個產業底下（數字相同），只留第一筆。
+    欄位靠位置取：代號、名稱、當月、上月、去年當月、上月比較%、去年同月%……
+    —— 先檢查表頭真的是這個順序，對不上就回傳空的，不猜。"""
+    s = content.decode("cp950", "replace") if isinstance(content, bytes) else content
+    head = re.sub(r"<[^>]+>|\s", "", s[:s.find("<tr align=right>")] if "<tr align=right>" in s else s)
+    if not all(k in head for k in ("當月營收", "上月營收", "去年當月營收")):
+        return []
+    seen, out = set(), []
+    for tr in re.split(r"<tr", s, flags=re.I)[1:]:
+        c = [re.sub(r"<[^>]+>", "", x).strip()
+             for x in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", tr, flags=re.I | re.S)]
+        if len(c) < 5 or not _CODE.fullmatch(c[0]) or c[0] in seen:
+            continue
+        cur = _num(c[2])
+        if not np.isfinite(cur):
+            continue
+        seen.add(c[0])
+        out.append((c[0], cur, _num(c[3]), _num(c[4])))
+    return out
 
 
 def load(codes=None):
-    """載入所有快取的月營收，回傳長表。
+    """載入所有月報表，回傳長表。
 
     產出欄位：
         code            股票代號
         avail_date      可用日（依法規期限推算，見模組說明）
         rev_month       營收所屬年月
-        revenue         當月營收
-        yoy             年增率（與去年同月比）
+        revenue         當月營收（元）
+        yoy             年增率（與去年同月比，同一基準）
         mom             月增率
         yoy_3m          近 3 個月營收合計的年增率（平滑單月波動）
+        sue             優於自己常態的程度
+        rev_high12      本月是否為近 12 個月最高
     """
     import ingest
     cal = pd.to_datetime([
         "{}-{}-{}".format(x[:4], x[4:6], x[6:]) for x in ingest.trading_calendar()])
     rows = []
-    files = ([_path(c) for c in codes] if codes else sorted(DIR.glob("*.json.gz")))
-    for p in files:
-        if not p.exists():
-            continue
+    for p in sorted(DIR.glob("*.html.gz")):
+        ym = pd.Timestamp("{}-{}-01".format(p.name[:4], p.name[4:6]))
         try:
-            data = json.loads(gzip.decompress(p.read_bytes()).decode())
-        except Exception:
+            recs = parse(gzip.decompress(p.read_bytes()))
+        except Exception as e:
+            print("::warning::月營收 {} 讀不出來：{}".format(p.name, e), file=sys.stderr)
             continue
-        for r in data:
-            rows.append((r["stock_id"], r.get("create_time"),
-                         r["revenue_year"], r["revenue_month"], r["revenue"]))
+        rows += [(c, ym, cur, prev, ly) for c, cur, prev, ly in recs]
     if not rows:
         return pd.DataFrame()
-    d = pd.DataFrame(rows, columns=["code", "create_time", "y", "m", "revenue"])
-    d["rev_month"] = pd.to_datetime(
-        d["y"].astype(str) + "-" + d["m"].astype(str).str.zfill(2) + "-01")
-    d = d.sort_values(["code", "rev_month"]).drop_duplicates(
-        subset=["code", "rev_month"], keep="last").reset_index(drop=True)
+    d = pd.DataFrame(rows, columns=["code", "rev_month", "cur", "prev", "ly"])
+    if codes:
+        d = d[d["code"].isin(set(codes))]
+    d = d.sort_values(["code", "rev_month"]).reset_index(drop=True)
+    d["revenue"] = d["cur"] * 1000
     d["avail_date"] = avail_dates(d["rev_month"], cal)
     d = d[d["avail_date"].notna()].reset_index(drop=True)
-    g = d.groupby("code", sort=False)["revenue"]
-    d["yoy"] = g.pct_change(12) * 100
-    d["mom"] = g.pct_change(1) * 100
-    r3 = d.groupby("code", sort=False)["revenue"].transform(
-        lambda s: s.rolling(3).sum())
-    d["yoy_3m"] = (r3 / r3.groupby(d["code"]).shift(12) - 1) * 100
+
+    def pct(a, b):
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return np.where(b > 0, (a / b - 1) * 100, np.nan)
+
+    d["yoy"] = pct(d["cur"], d["ly"])
+    d["mom"] = pct(d["cur"], d["prev"])
+    # 3 個月合計：只在連續 3 個月都有申報時才算，缺月不拼湊
+    mi = d["rev_month"].dt.year * 12 + d["rev_month"].dt.month
+    g = d.groupby("code", sort=False)
+    consec = (mi - g["rev_month"].shift(2).pipe(
+        lambda s: s.dt.year * 12 + s.dt.month)) == 2
+    c3 = g["cur"].transform(lambda s: s.rolling(3).sum())
+    l3 = g["ly"].transform(lambda s: s.rolling(3).sum())
+    d["yoy_3m"] = np.where(consec, pct(c3, l3), np.nan)
 
     # SUE（標準化未預期營收）。這是 PEAD（盈餘公布後漂移）的月頻版本。
     #
@@ -191,6 +236,21 @@ def load(codes=None):
     d["rev_high12"] = (d["revenue"] >= hi12).astype(float).where(hi12.notna())
     return d[["code", "avail_date", "rev_month", "revenue", "yoy", "mom",
               "yoy_3m", "sue", "rev_high12"]]
+
+
+def avail_dates(rev_months, trading_days):
+    """把「營收所屬月份」換算成「可用日」。
+
+    次月 10 日 -> 之後第一個交易日 -> 再推 1 個交易日（保守緩衝）。
+    """
+    td = pd.DatetimeIndex(sorted(pd.unique(trading_days)))
+    deadline = (pd.DatetimeIndex(rev_months) + pd.DateOffset(months=1)).map(
+        lambda d: d.replace(day=10))
+    idx = td.searchsorted(deadline, side="left") + 1     # +1 = 緩衝一個交易日
+    idx = idx.clip(0, len(td) - 1)
+    out = td[idx]
+    # 超出交易日曆範圍的（最新一筆營收可能還沒對應的交易日）標為缺值
+    return pd.Series(out).where(pd.Series(deadline) <= td[-1], pd.NaT)
 
 
 def as_of_panel(rev, dates):
@@ -237,16 +297,5 @@ def as_of_panel(rev, dates):
 
 
 if __name__ == "__main__":
-    import sys
-    import store
-    n = int(sys.argv[1]) if len(sys.argv) > 1 else 400
-    # 只抓流動性最好的 N 檔 —— 那本來就是實際可交易的範圍
-    liq = store.q("""
-        SELECT code FROM quotes
-        WHERE date >= (SELECT MAX(date) - INTERVAL 30 DAY FROM quotes)
-          AND cat = 'common'
-        GROUP BY code HAVING AVG(amount) >= 20000000
-        ORDER BY AVG(amount) DESC LIMIT {}""".format(n))
-    codes = list(liq["code"])
-    print("目標 {} 檔（依 20 日均額排序）".format(len(codes)), flush=True)
-    backfill(codes)
+    # 補齊缺的月份 + 重抓最近兩個月。改了解析邏輯不必重抓，原始網頁就在 raw/。
+    update()

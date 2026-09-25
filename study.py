@@ -8,7 +8,7 @@
     python study.py all      全部
 
 特徵面板（約 20 秒）算完會快取在 data/study_panel.pkl，之後各輪共用；
-倉儲更新過就會自動重算。加 --fresh 可以強制重算。
+倉儲或月營收更新過就會自動重算。加 --fresh 可以強制重算。
 
 為什麼要有這支：原本每一輪都吃我手動產生的暫存檔，換一台電腦就跑不出來，
 等於「結論寫在 RESEARCH_LOG，但沒人能重現」。研究要能被檢查才有意義。
@@ -29,7 +29,10 @@ ROUNDS = {"spec": "study_spec.py", "exit": "study_exit.py", "hold": "study_hold.
 
 def panel(fresh=False):
     """特徵 ＋ 標籤的面板。倉儲沒變就重用快取。"""
-    mtime = DB.stat().st_mtime
+    # 月營收不在倉儲裡（raw/revenue_mops/），只看倉儲的時間會讓營收換了面板卻沒重算
+    import revenue
+    rv = sorted(revenue.DIR.glob("*.html.gz"))
+    mtime = (DB.stat().st_mtime, len(rv), max((p.stat().st_mtime for p in rv), default=0))
     if not fresh and CACHE.exists():
         try:
             d = pd.read_pickle(CACHE)

@@ -71,35 +71,66 @@ def usable_last_date():
 
 
 def check_revenue():
-    """月營收資料在不在。
+    """月營收資料在不在、新不新。回傳 (月份數, 最新月份 'YYYYMM' 或 None)。
 
     這一項不在上面的三張表裡：月營收是 publish 時由 revenue.load() 從
-    raw/revenue/ 直接讀的，不進 DuckDB。所以倉儲看起來完全正常，
+    raw/revenue_mops/ 直接讀的，不進 DuckDB。所以倉儲看起來完全正常，
     但只要那個資料夾沒跟著過來，yoy 就全是缺值，漏斗的 L3 營收層
     <b>整層失效</b> —— 候選名單從 221 檔虛胖成 263 檔，沒有任何錯誤訊息。
 
     第一次部署上線就是這樣中的：閘門只檢查三個 TWSE 資料源，
     完全沒察覺少了一整層。所以把它也納入檢查。
     """
-    from config import RAW
-    rev = RAW / "revenue"
-    return len(list(rev.glob("*.json.gz"))) if rev.exists() else 0
+    import revenue
+    ms = sorted(p.name[:6] for p in revenue.DIR.glob("*.html.gz"))
+    return len(ms), (ms[-1] if ms else None)
+
+
+def refresh_revenue():
+    """補齊缺的月份、重抓最近兩個月。抓不到只警告：舊資料還能用，
+    而「太舊」由 main 另外檢查。
+
+    舊版完全沒有這一步 —— 營收快取抓過一次就凍住，新月份永遠進不來，
+    超過 75 天營收那 25 分會整批靜靜歸零。"""
+    import revenue
+    try:
+        revenue.update()
+    except Exception as e:
+        log("::warning::月營收更新失敗：{}".format(e))
+
+
+def revenue_stale(latest, today=None):
+    """最新一個月是不是比「應該要有的」還舊。
+
+    每月 10 日是申報截止；過了 12 日（留兩天緩衝）上個月就該有了，
+    在那之前至少要有上上個月。"""
+    import datetime as dt
+    t = today or dt.date.today()
+    back = 1 if t.day > 12 else 2
+    y, m = t.year, t.month - back
+    while m < 1:
+        y, m = y - 1, m + 12
+    return latest is None or latest < "{:04d}{:02d}".format(y, m)
 
 
 def main(ignore_gate=False):
-    n_rev = check_revenue()
-    log("月營收資料: {} 檔".format(n_rev))
+    refresh_revenue()
+    n_rev, rev_latest = check_revenue()
+    log("月營收資料: {} 個月，最新 {}".format(n_rev, rev_latest))
+    if n_rev and revenue_stale(rev_latest):
+        log("::warning::月營收最新只到 {}，比應該有的舊。"
+            "營收超過 75 天會被當成缺值，營收那 25 分會整批歸零。".format(rev_latest))
     if not n_rev and not ignore_gate:
         write_summary([
             "### 沒有發佈",
             "",
-            "**找不到月營收資料**（`raw/revenue/`）。",
+            "**找不到月營收資料**（`raw/revenue_mops/`）。",
             "",
             "月營收不在 DuckDB 裡，是 publish 時直接從原始檔讀的。少了它，",
             "漏斗的 L3 營收層會整層失效 —— 候選名單會虛胖將近兩成，",
             "而且不會有任何錯誤訊息。",
             "",
-            "多半是種子檔沒有包含 `raw/revenue/`。在本機重跑 `python seed.py` 即可。",
+            "公開資訊觀測站抓不到、種子也沒有帶 `raw/revenue_mops/`。在本機跑 `python revenue.py` 再 `python seed.py`。",
         ])
         set_output("publish", "false")
         set_output("changed", "false")

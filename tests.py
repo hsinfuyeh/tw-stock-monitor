@@ -207,6 +207,51 @@ def test_framework(nd):
           str(st.get("誤報率_t檢定", "")))
 
 
+def test_revenue():
+    print("\n月營收（公開資訊觀測站月報表）")
+    import revenue
+    import ci_update
+    head = ("<table><tr><th>公司<br>代號</th><th>公司名稱</th><th>當月營收</th>"
+            "<th>上月營收</th><th>去年當月營收</th><th>上月比較<br>增減(%)</th></tr>")
+    row = ("<tr align=right><td align=center>{}</td><td align=left>x</td>"
+           "<td nowrap> {} </td><td nowrap> 90 </td><td nowrap> 50 </td><td> 1 </td></tr>")
+    html = head + row.format("2330", "1,000") + row.format("2330", "1,000") + row.format("6505", "-")
+    check("月報表：千分位、同公司重複只留一筆、當月沒數字的跳過",
+          revenue.parse(html) == [("2330", 1000.0, 90.0, 50.0)])
+    check("月報表：表頭對不上 -> 空的（不猜欄位）",
+          revenue.parse(html.replace("去年當月營收", "某欄")) == [])
+
+    check("過了 12 日上個月就該有", ci_update.revenue_stale("202607", pd.Timestamp("2026-09-15"))
+          and not ci_update.revenue_stale("202608", pd.Timestamp("2026-09-15")))
+    check("12 日之前有上上個月就算新", not ci_update.revenue_stale("202607", pd.Timestamp("2026-09-05")))
+
+    rv = revenue.load()
+    if not len(rv):
+        check("月營收資料存在（raw/revenue_mops/）", False, "先跑 python revenue.py")
+        return
+    rv["rev_month"] = pd.to_datetime(rv["rev_month"])
+
+    def one(code, ym):
+        r = rv[(rv["code"] == code) & (rv["rev_month"] == ym)]
+        return r.iloc[0] if len(r) else None
+
+    a, b = one("2330", "2008-01-01"), one("2330", "2026-08-01")
+    check("2330 2008-01 營收與年增跟月報表一致",
+          a is not None and a["revenue"] == 30_286_454_000 and abs(a["yoy"] - 45.24) < 0.01)
+    check("2330 2026-08 營收與年增跟月報表一致",
+          b is not None and b["revenue"] == 514_805_337_000 and abs(b["yoy"] - 53.32) < 0.01)
+    # 2018 年被日月光併購下市的矽品：舊版（只抓今天熱門的 570 檔）不可能有它
+    check("已下市公司也有歷史營收（沒有存活者偏誤）",
+          one("2325", "2010-01-01") is not None)
+    # 可用日一定在營收所屬月份的次月 10 日之後
+    deadline = rv["rev_month"] + pd.DateOffset(months=1) + pd.Timedelta(days=9)
+    check("可用日都在次月 10 日之後（不偷看）", bool((rv["avail_date"] > deadline).all()))
+    n_months = rv["rev_month"].nunique()
+    check("2008 年起每個月都有", rv.loc[rv["rev_month"] >= "2008-01-01", "rev_month"].nunique()
+          == len(pd.period_range("2008-01", rv["rev_month"].max(), freq="M")),
+          "{} 個月、{:,} 家公司".format(n_months, rv["code"].nunique()))
+
+
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")   # Windows 主控台預設 cp950，印不出 −
     print("=" * 66)
@@ -218,6 +263,7 @@ if __name__ == "__main__":
     nd = test_data()
     test_exdiv()
     test_no_lookahead()
+    test_revenue()
     test_framework(nd)
     import tests_short
     tests_short.run(check)

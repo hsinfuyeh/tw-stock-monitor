@@ -11,7 +11,7 @@
 種子裡有什麼 ——
 
     data/twse.duckdb   壓實後約 271 MB（2008-2026，4,597 個交易日）。
-    raw/revenue/       月營收，約 570 個檔案、2.3 MB。
+    raw/revenue_mops/  月營收，公開資訊觀測站月報表，2007 年起每月一頁。
 
     月營收必須一起帶。它不在 DuckDB 裡（publish 時才由 revenue.load()
     從原始檔讀），CI 沒有它的話 yoy 全是缺值，漏斗的 L3 營收層會整層失效
@@ -66,9 +66,9 @@ def main(check_only=False):
     if check_only:
         return
 
-    rev = RAW / "revenue"
-    n_rev = len(list(rev.glob("*.json.gz"))) if rev.exists() else 0
-    print("月營收   {} 檔".format(n_rev))
+    rev = RAW / "revenue_mops"
+    n_rev = len(list(rev.glob("*.html.gz"))) if rev.exists() else 0
+    print("月營收   {} 個月".format(n_rev))
     if not n_rev:
         sys.exit("找不到月營收資料。沒有它，CI 產出的漏斗會少一整層而且"
                  "不會報錯 —— 先跑 python revenue.py")
@@ -91,7 +91,7 @@ def main(check_only=False):
         print("打包…")
         with tarfile.open(tar, "w:gz") as t:
             t.add(str(DB), arcname="data/" + DB.name)
-            t.add(str(rev), arcname="raw/revenue")
+            t.add(str(rev), arcname="raw/revenue_mops")
         size = tar.stat().st_size / 1e6
         print("上傳 {:.0f} MB（會覆蓋舊的）…".format(size))
         r = sh("gh", "release", "upload", TAG, str(tar), "--clobber")

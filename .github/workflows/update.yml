@@ -77,7 +77,7 @@ jobs:
             tar xzf seed.tar.gz && rm seed.tar.gz
             echo "已從 Release 取得種子（倉儲 + 月營收）"
             ls -lh data/
-            echo "月營收 $(ls raw/revenue | wc -l) 檔"
+            echo "月營收 $(ls raw/revenue_mops 2>/dev/null | wc -l) 個月（沒有的話 ci_update 會自己補）"
           else
             echo "::error::找不到倉儲快取，也沒有 warehouse-seed 這個 Release。"
             echo "::error::請先在本機執行 python seed.py 上傳種子（見 README）。"
