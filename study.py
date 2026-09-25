@@ -5,6 +5,7 @@
     python study.py hold     第 3 輪：目標價上限與持有期
     python study.py bench    第 4 輪：改用 0050 當基準
     python study.py target   第 5 輪：淨賺 5% 的目標價 ＋ 波動門檻
+    python study.py sue      第 10 輪：營收優於預期 × 大型股 × 持有 40 日
     python study.py all      全部
 
 特徵面板（約 20 秒）算完會快取在 data/study_panel.pkl，之後各輪共用；
@@ -24,7 +25,8 @@ from config import DATA, DB
 
 CACHE = DATA / "study_panel.pkl"
 ROUNDS = {"spec": "study_spec.py", "exit": "study_exit.py", "hold": "study_hold.py",
-          "bench": "study_bench.py", "target": "study_target.py"}
+          "bench": "study_bench.py", "target": "study_target.py",
+          "sue": "study_sue.py"}
 
 
 def panel(fresh=False):
