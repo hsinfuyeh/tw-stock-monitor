@@ -320,7 +320,38 @@ def active_index():
     return out
 
 
-def emit_stock(code, name, cat, pan, act=None):
+PERF_WINDOWS = [("一週", 5), ("一個月", 20), ("一季", 60), ("半年", 120), ("一年", 250)]
+
+
+def perf_vs_bench(s, bench):
+    """近期表現 vs 0050：同一段期間的還原漲跌（%）。bench 是 0050 總報酬指數（以日期為索引）。
+
+    期間用<b>市場的交易日曆</b>往回數（bench 的索引），不是數這檔股票自己的列數 ——
+    個股序列會少掉停牌或被濾掉的日子，數列數會讓「一年」變成一年多（實測 0050 一年 +107% 被算成 +141%）。
+    起點那天這檔沒有交易，就用那天之前最近的一筆。"""
+    if bench is None or "adj" not in s:
+        return None
+    px = s[["date", "adj"]].dropna().set_index("date")["adj"].sort_index()
+    if len(px) < 2:
+        return None
+    cal = bench.index[bench.index <= px.index[-1]]
+    out = []
+    for label, n in PERF_WINDOWS:
+        if len(cal) <= n:
+            continue
+        d0, d1 = cal[-1 - n], cal[-1]
+        a = px[:d0]
+        if not len(a):                        # 上市不到這麼久
+            continue
+        s0, s1 = float(a.iloc[-1]), float(px.iloc[-1])
+        b0, b1 = bench.get(d0), bench.get(d1)
+        out.append(dict(label=label, stock=round((s1 / s0 - 1) * 100, 1),
+                        bench=None if b0 is None or b1 is None or pd.isna(b0) or pd.isna(b1)
+                        else round(float(b1 / b0 - 1) * 100, 1)))
+    return out or None
+
+
+def emit_stock(code, name, cat, pan, act=None, bench=None, stable_hist=None):
     """單檔的完整內容。回傳 None 代表這檔不在可分析範圍。"""
     sub = factors.ETF_SUBCATS if cat == "etf" else None
     s, _ = stock_report.prepare(code, cat=cat, subcats=sub, panel=pan)
@@ -349,6 +380,8 @@ def emit_stock(code, name, cat, pan, act=None):
         # 預先算好的 SVG。移植畫圖邏輯到 JS 最容易產生「看起來像但其實不同」。
         chart_svg=stock_report.candles_svg(s.tail(30)),
         active=(act or {}).get(code),
+        perf=perf_vs_bench(s, bench),
+        stable_hist=stable_hist,
     )
 
 
@@ -391,6 +424,10 @@ def build(limit=None, out=SITE):
     if err:
         risk["attention30_error"] = err
     st = stable.compute(feat, risk)
+    stable_hist = st[4] or {}
+    del feat
+    import barrier
+    bench = barrier.market()["m_px"]           # 0050 總報酬指數，個股頁「近期表現 vs 大盤」用
 
     # 先寫到暫存目錄，全部寫完才換掉正式的 data/。
     # 原本是直接砍掉 data/ 再慢慢寫，本機按「立即更新」時，那 4 分鐘內
@@ -428,7 +465,7 @@ def build(limit=None, out=SITE):
             skip += 1
             continue
         try:
-            d = emit_stock(code, str(r["name"]), cat, pan, act)
+            d = emit_stock(code, str(r["name"]), cat, pan, act, bench, stable_hist.get(code))
         except Exception:
             d = None
         if d is None:

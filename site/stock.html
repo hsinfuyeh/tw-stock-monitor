@@ -100,6 +100,39 @@ App.boot(null, function (meta) {
         '其他投信尚未接上。</p></div>';
     }
 
+    /* 近期表現 vs 大盤（0050，含配息的還原報酬）：只是事實，不是預測 */
+    var perfBlock = '';
+    if (d.perf && d.perf.length) {
+      perfBlock = '<div class="card"><h2>近期表現 vs 大盤</h2>' +
+        '<div class="scroll"><table class="stk"><thead><tr><th style="text-align:left">期間</th>' +
+        d.perf.map(function (p) { return '<th>' + App.esc(p.label) + '</th>'; }).join('') + '</tr></thead><tbody>' +
+        '<tr><td style="text-align:left">' + App.esc(d.name) + '</td>' +
+        d.perf.map(function (p) { return '<td>' + App.pct(p.stock, 1) + '</td>'; }).join('') + '</tr>' +
+        '<tr><td style="text-align:left" class="mut">0050（大盤）</td>' +
+        d.perf.map(function (p) { return '<td class="mut">' + App.pct(p.bench, 1) + '</td>'; }).join('') + '</tr>' +
+        '<tr><td style="text-align:left"><b>差距</b></td>' +
+        d.perf.map(function (p) { return '<td>' + (p.bench == null ? '—' : App.pct(p.stock - p.bench, 1)) + '</td>'; }).join('') +
+        '</tr></tbody></table></div>' +
+        '<p class="note" style="font-size:13px">都含配息（除權息還原）。大盤用 0050 代表。</p></div>';
+    }
+
+    /* 這檔上過穩定強勢股名單的紀錄（依規則重算，2008 起） */
+    var histBlock = '';
+    var H = d.stable_hist;
+    if (H && H.n) {
+      var ST = { '中': 'st-hit', '倒': 'st-fail' };
+      histBlock = '<div class="card"><h2>上過名單的紀錄</h2>' +
+        '<p style="margin:0 0 10px">2008 年以來依規則重算，這檔上過穩定強勢股名單 <b>' + H.n + '</b> 次' +
+        (H.done ? '，對完答案的 ' + H.done + ' 次裡 ' + App.tip('中') + ' <b>' + H.hit + '</b> 次、' +
+          App.tip('倒') + ' <b>' + H.fail + '</b> 次' : '') + '。</p>' +
+        '<div class="scroll"><table class="stk"><thead><tr><th>上榜日</th><th>名次</th><th>10 天後</th><th>第幾天分出</th></tr></thead><tbody>' +
+        H.rows.map(function (r) {
+          return '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td><td class="' + (ST[r[2]] || 'mut') + '">' + r[2] + '</td>' +
+            '<td>' + (r[3] && r[2] !== '平' ? r[3] : '—') + '</td></tr>';
+        }).join('') + '</tbody></table></div>' +
+        '<p class="note" style="font-size:13px">只列最近 ' + H.rows.length + ' 次。回測沒有當年的處置股、注意股名單，所以跟當天實際公布的名單可能差一兩檔。</p></div>';
+    }
+
     var tierBlock = '';
     if (d.tier && d.tier_text) {
       var stars = '●'.repeat(d.tier) + '○'.repeat(5 - d.tier);
@@ -124,7 +157,7 @@ App.boot(null, function (meta) {
       '不預測未來、不給買賣建議。</span></div>' + tierBlock +
       '<div class="card"><h2>進場前先確認這幾件事</h2>' +
       '<p class="lead">這些是會實際影響你能否順利買賣、以及該放多大部位的事實。</p>' +
-      chk + '</div>' + actBlock +
+      chk + '</div>' + perfBlock + histBlock + actBlock +
       '<div class="card"><h2>最近 30 個交易日</h2>' +
       '<p class="lead">K 線：紅漲綠跌。黃點代表當天出現了至少一種常見型態。</p>' +
       d.chart_svg + '</div>' +

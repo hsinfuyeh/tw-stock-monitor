@@ -26,25 +26,75 @@ function badge(r) {
   return '<span class="nbadge run">連續 ' + r.streak + ' 天</span>';
 }
 
+/* 近 60 日小走勢線（相對今天 = 100）。虛線是 60 天前的位置，看得出這段漲了多少、走得穩不穩。 */
+function spark(v) {
+  var p = (v || []).map(function (y, i) { return [i, y]; }).filter(function (a) { return a[1] != null; });
+  if (p.length < 2) return '';
+  var ys = p.map(function (a) { return a[1]; });
+  var lo = Math.min.apply(null, ys), hi = Math.max.apply(null, ys), n = v.length - 1;
+  var H = 30, pad = 2, span = (hi - lo) || 1;
+  function y(val) { return (pad + (hi - val) / span * (H - 2 * pad)).toFixed(1); }
+  var pts = p.map(function (a) { return (a[0] / n * 100).toFixed(1) + ',' + y(a[1]); }).join(' ');
+  return '<svg class="spark" viewBox="0 0 100 ' + H + '" preserveAspectRatio="none" aria-label="近 60 日走勢">' +
+    '<line x1="0" x2="100" y1="' + y(p[0][1]) + '" y2="' + y(p[0][1]) + '"/>' +
+    '<polyline points="' + pts + '"/></svg>';
+}
+
+function tags(r) {
+  var w = r.why || [];
+  if (!w.length) return '<div class="rtags"><span class="rtag">各項分數平均偏高</span></div>';
+  return '<div class="rtags">' + w.map(function (t) { return '<span class="rtag">' + App.esc(t) + '</span>'; }).join('') + '</div>';
+}
+
+function groups(r) {
+  return '<div class="gbars">' + (r.groups || []).map(function (g) {
+    return '<div class="b"><span>' + App.esc(g.name) + '</span><span class="t"><i style="width:' +
+      Math.max(0, Math.min(100, g.score || 0)) + '%"></i></span><span>' + (g.score == null ? '—' : g.score) + '</span></div>';
+  }).join('') + '</div>';
+}
+
+/* 排除檢查燈號：綠 = 通過、黃 = 名單抓不到（沒辦法確認）、紅 = 被點名 */
+function lamps(r) {
+  return '<div class="lamps" title="名單上的股票都通過了這些檢查">' + (r.checks || []).map(function (c) {
+    var cls = c.ok === true ? '' : c.ok === null ? ' class="q"' : ' class="x"';
+    return '<span' + cls + '>' + App.esc(c.name) + ' ' + App.esc(c.val) + '</span>';
+  }).join('') + '</div>';
+}
+
 function card(r) {
   return '<div class="hcard">' +
     '<div class="top"><div class="nm"><span class="rk">' + r.rank + '</span>' +
     '<a href="stock.html?c=' + r.code + '">' + r.code + ' ' + App.esc(r.name) + '</a>' + badge(r) + '</div>' +
     '<div class="sc">' + App.esc(r.ind || '') + '　' + App.num(r.score, 0) + ' 分</div></div>' +
+    spark(r.spark) +
     '<div class="px"><div><span>今天收盤</span>' + f2(r.close) + '</div>' +
     '<div><span>近 20 日</span>' + App.pct(r.ret20, 1) + '</div>' +
     '<div><span>' + App.tip('每天震盪', 'ATR') + '</span>' + App.num(r.atrp, 1) + '%</div></div>' +
-    '<div class="wy">' + App.esc((r.why || []).join('；') || '各項分數平均偏高') + '</div></div>';
+    tags(r) + groups(r) + lamps(r) + '</div>';
 }
 
-/* 起點：穩定池隨便挑，10 天內收盤漲到 5% 的比例（回測 2008–2025） */
+/* 名單 vs 穩定池隨便挑：中／平／倒三段堆疊橫條（回測 2008–2025） */
+function stack(h, f) {
+  var fl = Math.max(0, 100 - h - f);
+  function seg(cls, v, t) { return '<i class="' + cls + '" style="width:' + v + '%">' + (v >= 9 ? t + ' ' + Math.round(v) + '%' : '') + '</i>'; }
+  return '<div class="stk3">' + seg('h', h, '中') + seg('f', fl, '平') + seg('d', f, '倒') + '</div>';
+}
+function vsBars(T) {
+  var b = T.baseline;
+  if (!b) return '';
+  return '<div class="vs">' +
+    '<div class="row"><span><b>這份名單</b></span>' + stack(b.hit, b.fail) + '</div>' +
+    '<div class="row"><span>隨便挑</span>' + stack(b.pool_hit, b.pool_fail) + '</div>' +
+    '<div class="key"><span><i style="background:var(--up)"></i>' + App.tip('中') + '：10 天內收盤先漲到 +5%</span>' +
+    '<span><i style="background:var(--dn)"></i>' + App.tip('倒') + '：先跌到 −5%</span></div></div>';
+}
 function baseline(T) {
   var b = T.baseline;
   if (!b) return '';
-  return '過去 18 年，這份名單平均每 10 檔約有 <b>' + App.num(b.hit / 10, 1) + ' 檔</b>在 10 個交易日內收盤漲到 5%' +
-    '（' + App.num(b.hit, 1) + '%），先跌到 −5% 的約 ' + App.num(b.fail, 1) + '%；' +
-    '同一個穩定池隨便挑是 ' + App.num(b.pool_hit, 1) + '% 對 ' + App.num(b.pool_fail, 1) + '%。';
+  return '過去 18 年，名單每 10 檔約 <b>' + App.num(b.hit / 10, 1) + ' 檔</b>中、' + App.num(b.fail / 10, 1) +
+    ' 檔倒；從同一群穩定的股票隨便挑是 ' + App.num(b.pool_hit / 10, 1) + ' 檔中、' + App.num(b.pool_fail / 10, 1) + ' 檔倒。';
 }
 
-window.Stable = { f2: f2, card: card, badge: badge, riskNote: riskNote, marginNote: marginNote, baseline: baseline };
+window.Stable = { f2: f2, card: card, badge: badge, riskNote: riskNote, marginNote: marginNote,
+                  baseline: baseline, vsBars: vsBars, spark: spark };
 })();

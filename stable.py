@@ -446,24 +446,74 @@ def exclusion_stats(d, lab, cfg=CFG, start="2008-01-01"):
     return out
 
 
+def tiers_and_history(d, lab, cfg=CFG, start="2008-01-01", end="2025-12-31", keep=12):
+    """兩樣東西，共用同一次打分：
+
+    tiers    依名次分組的中／倒（名單、池內第 11–20、21–30 名、池內其他、被排除的），
+             2008–2025。分數越前面中得越多、倒得越少，才代表排序有用；不是單調的也照實畫。
+    history  每檔股票歷來上過名單的紀錄（最近 keep 次）與總計，給個股頁用。
+             用的是規則重算的名單（回測沒有處置／注意股的歷史，所以不含那三份排除）。
+    """
+    L = lab["label"]
+    pool = pool_mask(d, cfg)
+    uni = universe(d, cfg)
+    _, sc = score(d, pool)
+    pk = pick(d, sc, cfg)
+    raw = sc.groupby(d.loc[sc.index, "date"]).rank(ascending=False, method="first")
+    cal = np.sort(d["date"].unique())
+    last_full = cal[-(cfg["hold"] + 1)]
+    m = (d["date"] >= pd.Timestamp(start)) & (d["date"] <= pd.Timestamp(end)) & (d["date"] <= last_full)
+    dates = d["date"]
+
+    def stat(idx):
+        x = _daily(lab, pd.Index(idx).intersection(m[m].index), dates)
+        return {"hit": _p(x["hit"]), "fail": _p(x["fail"]), "days": int(len(x))}
+    in_pk = pd.Index(pk.index)
+    rest = raw.index.difference(in_pk)
+    tiers = [
+        {"name": "名單（前 10）", **stat(in_pk)},
+        {"name": "池內第 11–20 名", **stat(rest[(raw[rest] > 10) & (raw[rest] <= 20)])},
+        {"name": "池內第 21–30 名", **stat(rest[(raw[rest] > 20) & (raw[rest] <= 30)])},
+        {"name": "池內其他", **stat(rest[raw[rest] > 30])},
+        {"name": "被排除的", **stat((uni & ~pool)[uni & ~pool].index)},
+    ]
+
+    x = d.loc[pk.index, ["code", "date"]].assign(rank=pk["rank"].to_numpy(),
+                                                 label=L[pk.index].to_numpy(),
+                                                 day=lab.loc[pk.index, "day"].to_numpy())
+    name = {1: "中", -1: "倒", 0: "平"}
+    hist = {}
+    for c, g in x.groupby("code", sort=False, observed=True):
+        done = g["label"].dropna()
+        n = len(g)
+        g = g.sort_values("date").tail(keep)
+        hist[str(c)] = {
+            "n": int(n), "done": int(len(done)),
+            "hit": int((done == 1).sum()), "fail": int((done == -1).sum()),
+            "rows": [[str(r.date)[:10], int(r.rank),
+                      name.get(r.label, "未完") if r.label == r.label else "未完",
+                      None if r.day != r.day else int(r.day)]
+                     for r in g.iloc[::-1].itertuples(index=False)]}
+    return tiers, hist
+
+
 SENSITIVITY = [("範圍前 200", {"universe_n": 200}), ("範圍前 400", {"universe_n": 400}),
                ("ATR 上限 3.0%", {"max_atrp": 0.030}), ("ATR 上限 4.0%", {"max_atrp": 0.040})]
 
 
 # --------------------------------------------------------------------- 今日名單
 def reasons(r, parts):
-    """入選原因：分數最高的幾個因子，附上實際數字。"""
+    """入選原因：分數最高的 3 個因子，寫成一眼掃得完的短標籤（附實際數字）。"""
     txt = {
-        "f_smooth": lambda: "60 日走勢平穩向上（平滑度前 {:.0f}%）".format(
-            max(1, round((1 - parts["f_smooth"]) * 100))),
-        "f_eff": lambda: "20 日漲 {:.1f}%、震盪小".format(r["ret20"] * 100),
-        "f_updays": lambda: "近 20 天有 {:.0f} 天收紅".format(r["f_updays"] * 20),
-        "f_ma": lambda: "均線多頭排列" if r["f_ma"] >= 4 else "均線結構 {:.0f}/4".format(r["f_ma"]),
+        "f_smooth": lambda: "走勢平滑度前 {:.0f}%".format(max(1, round((1 - parts["f_smooth"]) * 100))),
+        "f_eff": lambda: "20 日 {:+.0f}%、震盪小".format(r["ret20"] * 100),
+        "f_updays": lambda: "20 天 {:.0f} 天收紅".format(r["f_updays"] * 20),
+        "f_ma": lambda: "均線多頭排列" if r["f_ma"] >= 4 else "均線 {:.0f}/4 項向上".format(r["f_ma"]),
         "f_high": lambda: "距一年高點 {:.1f}%".format((1 - r["f_high"]) * 100)
         if r["f_high"] < 0.999 else "創一年新高",
-        "f_rs": lambda: "60 日比大盤多漲 {:.1f}%".format(r["f_rs"] * 100),
-        "f_inst": lambda: "法人近 10 天有 {:.0f} 天買超".format(r["inst_buy10"]),
-        "f_margin": lambda: "融資沒有追高（20 日融資 {:+.1f}%）".format(r["margin20"] * 100),
+        "f_rs": lambda: "60 日贏大盤 {:.0f}%".format(r["f_rs"] * 100),
+        "f_inst": lambda: "法人 {:.0f}/10 天買超".format(r["inst_buy10"]),
+        "f_margin": lambda: "融資 20 日 {:+.0f}%".format(r["margin20"] * 100),
         "f_sue": lambda: "月營收優於平常",
     }
     order = sorted(((parts[f], f) for f, *_ in FACTORS
@@ -477,6 +527,39 @@ def reasons(r, parts):
         except (TypeError, ValueError, KeyError):
             continue
     return out
+
+
+# 9 個因子歸成 3 類，卡片上只畫 3 條（細節在今日名單的分數表）
+GROUPS = [("動能", ("f_rs", "f_high", "f_ma")),
+          ("穩定", ("f_smooth", "f_eff", "f_updays")),
+          ("籌碼與營收", ("f_inst", "f_margin", "f_sue"))]
+
+
+def checks(r, flags, risk):
+    """排除檢查的燈號：名單上的股票都通過了（否則進不了池子），這裡把數字攤開給人看。
+    交易所名單（處置／注意／全額交割）抓不到時標成 None，不假裝通過。"""
+    def f(v, fmt):
+        return fmt.format(v) if v is not None and np.isfinite(v) else "無資料"
+    risk_ok = (risk or {}).get("attention30_status") == "ok" and         (risk or {}).get("disposal_status") in ("ok", "partial")
+    return [
+        {"name": "波動", "val": f(r["atrp14"] * 100, "{:.1f}%"), "ok": True},
+        {"name": "漲停", "val": f(r["n_limit20"], "{:.0f} 次"), "ok": True},
+        {"name": "跳空", "val": f(r["n_gap20"], "{:.0f} 次"), "ok": True},
+        {"name": "爆量", "val": f(r["n_spike20"], "{:.0f} 次"), "ok": True},
+        {"name": "漲幅", "val": f(r["ret60"] * 100, "60 日 {:+.0f}%"), "ok": True},
+        {"name": "融資", "val": f(r["margin5"] * 100, "5 日 {:+.0f}%"), "ok": True},
+        {"name": "點名", "val": "沒有" if risk_ok else "名單抓不到",
+         "ok": (not flags.get(str(r["code"]))) if risk_ok else None},
+    ]
+
+
+def spark(d, code, date, n=60):
+    """近 n 個交易日的還原收盤，換成「相對今天」的百分比（卡片上的小走勢線）。"""
+    x = d[(d["code"] == code) & (d["date"] <= date)].tail(n)
+    px = (x["close"].astype(float) * x["k"].astype(float)).to_numpy()
+    if len(px) < 2 or not np.isfinite(px[-1]):
+        return []
+    return [None if not np.isfinite(v) else round(float(v / px[-1] * 100), 1) for v in px]
 
 
 def _risk_codes(risk):
@@ -509,6 +592,9 @@ def today_list(d, date=None, risk=None, cfg=CFG):
                      "ret20": _r(r["ret20"] * 100, 1), "ret60": _r(r["ret60"] * 100, 1),
                      "atrp": _r(r["atrp14"] * 100, 2), "adtv20": _r(r["adtv20"] / 1e8, 2),
                      "parts": {f: _r(pr[f] * 100, 0) for f, *_ in FACTORS},
+                     "groups": [{"name": g, "score": _r(np.mean([pr[f] for f in fs]) * 100, 0)}
+                                for g, fs in GROUPS],
+                     "checks": checks(r, flags, risk), "spark": spark(d, r["code"], date),
                      "why": reasons(r, pr)})
     n_uni = int(universe(day, cfg).sum())
     ex = exclusions(day, cfg)[universe(day, cfg)]
@@ -634,7 +720,7 @@ def compute(d=None, risk=None, with_backtest=True):
              "factors": [{"key": f, "name": n, "dir": s, "desc": t} for f, n, s, t in FACTORS],
              "exclude": [{"key": k, "name": n} for k, n in EXCLUDE]}
 
-    bt = None
+    bt, hist = None, None
     if with_backtest:
         day, sm = backtest(d, lab)
         sens = []
@@ -644,7 +730,8 @@ def compute(d=None, risk=None, with_backtest=True):
         today["baseline"] = {k: sm["all"][k] for k in ("hit", "fail", "pool_hit", "pool_fail")} \
             if sm["all"] else None
         today["passed"] = sm["passed"]
-        bt = {"date": ds, "cfg": CFG, **sm, "sensitivity": sens,
+        tiers, hist = tiers_and_history(d, lab)
+        bt = {"date": ds, "cfg": CFG, **sm, "sensitivity": sens, "tiers": tiers,
               "exclusions": exclusion_stats(d, lab),
               "recent": [{"date": str(i)[:10], **{k: _r(v * 100, 1) if k not in ("n", "pool_n") else int(v)
                                                     for k, v in r.items() if k in
@@ -660,7 +747,7 @@ def compute(d=None, risk=None, with_backtest=True):
     tdays, tsum = track(d, lab, snaps)
     trk = {"date": ds, "summary": tsum, "days": tdays[:60]}
     check(today, bt)
-    return today, bt, trk, snap
+    return today, bt, trk, snap, hist
 
 
 class Inconsistent(Exception):
@@ -694,7 +781,7 @@ def _json(obj):
                       allow_nan=False)
 
 
-def write(out, today, bt, trk, snap):
+def write(out, today, bt, trk, snap, hist=None):
     (out / "stable").mkdir(parents=True, exist_ok=True)
     for name, obj in (("today.json", today), ("backtest.json", bt), ("track.json", trk)):
         if obj is not None:
@@ -713,7 +800,7 @@ if __name__ == "__main__":
     t0 = time.time()
     d = features()
     print("特徵面板 {:,} 列，{:.0f} 秒".format(len(d), time.time() - t0), flush=True)
-    today, bt, trk, snap = compute(d, with_backtest="--no-bt" not in sys.argv)
+    today, bt, trk, snap, _ = compute(d, with_backtest="--no-bt" not in sys.argv)
     print("\n{} 名單（穩定池 {} 檔）".format(today["date"], today["counts"]["pool"]))
     for r in today["rows"]:
         print("{:>2}. {} {:<8}{:<8}{:>5.1f} 分  {}".format(r["rank"], r["code"], r["name"],

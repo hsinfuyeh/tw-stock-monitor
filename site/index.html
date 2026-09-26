@@ -29,7 +29,7 @@ App.boot('home', function (meta) {
       '<div class="card"><h2>今天的穩定強勢股 ' + T.rows.length + ' 檔</h2>' +
       '<p class="lead">' + App.esc(T.date) + ' 收盤。動能強、但波動不大也沒有炒作跡象的股票，' +
       '看接下來 10 個交易日能不能漲 5%。不是買賣建議。</p>' +
-      '<p class="note" style="margin-top:-8px">' + Stable.baseline(T) + '</p>' +
+      Stable.vsBars(T) +
       (rn ? '<p class="note up" style="margin-top:-8px"><b>' + rn + '</b></p>' : '') +
       (mn ? '<p class="note" style="margin-top:-8px">' + mn + '</p>' : '') +
       (T.rows.length ? '<div class="hcards">' + T.rows.map(Stable.card).join('') + '</div>'

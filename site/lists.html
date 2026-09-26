@@ -21,7 +21,7 @@ function rowsTable(d, rows) {
   /* 每個榜單同一組欄位、同一組欄寬：代號、名稱、產業、收盤、今日、這個榜的指標、法人買超、日均成交額。
      法人買的榜單，指標本身就是法人買超，那一欄留「—」而不是整欄拿掉，欄位才對得齊。 */
   var instList = d.extra === '法人買超';
-  return '<div class="scroll"><table class="ltable"><colgroup><col style="width:64px"><col>' +
+  return '<div class="scroll"><table class="ltable stk"><colgroup><col style="width:64px"><col>' +
     '<col style="width:92px"><col style="width:84px"><col style="width:78px"><col style="width:112px">' +
     '<col style="width:86px"><col style="width:92px"></colgroup><thead><tr><th>代號</th><th style="text-align:left">名稱</th>' +
     '<th>產業</th><th>' + App.tip('收盤') + '</th><th>' + App.tip('今日') + '</th>' +
@@ -65,7 +65,7 @@ App.boot('lists', function (meta) {
     if (!d.rows.length) {
       tbl = '<div class="empty"><div class="note">今天沒有符合條件的標的。</div></div>';
     } else if (isEx) {
-      tbl = '<div class="scroll"><table class="ltable"><colgroup><col style="width:64px"><col>' +
+      tbl = '<div class="scroll"><table class="ltable stk"><colgroup><col style="width:64px"><col>' +
         '<col style="width:92px"><col style="width:96px"><col style="width:84px"><col style="width:96px">' +
         '<col style="width:96px"></colgroup><thead><tr><th>代號</th><th style="text-align:left">名稱</th><th>產業</th>' +
         '<th>' + App.tip('除權息日','除權息') + '</th><th>還有</th><th>' +
@@ -98,7 +98,8 @@ App.boot('lists', function (meta) {
 
     document.getElementById('app').innerHTML =
       '<h1 style="font-size:30px;letter-spacing:-.03em;font-weight:500;margin:0 0 4px">' +
-      '其他排行</h1><div class="meta">' + metaline + '</div>' +
+      '其他排行</h1><div class="meta">' + metaline + ' ｜ 共 ' + d.rows.length + ' 筆' +
+      (d.rows_bottom && d.rows_bottom.length ? '（最高、最低各 ' + d.rows_bottom.length + ' 筆）' : '') + '</div>' +
       '<p class="note" style="margin:0">跟短線清單無關、另外整理的名單。名單本身都不是買進建議；' +
       '標題旁的標籤告訴你這份名單「過去照著買有沒有用」。</p>' +
       '<div class="lgrid">' + tabs + '<div class="lmain">' + note +

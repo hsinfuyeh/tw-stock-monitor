@@ -118,10 +118,52 @@ def test_pick(check):
     check("掉出的代號", dropped == ["A"])
 
 
+def test_display(check):
+    print("\n穩定名單的畫面資料")
+    import stable
+    r = {"code": "1111", "atrp14": 0.021, "n_limit20": 0.0, "n_gap20": 1.0, "n_spike20": 0.0,
+         "ret60": 0.12, "margin5": np.nan}
+    ok = {"attention30_status": "ok", "disposal_status": "ok"}
+    c = {x["name"]: x for x in stable.checks(r, {}, ok)}
+    check("燈號帶實際數字", c["波動"]["val"] == "2.1%" and c["跳空"]["val"] == "1 次")
+    check("融資沒資料寫「無資料」，不是 nan", c["融資"]["val"] == "無資料")
+    check("名單都抓到、沒被點名 -> 通過", c["點名"]["ok"] is True)
+    c = {x["name"]: x for x in stable.checks(r, {}, {"attention30_status": "unavailable", "disposal_status": "ok"})}
+    check("注意股名單抓不到 -> 標成不確定（None），不假裝通過", c["點名"]["ok"] is None)
+    c = {x["name"]: x for x in stable.checks(r, {"1111": ["處置股"]}, ok)}
+    check("被點名 -> 不通過", c["點名"]["ok"] is False)
+
+    d = panel([100, 110, 121], k=[1, 1, 1.1])
+    sp = stable.spark(d, "AAA", d["date"].max())
+    check("走勢線是相對今天（還原價）的百分比，最後一點 = 100", sp[-1] == 100.0 and abs(sp[0] - 100 / 133.1 * 100) < 0.1,
+          "{}".format(sp))
+    check("走勢線不含未來的日子", len(stable.spark(d, "AAA", d["date"].iloc[1])) == 2)
+
+
+def test_perf(check):
+    print("\n個股頁：近期表現 vs 大盤")
+    import publish
+    cal = pd.bdate_range("2026-01-01", periods=30)
+    bench = pd.Series(np.arange(100, 130, dtype=float), index=cal)
+    # 個股少了中間 10 天（停牌）：「一週」的起點仍要是市場日曆往回 5 個交易日
+    keep = list(range(0, 10)) + list(range(20, 30))
+    s = pd.DataFrame({"date": cal[keep], "adj": np.arange(100, 130, dtype=float)[keep]})
+    r = {x["label"]: x for x in publish.perf_vs_bench(s, bench)}
+    check("期間依市場交易日曆往回數，不是數個股自己的列數",
+          r["一週"]["stock"] == round((129 / 124 - 1) * 100, 1) and r["一週"]["bench"] == round((129 / 124 - 1) * 100, 1),
+          "{}".format(r["一週"]))
+    check("起點那天停牌 -> 用之前最近的一筆",
+          r["一個月"]["stock"] == round((129 / 109 - 1) * 100, 1) and r["一個月"]["bench"] == round((129 / 109 - 1) * 100, 1),
+          "{}".format(r["一個月"]))
+    check("上市不到那麼久的期間不列", "一季" not in r)
+
+
 def run(check):
     test_labels(check)
     test_features(check)
     test_pick(check)
+    test_display(check)
+    test_perf(check)
 
 
 if __name__ == "__main__":

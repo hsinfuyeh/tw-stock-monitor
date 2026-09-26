@@ -22,6 +22,18 @@ var ST = { '中': 'st-hit', '倒': 'st-fail' };
 function pp(v) { return v == null ? '—' : App.num(v, 1) + '%'; }
 function pt(v) { return v == null ? '—' : '<span class="' + App.cls(v) + '">' + App.num(v, 1, true) + '</span>'; }
 
+/* 每天一格：紅 = 名單贏隨便挑、綠 = 輸、淺灰 = 平手、灰 = 還沒對完答案（台股慣例紅好綠壞） */
+function strip(D) {
+  if (!D.length) return '';
+  var cells = D.slice().reverse().map(function (h) {
+    var c = h.diff == null ? '' : h.diff > 0 ? 'w' : h.diff < 0 ? 'l' : 'e';
+    return '<i class="' + c + '" title="' + h.date + (h.diff == null ? ' 未完' : ' 多出 ' + App.num(h.diff, 1, true)) + '"></i>';
+  }).join('');
+  return '<div class="strip">' + cells + '</div><div class="vs"><div class="key">' +
+    '<span><i style="background:var(--up)"></i>贏隨便挑</span><span><i style="background:var(--dn)"></i>輸</span>' +
+    '<span><i style="background:var(--line2)"></i>還沒對完</span></div></div>';
+}
+
 function count(h, s) { return h.rows.filter(function (r) { return r.status === s; }).length; }
 
 function detail(h) {
@@ -58,9 +70,12 @@ App.boot('history', function (meta) {
       '<dt>多出的' + App.tip('中減倒') + '</dt><dd>' + pt(S.diff) + '</dd>' +
       '<dt>t 值</dt><dd>' + (S.t == null ? '還太少' : App.num(S.t, 2)) + '</dd>' +
       '<dt>進度</dt><dd>' + prog + ' 天</dd></dl></div></div>' +
+      '<div class="prog" title="已對完答案的天數"><i style="width:' + Math.min(100, S.finished / S.target_days * 100).toFixed(1) + '%"></i></div>' +
+      '<div class="mut" style="font-size:12.5px">還要約 ' + Math.max(0, S.target_days - S.finished) + ' 個交易日才滿 ' + S.target_days + ' 天（約 ' +
+      Math.ceil(Math.max(0, S.target_days - S.finished) / 21) + ' 個月）</div>' +
       '<p class="note" style="font-size:13.5px">門檻訂得高，是因為回測用的資料已經被研究過很多次。代價是：就算名單真的有一點優勢，一年內也很可能判不出來。</p></div>' +
-      '<div class="card"><h2>每天的名單</h2>' +
-      (D.length ? '<div class="scroll" data-per="20"><table><thead><tr><th>名單日期</th><th>檔數</th><th>中</th><th>倒</th><th>平</th>' +
+      '<div class="card"><h2>每天的名單</h2>' + strip(D) +
+      (D.length ? '<div class="scroll" data-per="20"><table class="stk"><thead><tr><th>名單日期</th><th>檔數</th><th>中</th><th>倒</th><th>平</th>' +
         '<th>進行中</th><th>穩定池 中／倒</th><th class="sorted">多出的中減倒</th></tr></thead><tbody id="daylist">' +
         D.map(function (h, i) {
           var going = h.n - h.done;

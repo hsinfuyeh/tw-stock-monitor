@@ -27,33 +27,51 @@ function bar(c, cls, txt) {
   return '<div class="statusbar ' + cls + '"><span class="txt">' + txt + '</span></div>';
 }
 
+function heat(v) { return v == null ? '' : v >= 80 ? 'h5' : v >= 60 ? 'h4' : v >= 40 ? 'h3' : v >= 20 ? 'h2' : 'h1'; }
 function scoreTable(T) {
   var F = T.factors;
-  return '<div class="scroll"><table class="pscore"><thead><tr><th>名次</th><th style="text-align:left">股票</th>' +
+  var legend = '<div class="hlegend">顏色越深越好：<i class="h1"></i>0–19<i class="h2"></i>20–39<i class="h3"></i>40–59' +
+    '<i class="h4"></i>60–79<i class="h5"></i>80–100</div>';
+  return legend + '<div class="scroll"><table class="pscore stk"><thead><tr><th style="text-align:left">股票</th>' +
     F.map(function (f) { return '<th><span class="tip" tabindex="0" data-tip="' + App.esc(f.desc) + '">' + App.esc(f.name) + '</span></th>'; }).join('') +
     '<th class="sorted">總分</th></tr></thead><tbody>' +
     T.rows.map(function (r) {
-      return '<tr><td>' + r.rank + '</td><td style="text-align:left"><a href="stock.html?c=' + r.code + '"><strong>' +
+      return '<tr><td style="text-align:left;white-space:nowrap"><span class="rk">' + r.rank + '</span><a href="stock.html?c=' + r.code + '"><strong>' +
         r.code + '</strong></a> ' + App.esc(r.name) + '</td>' +
         F.map(function (f) {
           var v = r.parts[f.key];
-          return '<td class="' + (v >= 80 ? 'hi' : v <= 30 ? 'lo' : '') + '">' + (v == null ? '—' : v) + '</td>';
+          return '<td class="' + heat(v) + '">' + (v == null ? '—' : v) + '</td>';
         }).join('') + '<td class="sorted">' + App.num(r.score, 1) + '</td></tr>';
     }).join('') + '</tbody></table></div>';
 }
 
 function detailTable(T) {
-  return '<div class="scroll"><table><thead><tr><th>名次</th><th>代號</th><th style="text-align:left">名稱</th><th>產業</th>' +
+  return '<div class="scroll"><table class="stk"><thead><tr><th style="text-align:left">股票</th><th>產業</th>' +
     '<th>收盤</th><th>近 20 日</th><th>近 60 日</th><th>' + App.tip('每天震盪', 'ATR') + '</th>' +
     '<th>' + App.tip('日均成交額') + '</th><th>上榜</th><th style="text-align:left">入選原因</th></tr></thead><tbody>' +
     T.rows.map(function (r) {
-      return '<tr><td>' + r.rank + '</td><td><a href="stock.html?c=' + r.code + '"><strong>' + r.code + '</strong></a></td>' +
-        '<td style="text-align:left">' + App.esc(r.name) + '</td><td class="mut">' + App.esc(r.ind || '—') + '</td>' +
+      return '<tr><td style="text-align:left;white-space:nowrap"><span class="rk">' + r.rank + '</span><a href="stock.html?c=' + r.code + '"><strong>' + r.code + '</strong></a> ' +
+        App.esc(r.name) + '</td><td class="mut">' + App.esc(r.ind || '—') + '</td>' +
         '<td>' + Stable.f2(r.close) + '</td><td>' + App.pct(r.ret20, 1) + '</td><td>' + App.pct(r.ret60, 1) + '</td>' +
         '<td>' + App.num(r.atrp, 1) + '%</td><td>' + App.num(r.adtv20, 2) + ' 億</td>' +
         '<td>' + (r.streak <= 1 ? '<span class="nbadge new" style="margin:0">新</span>' : r.streak + ' 天') + '</td>' +
         '<td class="why">' + App.esc((r.why || []).join('；')) + '</td></tr>';
     }).join('') + '</tbody></table></div>';
+}
+
+/* 今天 vs 前一天：新進榜、續留、掉出 */
+function changes(T) {
+  var nw = T.rows.filter(function (r) { return r.streak <= 1; });
+  var stay = T.rows.filter(function (r) { return r.streak > 1; });
+  function link(c, n) { return '<a href="stock.html?c=' + c + '">' + c + ' ' + App.esc(n || '') + '</a>'; }
+  return '<div class="stats">' +
+    '<div class="stat"><h3>新進榜 ' + nw.length + ' 檔</h3><div class="sub">今天才進來</div>' +
+    '<div class="note" style="margin:0;line-height:1.9">' + (nw.map(function (r) { return link(r.code, r.name); }).join('、') || '沒有') + '</div></div>' +
+    '<div class="stat"><h3>續留 ' + stay.length + ' 檔</h3><div class="sub">前一天也在榜上</div>' +
+    '<div class="note" style="margin:0;line-height:1.9">' + (stay.map(function (r) { return link(r.code, r.name) + '（' + r.streak + ' 天）'; }).join('、') || '沒有') + '</div></div>' +
+    '<div class="stat"><h3>掉出 ' + (T.dropped || []).length + ' 檔</h3><div class="sub">' + App.esc(T.prev_day || '前一天') + ' 在榜、今天不在</div>' +
+    '<div class="note" style="margin:0;line-height:1.9"><s>' + ((T.dropped || []).map(function (d) { return link(d.code, d.name); }).join('</s>、<s>') || '') + '</s>' +
+    ((T.dropped || []).length ? '' : '沒有') + '</div></div></div>';
 }
 
 function funnel(T) {
@@ -84,27 +102,23 @@ App.boot('short', function (meta) {
         '；真正的成績看<a href="history.html">名單成績</a>。'
       : '回測（2008–2025）<b>沒有</b>通過淘汰關卡，名單照常列出，但請當成參考。';
 
-    var dropped = T.dropped && T.dropped.length
-      ? '<p class="note" style="font-size:13.5px">' + App.esc(T.prev_day || '前一天') + ' 在榜、今天掉出：' +
-        T.dropped.map(function (d) { return '<a href="stock.html?c=' + d.code + '">' + d.code + ' ' + App.esc(d.name || '') + '</a>'; }).join('、') + '</p>'
-      : '';
-
     document.getElementById('app').innerHTML =
       '<h1 style="font-size:30px;letter-spacing:-.03em;font-weight:500;margin:0 0 4px">今日名單</h1>' +
       '<div class="meta">' + App.esc(T.date) + ' 收盤後 ｜ 穩定強勢股 ' + T.rows.length + ' 檔 ｜ 看的是接下來 10 個交易日</div>' +
       notes.join('') +
-      bar('', 'ok', Stable.baseline(T)) +
+
       bar('', T.passed ? 'ok' : 'warn', verdict) +
       '<div class="card"><h2>今天的 ' + T.rows.length + ' 檔</h2>' +
       '<p class="lead">從成交額前 300 名的上市股票裡，先刷掉波動大、常漲停、常跳空、爆量、已經漲太多、融資暴增和被交易所點名的股票，' +
       '剩下的依 9 個「動能強又穩定」的指標排序。名單不是買賣建議，也不附停利停損。</p>' +
+      Stable.vsBars(T) +
       (T.rows.length ? '<div class="hcards">' + T.rows.map(Stable.card).join('') + '</div>'
-        : '<div class="empty"><div class="note">今天穩定池裡沒有股票。</div></div>') +
-      dropped + '</div>' +
+        : '<div class="empty"><div class="note">今天穩定池裡沒有股票。</div></div>') + '</div>' +
+      '<div class="card"><h2>跟前一天比</h2>' + changes(T) + '</div>' +
       '<div class="card"><h2>名單明細</h2>' + detailTable(T) + '</div>' +
       '<div class="card"><h2>分數怎麼來的</h2>' +
-      '<p class="lead">每個指標都是在今天的穩定池裡排名次，換成 0–100（100 = 池子裡最好）。總分是 9 個指標的平均，' +
-      '權重一律相同 —— 看過結果才調的權重不能用。滑到指標名稱上看說明。</p>' + scoreTable(T) + '</div>' +
+      '<p class="note" style="margin-top:0">分數 85 ＝ 這一項贏過今天穩定池裡 85% 的股票。總分是 9 項的平均，權重一律相同；' +
+      '卡片上的「動能／穩定／籌碼與營收」是各 3 項的平均。滑到指標名稱上看說明。</p>' + scoreTable(T) + '</div>' +
       '<div class="card"><h2>今天刷掉了誰</h2>' + funnel(T) + '</div>';
     App.pager(document.getElementById('app'));
   });

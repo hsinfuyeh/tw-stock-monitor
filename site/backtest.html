@@ -20,10 +20,23 @@ function pp(v) { return v == null ? '—' : App.num(v, 1) + '%'; }
 function pt(v) { return v == null ? '—' : '<span class="' + App.cls(v) + '">' + App.num(v, 1, true) + '</span>'; }
 function tt(v) { return v == null ? '' : '<br><span class="mut" style="font-size:12px">t ' + App.num(v, 2) + '</span>'; }
 
+/* 依名次分組：分數越前面，中得越多、倒得越少，排序才算有用。不是單調的也照實畫。 */
+function tierChart(B) {
+  var T = B.tiers || [];
+  if (!T.length) return '';
+  var mx = Math.max.apply(null, T.map(function (t) { return Math.max(t.hit || 0, t.fail || 0); })) || 1;
+  function w(v) { return (v == null ? 0 : v / mx * 100).toFixed(1); }
+  return '<div class="tiers">' + T.map(function (t, i) {
+    return '<div class="g' + (i === 0 ? ' me' : '') + '"><span>' + App.esc(t.name) + '</span><div class="p">' +
+      '<div><i style="width:' + w(t.hit) + '%;background:var(--up)"></i>中 ' + pp(t.hit) + '</div>' +
+      '<div><i style="width:' + w(t.fail) + '%;background:var(--dn)"></i>倒 ' + pp(t.fail) + '</div></div></div>';
+  }).join('') + '</div>';
+}
+
 function periodTable(B) {
   var rows = Object.keys(B.periods).map(function (k) { return [k, B.periods[k]]; });
   rows.push(['2008–2025 合計', B.all]);
-  return '<div class="scroll"><table><thead><tr><th>期間</th><th>訊號日</th>' +
+  return '<div class="scroll"><table class="stk"><thead><tr><th>期間</th><th>訊號日</th>' +
     '<th>名單 ' + App.tip('中') + '／' + App.tip('倒') + '</th><th>' + App.tip('穩定池') + ' 中／倒</th>' +
     '<th class="sorted">多出的' + App.tip('中減倒') + '</th><th>對「波動相同」的隨機</th><th>每 10 天取一天</th>' +
     '<th>第 10 天平均漲跌<br>名單／池</th></tr></thead><tbody>' +
@@ -62,7 +75,7 @@ function exclTable(B) {
 }
 
 function yearTable(B) {
-  return '<div class="scroll" data-per="20"><table><thead><tr><th>年</th><th>訊號日</th><th>名單 中／倒</th>' +
+  return '<div class="scroll" data-per="20"><table class="stk"><thead><tr><th>年</th><th>訊號日</th><th>名單 中／倒</th>' +
     '<th>穩定池 中／倒</th><th class="sorted">多出的中減倒</th></tr></thead><tbody>' +
     B.years.slice().reverse().map(function (y) {
       return '<tr><td>' + y.year + '</td><td>' + y.days + '</td><td>' + pp(y.hit) + '／' + pp(y.fail) + '</td>' +
@@ -106,6 +119,9 @@ App.boot('backtest', function (meta) {
       App.num(a.pool_fail / 10, 1) + ' 檔。</p>' +
       '<p class="note">也就是說，名單比隨便挑多中了大約 ' + App.num(a.hit - a.pool_hit, 1) + ' 個百分點，倒的只多 ' +
       App.num(a.fail - a.pool_fail, 1) + ' 個。差距是真的（不像運氣），但不大。</p></div>' +
+      '<div class="card"><h2>名次越前面越好嗎？</h2>' +
+      '<p class="note" style="margin-top:0">2008–2025，每天把穩定池依分數排好，分組看 10 天後的結果。' +
+      '如果排序有用，名單（前 10）應該中得最多、倒得最少，越往後越差。</p>' + tierChart(B) + '</div>' +
       '<div class="card"><h2>分期間看</h2>' +
       '<p class="lead">「多出的中減倒」是主要的判斷依據：名單的（中 − 倒）減掉同一天穩定池的（中 − 倒），單位是百分點。' +
       '每一天算一個數字再平均，t 值有考慮相鄰幾天的名單會重疊。</p>' + periodTable(B) + '</div>' +
