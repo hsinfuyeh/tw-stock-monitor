@@ -17,6 +17,9 @@ import pandas as pd
 
 import store
 
+# 每張排行顯示幾檔（使用者要求：參考用的排行一律縮成 10 筆）
+LIST_N = 10
+
 # (代號, 標題, 一句話說明, 分類)
 # 分頁用短標籤（見 TAB_LABEL），完整標題留在內容區的卡片標題。
 # 11 個分頁如果都用完整名稱會塞不下一行，換行後視覺上會散掉。
@@ -91,7 +94,7 @@ def _prev_close(panel, day):
     return dict(zip(p["code"], p["close"]))
 
 
-def run_screen(panel, key, limit=40):
+def run_screen(panel, key, limit=LIST_N):
     """回傳 (DataFrame, 額外欄位名稱, 額外欄位標題)。"""
     day, dt_ = _latest(panel)
     prev = _prev_close(panel, dt_)
@@ -163,7 +166,7 @@ def run_screen(panel, key, limit=40):
     return day.head(0), None, None
 
 
-def upcoming_exdiv(panel, days=60, limit=60):
+def upcoming_exdiv(panel, days=60, limit=LIST_N):
     """未來 N 天內除權息的標的。這是行事曆，不是預測。"""
     today = pd.Timestamp(dt.date.today())
     try:
@@ -266,7 +269,7 @@ for _k in ['inst', 'instout']:
 del _k
 
 
-def score_rows(panel, limit=25):
+def score_rows(panel, limit=LIST_N):
     """綜合評分榜：分數最高與最低各 limit 檔。
 
     這個榜單的資料來源本來只存在於 server.py 的路由裡，所以 run_screen

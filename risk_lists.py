@@ -139,6 +139,22 @@ def fetch(date, use_cache=True):
     return out
 
 
+def recent_attention(date, days=30):
+    """近 days 個日曆日內曾被列為注意股的代號（穩定強勢股名單的排除，第 11 輪）。
+
+    注意股是交易所用自己的標準點名「價量異常」的股票，等於官方幫忙篩一次疑似炒作。
+    抓不到回傳 (None, 錯誤訊息)，呼叫端要照實標示，不能當成「沒有注意股」。"""
+    end = dt.date.fromisoformat(date)
+    start = end - dt.timedelta(days=days)
+    try:
+        j = _get("/rwd/zh/announcement/notice",
+                 {"querytype": "1", "startDate": start.strftime("%Y%m%d"),
+                  "endDate": end.strftime("%Y%m%d")})
+        return parse_notice(j), None
+    except Exception as e:
+        return None, str(e)[:200]
+
+
 def unknown(date):
     """補算的舊日子：沒有當時的名單，照實標成 unknown。"""
     return {"date": date, "disposal": [], "attention": [], "full_delivery": [],

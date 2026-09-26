@@ -15,7 +15,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
    原本這裡抄了一份 GROUPS，新增榜單時只改到 Python 那邊，
    靜態站的分頁就少一個 —— 而且不會報錯，只是那個榜單消失。 */
 
-/* 表格產生抽成函式：綜合評分要畫兩張（分數最高 / 最低 25 名），
+/* 表格產生抽成函式：綜合評分要畫兩張（分數最高 / 最低 10 名），
    兩張欄位完全一樣，複製一份遲早會有人只改到其中一張。 */
 function rowsTable(d, rows) {
   /* 每個榜單同一組欄位、同一組欄寬：代號、名稱、產業、收盤、今日、這個榜的指標、法人買超、日均成交額。
@@ -89,10 +89,10 @@ App.boot('lists', function (meta) {
         d.note[1] + '</span><span class="more" data-for="nx">為什麼？</span></div>' +
         '<div class="expand" id="nx">' + d.note[2] + '</div>';
     }
-    /* 綜合評分有第二張表（分數最低 25 名） */
+    /* 綜合評分有第二張表（分數最低 10 名） */
     var tbl2 = '';
     if (d.rows_bottom && d.rows_bottom.length) {
-      tbl2 = '<h3 style="font-size:15px;margin:26px 0 8px">分數最低 25 名</h3>' +
+      tbl2 = '<h3 style="font-size:15px;margin:26px 0 8px">分數最低 10 名</h3>' +
         rowsTable(d, d.rows_bottom);
     }
 
@@ -104,7 +104,7 @@ App.boot('lists', function (meta) {
       '<div class="lgrid">' + tabs + '<div class="lmain">' + note +
       '<div class="card"><h2>' + App.esc(d.title) + App.listBadge(meta, key) + '</h2>' +
       '<p class="lead">' + d.desc + '</p>' +
-      (tbl2 ? '<h3 style="font-size:15px;margin:0 0 8px">分數最高 25 名</h3>' : '') +
+      (tbl2 ? '<h3 style="font-size:15px;margin:0 0 8px">分數最高 10 名</h3>' : '') +
       tbl + tbl2 + '</div></div></div>';
 
     /* 可展開的警語細節 */

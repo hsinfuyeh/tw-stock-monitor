@@ -7,246 +7,127 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:wght@400;500&display=swap">
 <link rel="stylesheet" href="assets/style.css">
-<title>回測報告</title></head><body>
+<title>回測報告</title>
+</head><body>
 <div class="wrap" id="app"></div>
 <script src="assets/app.js"></script>
 <script>
-/* 回測報告（stock-screener-PRD：回測）。
+/* 回測報告：穩定強勢股名單（stable/backtest.json，RESEARCH_LOG 第 11 輪）。
  *
- * 公開網站顯示預設參數的結果（publish 時算好）。在本機開的話，
- * 可以拿「今日清單」頁調整過的參數（存在這台瀏覽器）即時回測。 */
-function f2(v) { return Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-function money(v) { return v == null ? '—' : App.pct(v); }
+ * 讀法寫在頁面上：2008–2026 的資料已經被前 10 輪研究看過很多次，
+ * 回測只能當「淘汰關卡」—— 過不了就不該信，過了也不代表有效。 */
+function pp(v) { return v == null ? '—' : App.num(v, 1) + '%'; }
+function pt(v) { return v == null ? '—' : '<span class="' + App.cls(v) + '">' + App.num(v, 1, true) + '</span>'; }
+function tt(v) { return v == null ? '' : '<br><span class="mut" style="font-size:12px">t ' + App.num(v, 2) + '</span>'; }
 
-function statBox(title, sub, s) {
-  if (!s || !s.n) return '<div class="stat"><h3>' + title + '</h3><div class="sub">沒有交易</div></div>';
-  var ex = s.exits || {};
-  return '<div class="stat"><h3>' + title + '</h3><div class="sub">' + sub + '</div><dl>' +
-    '<dt>選出日期</dt><dd>' + s.start + ' ~ ' + s.end + '</dd>' +
-    '<dt>交易筆數</dt><dd>' + s.n.toLocaleString() + '</dd>' +
-    '<dt>賺錢的比例</dt><dd>' + App.num(s.win, 1) + '%</dd>' +
-    '<dt>平均每筆報酬</dt><dd>' + money(s.avg) + '</dd>' +
-    '<dt>同期間買 0050</dt><dd>' + money(s.bench) + '</dd>' +
-    '<dt><b>' + App.tip('贏過 0050') + '</b></dt><dd>' + money(s.excess) + '</dd>' +
-    '<dt>單筆最大虧損</dt><dd>' + money(s.worst) + '</dd>' +
-    '<dt>進場後最高曾漲 5.6%</dt><dd>' + (s.p5 == null ? '—' : App.num(s.p5, 1) + '%') + '</dd>' +
-    '<dt>最高漲到（中位數）</dt><dd>' + (s.mfe_med == null ? '—' : App.num(s.mfe_med, 1, true) + '%') + '</dd>' +
-    '<dt>最低跌到（中位數）</dt><dd>' + (s.mae_med == null ? '—' : App.num(s.mae_med, 1, true) + '%') + '</dd>' +
-    '<dt>' + App.tip('可信度') + '</dt><dd>' + (s.t == null ? '—' : App.num(s.t, 1, true)) + '</dd>' +
-    '<dt>出場原因</dt><dd class="mut" style="font-weight:300">停損 ' + (ex['停損'] || 0).toLocaleString() +
-    (ex['達標'] ? '・達標 ' + ex['達標'].toLocaleString() : '') +
-    '・時間到 ' + (ex['時間'] || 0).toLocaleString() + '</dd>' +
-    '<dt>平均持有</dt><dd>' + App.num(s.hold_avg, 1) + ' 天</dd></dl></div>';
+function periodTable(B) {
+  var rows = Object.keys(B.periods).map(function (k) { return [k, B.periods[k]]; });
+  rows.push(['2008–2025 合計', B.all]);
+  return '<div class="scroll"><table><thead><tr><th>期間</th><th>訊號日</th>' +
+    '<th>名單 ' + App.tip('中') + '／' + App.tip('倒') + '</th><th>' + App.tip('穩定池') + ' 中／倒</th>' +
+    '<th class="sorted">多出的' + App.tip('中減倒') + '</th><th>對「波動相同」的隨機</th><th>每 10 天取一天</th>' +
+    '<th>第 10 天平均漲跌<br>名單／池</th></tr></thead><tbody>' +
+    rows.map(function (x) {
+      var s = x[1];
+      if (!s) return '<tr><td>' + x[0] + '</td><td colspan="7" class="mut">沒有資料</td></tr>';
+      return '<tr><td>' + x[0] + (x[0] === '2026' ? '<br><span class="mut" style="font-size:12px">只看一次</span>' : '') + '</td>' +
+        '<td>' + s.days.toLocaleString() + '</td>' +
+        '<td>' + pp(s.hit) + '／' + pp(s.fail) + '</td><td class="mut">' + pp(s.pool_hit) + '／' + pp(s.pool_fail) + '</td>' +
+        '<td class="sorted">' + pt(s.diff) + tt(s.t) + '</td><td>' + pt(s.diff_c2) + tt(s.t_c2) + '</td>' +
+        '<td>' + pt(s.diff_sub) + tt(s.t_sub) + '</td>' +
+        '<td>' + App.pct(s.r10, 2) + '／' + App.pct(s.pool_r10, 2) + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
 }
 
-function verdict(bt) {
-  var a = bt.all, r = bt.recent;
-  var pass = a.excess > 0 && r.excess > 0;
-  var strong = a.t != null && Math.abs(a.t) >= 2;
-  var flat = a.t != null && Math.abs(a.t) < 2;
-  var txt = pass
-    ? '<b>預設參數兩段回測都贏 0050</b>：整段歷史平均每筆多賺 ' + App.num(a.excess, 2) +
-      '%，近 60 日多賺 ' + App.num(r.excess, 2) + '%。'
-    : flat
-    ? '<b>跟直接買 0050 差不多</b>：整段歷史（' + a.n.toLocaleString() + ' 筆）平均每筆' +
-      (a.excess < 0 ? '少賺 ' : '多賺 ') + App.num(Math.abs(a.excess), 2) +
-      '%，這個差距在統計上和 0 分不出來。也就是說<b>沒有證據能贏過直接買 0050</b>，' +
-      '但也不像舊版那樣穩定地輸（舊版用固定 7% 停損時是每筆少賺 0.34%，而且不像巧合）。'
-    : '<b>預設參數還沒通過 PRD 的驗收標準</b>：扣掉手續費和稅之後，' +
-      '整段歷史（' + a.n.toLocaleString() + ' 筆）平均每筆比 0050 ' +
-      (a.excess < 0 ? '少賺 ' : '多賺 ') + App.num(Math.abs(a.excess), 2) + '%' +
-      (strong ? '，而且差距大到不像巧合' : '') + '；近 60 日 ' +
-      (r.excess < 0 ? '少賺 ' : '多賺 ') + App.num(Math.abs(r.excess), 2) + '%。' +
-      '下面的「拆開來看」可以看出問題出在哪。';
-  return '<div class="statusbar ' + (pass ? 'ok' : 'bad') + '"><span class="txt">' + txt + '</span></div>';
+function controls(B) {
+  var a = B.all || {};
+  var L = [['名單（前 10 檔）', a.net],
+           ['穩定池隨便挑', a.c1], ['穩定池、波動相同的隨機', a.c2],
+           ['穩定池裡 20 日漲最多的 10 檔', a.c3], ['穩定池裡波動最大的 10 檔', a.c4],
+           ['排除之前（成交額前 300 名）隨便挑', a.c5]];
+  return '<div class="scroll"><table><thead><tr><th style="text-align:left">挑法（2008–2025）</th><th class="sorted">中減倒</th></tr></thead><tbody>' +
+    L.map(function (x, i) {
+      return '<tr><td style="text-align:left">' + (i === 0 ? '<b>' + x[0] + '</b>' : x[0]) + '</td><td class="sorted">' + pt(x[1]) + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
 }
 
-function simpleTable(head, rows) {
-  return '<div class="scroll"><table><thead><tr>' + head.map(function (h, i) {
-    return '<th' + (h[1] ? ' class="sorted"' : '') + '>' + h[0] + '</th>';
-  }).join('') + '</tr></thead><tbody>' + rows.join('') + '</tbody></table></div>';
+function exclTable(B) {
+  return '<div class="scroll"><table><thead><tr><th style="text-align:left">排除規則</th><th>每天平均刷掉</th>' +
+    '<th>被刷掉那批的中</th><th>被刷掉那批的倒</th></tr></thead><tbody>' +
+    B.exclusions.map(function (e) {
+      var strong = e.key === 'kept' || e.key === 'all';
+      return '<tr><td style="text-align:left">' + (strong ? '<b>' + App.esc(e.name) + '</b>' : App.esc(e.name)) + '</td>' +
+        '<td>' + App.num(e.per_day, 1) + ' 檔</td><td>' + pp(e.hit) + '</td><td>' + pp(e.fail) + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
 }
 
-function runCustom(P) {
-  var btn = document.getElementById('prun'), box = document.getElementById('custom');
-  btn.disabled = true; btn.textContent = '回測中…（第一次約 30 秒）';
-  fetch('api/short/backtest', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(P)
-  }).then(function (r) {
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return r.json();
-  }).then(function (j) {
-    box.innerHTML = '<div class="stats" style="margin-top:14px">' +
-      statBox('近 60 個交易日', '你的參數', j.recent) +
-      statBox('整段歷史', '你的參數', j.all) + '</div>';
-  }).catch(function (e) {
-    box.innerHTML = '<div class="statusbar warn"><span class="txt">回測失敗：' + App.esc(e.message) +
-      '。這個功能要在本機用 dashboard.bat 開啟才能用。</span></div>';
-  }).then(function () { btn.disabled = false; btn.textContent = '用我的參數回測'; });
+function yearTable(B) {
+  return '<div class="scroll" data-per="20"><table><thead><tr><th>年</th><th>訊號日</th><th>名單 中／倒</th>' +
+    '<th>穩定池 中／倒</th><th class="sorted">多出的中減倒</th></tr></thead><tbody>' +
+    B.years.slice().reverse().map(function (y) {
+      return '<tr><td>' + y.year + '</td><td>' + y.days + '</td><td>' + pp(y.hit) + '／' + pp(y.fail) + '</td>' +
+        '<td class="mut">' + pp(y.pool_hit) + '／' + pp(y.pool_fail) + '</td><td class="sorted">' + pt(y.diff) + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
 }
 
-/* 第 9 輪：五個改進方案（RESEARCH_LOG 事前登記）。回測只是記錄，
-   方案 1–4 是看過全部歷史才想到的，回測一定偏樂觀；真正的判定在策略追蹤。 */
-function r9Card(bt) {
-  var R = bt.round9;
-  if (!R || !R.length) return '';
-  var names = ['2008–2018', '2019–2025', '2026'];
-  function cell(p) { return p ? money(p.excess) + '<br><span class="mut" style="font-size:12px">t ' + App.num(p.t, 1, true) + '・' + p.n.toLocaleString() + ' 筆</span>' : '<span class="mut">沒有交易</span>'; }
-  var rows = R.map(function (r, i) {
-    var verdict = i === 0 ? '<span class="mut">比較基準</span>' :
-      r.support == null ? '<span class="mut">' + App.esc(r.note || '資料不足') + '</span>' :
-      (r.better ? '<span class="up">兩段都比 Arm 0 好</span>' : '<span class="mut">沒有兩段都比較好</span>') +
-      (r.support ? '<br><b class="up">回測支持</b>' : '');
-    return '<tr' + (i === 0 ? ' style="font-weight:500"' : '') + '><td style="text-align:left">' + App.esc(r.label) + '</td>' +
-      names.map(function (n) { return '<td>' + cell(r.periods[n]) + '</td>'; }).join('') +
-      '<td class="sorted">' + money(r.excess) + '<br><span class="mut" style="font-size:12px">t ' + App.num(r.t, 1, true) + '</span></td>' +
-      '<td style="text-align:left;font-size:13px">' + verdict + '</td></tr>';
-  });
-  return '<div class="card" id="r9"><h2>五個改進方案（第 9 輪）</h2>' +
-    '<p class="lead">每個方案都是在網站預設（Arm 0）上只改一件事，數字是每筆比同期 0050 多賺或少賺多少（已扣手續費和稅）。' +
-    '五個方案也在<a href="history.html">策略追蹤</a>裡從 2026-09-23 起紙上跑（Arm 4–8），那邊的結果才是真正的判定。</p>' +
-    simpleTable([['方案', 0], ['2008–2018', 0], ['2019–2025', 0], ['2026', 0], ['全期', 1], ['回測怎麼說', 0]], rows) +
-    '<ul class="note" style="margin-top:14px">' +
-    '<li><b>方案 1–4 的回測偏樂觀</b>：它們是看過 2008–2026 全部資料的拆解之後才想到的，沒有一段是「沒看過的資料」。</li>' +
-    '<li><b>模型選股</b>的回測是真的樣本外：預測某一年只用那年以前的資料訓練。但它很少有把握（機率 ≥ 50% 的只佔 1% 左右），所以交易少。</li>' +
-    '<li><b>只看月營收</b>：月營收資料 2018 年才有，所以 2008–2018 沒有交易，只能看 2019 年後。</li>' +
-    '<li>「回測支持」= 2008–2018 與 2019–2025 兩段都贏 0050，而且全期可信度 ≥ 2（事前登記的標準）。</li></ul></div>';
+function sensTable(B) {
+  return '<div class="scroll"><table><thead><tr><th style="text-align:left">改一個設定</th><th>名單 中／倒</th>' +
+    '<th class="sorted">多出的中減倒（2008–2025）</th></tr></thead><tbody>' +
+    [{ label: '現在的設定', all: B.all }].concat(B.sensitivity).map(function (s) {
+      var a = s.all || {};
+      return '<tr><td style="text-align:left">' + App.esc(s.label) + '</td><td>' + pp(a.hit) + '／' + pp(a.fail) + '</td>' +
+        '<td class="sorted">' + pt(a.diff) + tt(a.t) + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
 }
 
-function customCard(today) {
-  var DEF = {}, P = {}, changed = [];
-  today.params.forEach(function (x) { DEF[x.key] = x.default; P[x.key] = x.default; });
-  try {
-    var s = JSON.parse(localStorage.getItem('short_params') || '{}');
-    Object.keys(s).forEach(function (k) { if (k in P && !isNaN(s[k])) P[k] = +s[k]; });
-  } catch (e) {}
-  today.params.forEach(function (x) {
-    if (+P[x.key] !== +DEF[x.key])
-      changed.push(App.esc(x.group + ' ' + x.label) + ' ' + DEF[x.key] + ' → <b>' + P[x.key] + '</b> ' + App.esc(x.unit));
-  });
-  var body = !changed.length
-    ? '<p class="note">你目前用的是預設參數，結果就是上面那兩格。想試別的條件，' +
-      '先到<a href="short.html">今日清單</a>打開「調整條件與參數」修改，再回來這裡。</p>'
-    : '<p class="note">你在「今日清單」調整過這些參數：<br>' + changed.join('<br>') + '</p>' +
-      (App.local
-        ? '<div class="pbar"><button class="btn dark" id="prun" type="button">用我的參數回測</button></div>'
-        : '<p class="note">公開網站沒有後端可以即時回測，這個功能要在本機（dashboard.bat）開啟才能用。</p>');
-  return { html: '<div class="card"><h2>用你的參數回測</h2>' + body + '<div id="custom"></div></div>', P: P };
+function recentTable(B) {
+  return '<div class="scroll" data-per="20"><table><thead><tr><th>名單日期</th><th>檔數</th><th>名單 中／倒</th>' +
+    '<th>穩定池 中／倒</th><th class="sorted">多出的中減倒</th></tr></thead><tbody>' +
+    B.recent.map(function (r) {
+      return '<tr><td>' + r.date + '</td><td>' + r.n + '</td><td>' + pp(r.hit) + '／' + pp(r.fail) + '</td>' +
+        '<td class="mut">' + pp(r.pool_hit) + '／' + pp(r.pool_fail) + '</td><td class="sorted">' + pt(r.diff) + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
 }
 
 App.boot('backtest', function (meta) {
-  return Promise.all([App.get('short/backtest.json'), App.get('short/today.json')]).then(function (res) {
-    var bt = res[0], today = res[1];
-    var hold = today.params.filter(function (x) { return x.key === 'hold_days'; })[0].default;
-    var topn = today.params.filter(function (x) { return x.key === 'top_n'; })[0].default;
-
-    var abl = simpleTable([['設定'], ['筆數'], ['賺錢比例'], ['平均報酬'], ['同期 0050'], ['贏過 0050', 1], ['可信度']],
-      bt.ablation.map(function (a) {
-        return '<tr><td>' + App.esc(a.label) + '</td><td class="mut">' + (a.n || 0).toLocaleString() +
-          '</td><td>' + App.num(a.win, 1) + '%</td><td>' + money(a.avg) + '</td><td>' +
-          money(a.bench) + '</td><td class="sorted">' + money(a.excess) + '</td><td>' +
-          (a.t == null ? '—' : App.num(a.t, 1, true)) + '</td></tr>';
-      }));
-    var yrs = simpleTable([['年度'], ['筆數'], ['賺錢比例'], ['平均報酬'], ['同期 0050'], ['贏過 0050', 1]],
-      bt.years.map(function (y) {
-        return '<tr><td>' + y.year + '</td><td class="mut">' + y.n.toLocaleString() + '</td><td>' +
-          App.num(y.win, 1) + '%</td><td>' + money(y.avg) + '</td><td>' + money(y.bench) +
-          '</td><td class="sorted">' + money(y.excess) + '</td></tr>';
-      }));
-    var trades = '<div class="scroll"><table><thead><tr>' + bt.trade_cols.map(function (c, i) {
-      return '<th' + (i === 16 ? ' class="sorted"' : '') + '>' + c + '</th>';
-    }).join('') + '</tr></thead><tbody>' + bt.trades.map(function (t) {
-      return '<tr>' + t.map(function (v, i) {
-        if (i === 1) return '<td><a href="stock.html?c=' + v + '">' + v + '</a></td>';
-        if (i >= 14) return '<td' + (i === 16 ? ' class="sorted"' : '') + '>' + money(v) + '</td>';
-        if (i === 4 || i === 13) return '<td>' + App.num(v, 0) + '</td>';
-        if (typeof v === 'number') return '<td>' + f2(v) + '</td>';
-        return '<td' + (i === 2 ? '' : ' class="mut"') + '>' + App.esc(v) + '</td>';
-      }).join('') + '</tr>';
-    }).join('') + '</tbody></table></div>';
-
-    var cc = customCard(today);
+  return App.get('stable/backtest.json').then(function (B) {
+    var a = B.all || {};
+    var verdict = B.passed
+      ? '<b>通過淘汰關卡</b>：兩段期間名單都比穩定池隨便挑好、也比「波動相同的隨機」好，合計 t ' + App.num(a.t, 1) + '（門檻 3）。' +
+        '但這些年份的資料之前已經被研究過很多次，通過只代表「跟歷史不矛盾」，不代表有效 —— 真正的成績看<a href="history.html">名單成績</a>。'
+      : '<b>沒有通過淘汰關卡</b>（事前寫好的標準：兩段期間都要比穩定池好、合計 t ≥ 3、也要比波動相同的隨機好）。名單照常列出，但請當成參考。';
     document.getElementById('app').innerHTML =
       '<h1 style="font-size:30px;letter-spacing:-.03em;font-weight:500;margin:0 0 4px">回測報告</h1>' +
-      '<div class="meta">資料截止 ' + App.esc(bt.date) + ' ｜ 用今日清單的規則（預設參數），回頭看過去照著買會怎樣</div>' +
-      '<div class="card"><h2>怎麼測的</h2>' +
-      '<ul class="note">' +
-      '<li>每天收盤後取當天清單的前 ' + topn + ' 名，<b>隔天開盤買進</b>。</li>' +
-      '<li>漲到目標價（賣掉之後淨賺 5%）就賣、跌到停損價（進場價 − 3 × ATR）也賣，' +
-      '兩邊都沒碰到就抱滿 ' + hold + ' 個交易日。目標與停損都用<b>實際成交價</b>（隔天開盤）算。</li>' +
-      '<li>每筆扣掉手續費和稅 ' + bt.cost + '%，股利也算進去。</li>' +
-      '<li>跟同一段時間買 0050 比（0050 也扣手續費和稅 ' + bt.etf_cost.toFixed(3) + '%）。</li></ul>' +
-      '<details><summary>為什麼是隔天開盤買、不是當天收盤</summary><div class="inner note">' +
-      'PRD 寫的進場價是當天收盤價，今日清單上也照這樣顯示。但實際上做不到：' +
-      '三大法人的買賣資料下午 3 點後才公布，拿到清單時當天已經收盤了。' +
-      '所以回測用隔天開盤價，才是真的買得到的價格。隔天一開盤就鎖漲停買不到的，不算這筆。' +
-      '同一天盤中同時碰到停損和目標的，算停損（不知道哪個先發生，取保守）。</div></details></div>' +
-      verdict(bt) +
-      '<div class="stats" style="margin-top:18px">' +
-      statBox('近 60 個交易日', 'PRD 指定的回測區間', bt.recent) +
-      statBox('整段歷史', '同一套規則，樣本多 30 倍', bt.all) + '</div>' +
-      '<details><summary>為什麼要看兩段</summary><div class="inner note">' +
-      '<p>同一天選出的 20 檔常常一起漲跌，前後幾天的交易又互相重疊，' +
-      '所以 60 個交易日實際上只相當於大約 <b>6 次獨立的觀察</b> —— 近 60 日贏或輸 0050，' +
-      '很大一部分只是那兩個月大盤剛好怎麼走。整段歷史用同一套規則、樣本多 30 倍，' +
-      '才分得出是規則的效果還是運氣。</p>' +
-      '<p>也因為這樣，<b>不建議一直調參數調到近 60 日贏 0050</b> —— 樣本這麼少，總調得出一組贏的，' +
-      '但那是把過去的巧合背下來，不是找到規則。調完請看整段歷史有沒有跟著變好。</p></div></details>' +
-      (App.local ? cc.html : '') + r9Card(bt) +
-      '<div class="card"><h2>這些規則是怎麼定出來的</h2>' +
-      '<p class="lead">2026-09 依一份研究規格重做了一輪驗證：先寫好假設，再一次測完 23 種選股組合 × 7 種停損，' +
-      '好壞結果都記在 repo 的 RESEARCH_LOG.md。三個主要結論：</p>' +
-      '<ul class="note">' +
-      '<li><b>停損越緊、結果越差</b>，每個策略、每個期間都一樣。台股個股平常一天就會波動 2–3%，' +
-      '固定 3% 的停損等於把日常波動變成實現的虧損（先碰停損的比例 53–68%，平均只抱 1–3 天）。' +
-      '所以改成「收盤 − 3 × ATR」，距離跟著個股自己的波動走。</li>' +
-      '<li><b>波動門檻（ATR% ≥ 2.5%）：只對達標率有效，對報酬沒有證據。</b>' +
-      '它在每個年代都讓「先賺到 5%」的比例上升（2008–18：44.6%→51.1%，2019–25：50.5%→58.2%），' +
-      '但對 0050 的報酬是 2019 年後變好、2008–2018 反而更差，<b>方向相反</b>。' +
-      '這個門檻當初是只用 2019–2022 的資料挑出來的，補上 11 年更早的資料就不成立了 —— ' +
-      '典型的「只在近期有效」。留著是因為達標率那一項在各年代一致，但不該當成它能提高報酬。</li>' +
-      '<li><b>設 5% 目標是有代價的，而且這個代價很明確</b>：達標率 64%（看起來很漂亮），' +
-      '但平均每筆比 0050 少賺 0.42%，而且統計上不是巧合（t = −3.5）。' +
-      '不設目標的話，平均每筆跟 0050 差不多（+0.03%）。停損從 1×ATR 放寬到完全不停損全部測過，' +
-      '只要設目標那一排永遠是負的 —— 因為賺多的那幾筆被上限砍掉，虧的卻沒有對稱的限制。' +
-      '下面「拆開來看」的「預設，但不設目標價」那一列就是關掉之後的結果。</li>' +
-      '<li><b>選股有一點效果，但不足以贏過 0050</b>：清單贏得過「當天平均的個股」，' +
-      '可是平均個股本來就輸給 0050。</li>' +
-      '<li><b>2026-09 把資料補到 2008（18 年、67,128 筆交易）之後，結論沒有改變，反而更確定</b>：' +
-      '對 0050 是每筆少賺 0.44%，而且 2008–2018 那 11 年完全沒有參與過任何調參，' +
-      '數字卻跟後來的期間一致。多出來的 6 次空頭（2008、2011、2015、2018、2020、2022）' +
-      '也把幾個原本「看起來有一點效果」的做法打回原形。</li></ul>' +
-      '<p class="note"><b>看逐年表時要注意</b>：三大法人的資料 2012 年 5 月才有，' +
-      '所以 2008–2012 那幾年「法人連續買超」這個條件永遠不成立，' +
-      '清單只能靠其他三個條件選股。那幾年的數字偏差，不能直接當成' +
-      '「這套規則在金融海嘯時特別糟」。</p></div>' +
-      '<div class="card"><h2>換成真的一筆本金來算</h2>' +
-      '<p class="lead">上面的數字是「每一筆平均」。實際上錢有限：同時只能抱幾檔、每檔只能放一部分。' +
-      '2026-09 的第 8 輪研究用規範 v1 的資金規則（最多同時 3 檔、每筆碰到停損只賠本金 0.5%、' +
-      '一天最多新買 1 檔、單檔最多 20%），從 2008 年起每天照清單模擬一筆本金：</p>' +
-      simpleTable([['', 0], ['年化報酬', 1], [App.tip('最大回落'), 0], ['10 日報酬為正', 0], [App.tip('平均持股比重'), 0]], [
-        '<tr><td style="text-align:left">買進持有 0050</td><td class="sorted">' + App.pct(14.0, 1) + '</td><td>−52.4%</td><td>58.4%</td><td>100%</td></tr>',
-        '<tr><td style="text-align:left">Arm 0 現行版（設 5% 目標）</td><td class="sorted">' + App.pct(-3.1, 1) + '</td><td>−45.0%</td><td>45.6%</td><td>13.0%</td></tr>',
-        '<tr><td style="text-align:left">Arm 1 不設目標</td><td class="sorted">' + App.pct(0.7, 1) + '</td><td>−26.9%</td><td>46.1%</td><td>15.3%</td></tr>']) +
-      '<ul class="note" style="margin-top:14px">' +
-      '<li><b>現行版在 32 種資金設定下全部是負的年化報酬</b>（−3.1% 到 −22.4%）。' +
-      '每筆期望值是負的時候，風險放多大只是決定虧多快。</li>' +
-      '<li>組合平常只有約 13–15% 的錢在股票上，所以就算規則有效，也不可能在多頭時追上 100% 持有的 0050。' +
-      '這個規模是規範刻意選的「學費」：先用小錢看清楚規則準不準。</li>' +
-      '<li>18 年來贏不過 0050 不代表以後一定贏不過，所以從 2026-09-22 起用同一套資金規則' +
-      '<a href="history.html">往前紙上實測</a>四個版本，第 120、250 個交易日判定。</li></ul>' +
-      '<p class="note" style="font-size:13.5px">完整數字與限制（沒測滑價、M4 反轉沒做組合模擬）在 repo 的 RESEARCH_LOG.md 第 8 輪。</p></div>' +
-      '<div class="card"><h2>拆開來看</h2>' +
-      '<p class="lead">整段歷史。每個條件單獨用、以及拿掉停損停利，看虧損是出在「選股」還是「賣出規則」。</p>' +
-      abl + '</div>' +
-      '<div class="card"><h2>每一年</h2><p class="lead">整段歷史，依選出的年份分開算。</p>' + yrs + '</div>' +
-      '<div class="card"><h2>近 60 日每一筆交易</h2>' +
-      '<p class="lead">可以挑幾筆用看盤軟體對照：進場日開盤價、停損與目標價、出場日與出場價。</p>' +
-      trades + '</div>';
-
+      '<div class="meta">穩定強勢股名單 ｜ 資料到 ' + App.esc(B.date) + ' ｜ 訊號日 ' + (a.start || '') + ' ~ ' + (a.end || '') + '</div>' +
+      '<div class="statusbar ' + (B.passed ? 'ok' : 'warn') + '"><span class="txt">' + verdict + '</span></div>' +
+      '<div class="card"><h2>一句話</h2>' +
+      '<p style="font-size:17px;line-height:1.7;margin:0">過去 18 年，名單每 10 檔平均約 <b>' + App.num(a.hit / 10, 1) + ' 檔</b>在 10 個交易日內收盤漲到 5%，' +
+      '約 ' + App.num(a.fail / 10, 1) + ' 檔先跌到 −5%。從同一個穩定池隨便挑，是 ' + App.num(a.pool_hit / 10, 1) + ' 檔對 ' +
+      App.num(a.pool_fail / 10, 1) + ' 檔。</p>' +
+      '<p class="note">也就是說，名單比隨便挑多中了大約 ' + App.num(a.hit - a.pool_hit, 1) + ' 個百分點，倒的只多 ' +
+      App.num(a.fail - a.pool_fail, 1) + ' 個。差距是真的（不像運氣），但不大。</p></div>' +
+      '<div class="card"><h2>分期間看</h2>' +
+      '<p class="lead">「多出的中減倒」是主要的判斷依據：名單的（中 − 倒）減掉同一天穩定池的（中 − 倒），單位是百分點。' +
+      '每一天算一個數字再平均，t 值有考慮相鄰幾天的名單會重疊。</p>' + periodTable(B) + '</div>' +
+      '<div class="card"><h2>跟其他挑法比</h2>' +
+      '<p class="lead">如果名單只是剛好挑到波動比較大的股票，「波動相同的隨機」就會跟它一樣好；如果只是追漲，「20 日漲最多」就會一樣好。' +
+      '兩個都比名單差，代表排序真的有用到別的東西。</p>' + controls(B) + '</div>' +
+      '<div class="card"><h2>排除規則的代價</h2>' +
+      '<p class="lead">被刷掉的股票，中的比例其實比較高，但倒的比例更高 —— 排除規則就是拿「比較不會中」換「比較不會倒」，' +
+      '這是你要的「穩定」，不是預測能力。</p>' + exclTable(B) + '</div>' +
+      '<div class="card"><h2>每一年</h2>' + yearTable(B) + '</div>' +
+      '<div class="card"><h2>換個設定會怎樣</h2>' +
+      '<p class="lead">只是記錄，不拿來挑設定 —— 看了結果再換成最好看的那組，就是在背答案。方向都一樣，代表結果不是剛好卡在這組數字上。</p>' +
+      sensTable(B) + '</div>' +
+      '<div class="card"><h2>最近 60 個已經對完答案的名單</h2>' + recentTable(B) + '</div>' +
+      '<div class="card"><h2>怎麼算的</h2><div class="note" style="line-height:1.9">' +
+      '<b>評分標準</b>：名單公布後，用隔天開盤價當起點，接下來 10 個交易日逐日看收盤（除權息還原）。' +
+      '先有一天收盤漲到 +5% 算「中」、先跌到 −5% 算「倒」、都沒有算「平」。隔天開盤一字漲停買不到的不算；持有期間停牌或下市算「倒」。<br>' +
+      '<b>回測沒套的排除</b>：處置股、近 30 日注意股、全額交割股沒有歷史名單，只在每天的名單套用。<br>' +
+      '<b>已知限制</b>：產業分類用的是現在的分類（只影響「同產業最多 3 檔」）；三大法人 2012 年 5 月才有資料，之前的法人分數一律給中間值；' +
+      '2015 年 6 月以前漲跌幅是 7%，漲停判斷有跟著改。<br>' +
+      '<b>事前登記</b>：所有規則、門檻、判定標準都在看到結果之前寫進研究紀錄（RESEARCH_LOG.md 第 11 輪），跑完之後沒有改。</div></div>';
     App.pager(document.getElementById('app'));
-    var pr = document.getElementById('prun');
-    if (pr) pr.addEventListener('click', function () { runCustom(cc.P); });
   });
 });
 </script>

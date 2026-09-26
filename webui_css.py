@@ -465,11 +465,27 @@ font-size:12px;color:var(--faint);letter-spacing:.02em;font-weight:300}
 .fchip.tip{border-bottom-color:var(--hair)}
 .fchip.tip:hover{border-bottom-color:var(--fg)}
 .tip:focus{outline:1px dotted var(--fg);outline-offset:2px}
-#tipbox{position:absolute;z-index:200;max-width:330px;background:var(--fg);
+#tipbox{position:absolute;z-index:200;max-width:380px;background:var(--fg);
 color:var(--bg);padding:14px 16px;border-radius:var(--r);font-size:14px;
 line-height:1.7;pointer-events:none;opacity:0;transition:opacity .1s;
 font-weight:300;text-align:left;letter-spacing:-.005em}
-#tipbox.show{opacity:1}
+#tipbox.show{opacity:1;pointer-events:auto}
+#tipbox a{color:var(--bg);text-decoration:underline;text-underline-offset:2px}
+/* ⓘ：說明文字收進浮層（app.js 的 compact）。小圓圈、不搶版面 */
+.tip.infoi{display:inline-flex;align-items:center;justify-content:center;
+width:17px;height:17px;margin-left:7px;border:1px solid var(--hair);
+border-radius:50%;font:italic 600 11px/1 Georgia,serif;color:var(--mut);
+vertical-align:2px;cursor:help;flex:0 0 auto;letter-spacing:0}
+.tip.infoi:hover,.tip.infoi:focus{color:var(--bg);background:var(--fg);
+border-color:var(--fg);outline:none}
+.card h2 .tip.infoi{vertical-align:5px}
+#tipbox p{margin:0 0 8px}
+#tipbox ul,#tipbox ol{margin:4px 0 0;padding-left:18px}
+/* 入選理由只留一行，完整內容滑過去看 */
+.clamp1{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;
+border-bottom:none;max-width:100%}
+td.why.clamp1{display:table-cell;max-width:340px;white-space:nowrap;
+overflow:hidden;text-overflow:ellipsis}
 #tipbox b{color:var(--bg);font-weight:600}
 .tiphint{font-size:13px;color:var(--faint);margin:-8px 0 20px;line-height:1.7;
 font-weight:300}
@@ -524,6 +540,34 @@ background:var(--bg);color:var(--fg);font:inherit}
   .navmore .menu{left:auto;right:0}
   .searchbox{order:3;flex:1 0 100%}
 }
+
+/* 穩定強勢股名單的資訊卡（首頁與今日名單共用，assets/stable.js 產生） */
+.hcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:12px;margin-top:4px}
+.hcard{border:1px solid var(--line2);border-radius:var(--r);padding:14px 16px;background:var(--card);
+display:flex;flex-direction:column;gap:8px}
+.hcard.first{border-color:var(--ok);box-shadow:inset 0 0 0 1px var(--ok)}
+.hcard.off{opacity:.55}
+.hcard .top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.hcard .nm{font-size:17px;font-weight:500;letter-spacing:-.01em}
+.hcard .nm a{color:inherit;text-decoration:none}
+.hcard .sc{font-size:12.5px;color:var(--mut);white-space:nowrap}
+.hcard .px{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-variant-numeric:tabular-nums}
+.hcard .px div{font-size:15px;font-weight:500}
+.hcard .px span{display:block;font-size:11.5px;color:var(--mut);font-weight:300}
+.hcard .wy{font-size:12.5px;color:var(--mut);line-height:1.65}
+.hcard .tag{font-size:11.5px;padding:1px 8px;border-radius:var(--pill);background:var(--ok);color:var(--bg);font-weight:500}
+.hcard .size{font-size:12.5px;border-top:1px solid var(--line2);padding-top:7px}
+.rk{display:inline-block;min-width:22px;margin-right:4px;font-size:12px;color:var(--mut);font-variant-numeric:tabular-nums}
+.nbadge{display:inline-block;font-size:11px;padding:0 6px;border-radius:4px;margin-left:6px;
+line-height:1.6;white-space:nowrap;font-weight:500;vertical-align:2px}
+.nbadge.new{background:var(--ok);color:var(--bg)}
+.nbadge.run{border:1px solid var(--hair);color:var(--mut);font-weight:400}
+.bars{display:flex;flex-direction:column;gap:5px;font-size:12.5px}
+.bars .b{display:grid;grid-template-columns:92px 1fr 34px;align-items:center;gap:8px;color:var(--mut)}
+.bars .t{height:6px;background:var(--line2);border-radius:3px;overflow:hidden}
+.bars .t i{display:block;height:100%;background:var(--fg);opacity:.75}
+.bars .b span:last-child{text-align:right;font-variant-numeric:tabular-nums}
+.st-hit{color:var(--up)}.st-fail{color:var(--dn)}
 
 @media(max-width:560px){
   .wrap{padding:24px 18px 80px}

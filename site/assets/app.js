@@ -73,14 +73,14 @@
   }
 
   /* ---------- 外框 ---------- */
-  /* 導覽列依「每天用到的頻率」排：今日清單、交易紀錄每天用；策略追蹤每週看；
+  /* 導覽列依「每天用到的頻率」排：今日名單每天看；名單成績每週看；
      回測報告是查資料用的。其他排行、中長期候選池不常用，收進「更多」。
-     查個股不佔一格：頂部的搜尋框隨時可用，品牌名稱回今日清單。 */
+     查個股不佔一格：頂部的搜尋框隨時可用，品牌名稱回首頁。 */
   var NAV = [
     ['index.html', '首頁', 'home'],
-    ['short.html', '今日清單', 'short'],
+    ['short.html', '今日名單', 'short'],
+    ['history.html', '名單成績', 'history'],
     ['journal.html', '交易紀錄', 'journal'],
-    ['history.html', '策略追蹤', 'history'],
     ['backtest.html', '回測報告', 'backtest']
   ];
   var MORE = [
@@ -282,17 +282,24 @@
       b.style.top = top + 'px';
       cur = el;
     }
-    function hide() { if (box) box.classList.remove('show'); cur = null; }
+    function hide() { clearTimeout(later); if (box) box.classList.remove('show'); cur = null; }
+    /* 浮層裡可能有連結（說明文字收進 ⓘ 之後，「見回測報告」這種連結也跟著進去），
+       所以滑鼠離開觸發點時稍等一下：移進浮層就不關，浮層本身可以點。 */
+    var later = null;
+    function hideSoon() { clearTimeout(later); later = setTimeout(hide, 180); }
     document.addEventListener('mouseover', function (e) {
+      if (box && box.contains(e.target)) { clearTimeout(later); return; }
       var el = e.target.closest ? e.target.closest('.tip') : null;
-      if (el && el !== cur) show(el);
+      if (el) { clearTimeout(later); if (el !== cur) show(el); }
     });
     document.addEventListener('mouseout', function (e) {
+      if (box && box.contains(e.target)) { hideSoon(); return; }
       var el = e.target.closest ? e.target.closest('.tip') : null;
-      if (el === cur) hide();
+      if (el === cur) hideSoon();
     });
     /* 手機沒有 hover：點一下顯示，再點別處關閉 */
     document.addEventListener('click', function (e) {
+      if (box && box.contains(e.target)) return;      // 點浮層裡的連結：照常前往
       var el = e.target.closest ? e.target.closest('.tip') : null;
       if (el) { e.preventDefault(); if (el === cur) hide(); else show(el); }
       else hide();
@@ -305,6 +312,120 @@
       if (el) show(el);
     });
     document.addEventListener('focusout', hide);
+  }
+
+  /* ---------- 精簡版面：說明文字收進 ⓘ ----------
+   * 各頁的說明、警示、備註原本整段攤在畫面上，太佔篇幅。這裡在渲染後統一處理：
+   *   .lead（卡片開頭的說明）      整段收進標題旁的 ⓘ
+   *   .statusbar / .note / 檢查項   只留第一句（重點或數字），其餘收進 ⓘ
+   *   .tiphint（「虛線底線可以查」） 拿掉 —— 虛線本身就是提示
+   * 不動的：含按鈕／連結／輸入框的區塊（浮層滑鼠一離開就關，裡面的東西點不到）、
+   * 有 id 的區塊（程式會回頭寫入）、標了 .keep 的，以及本來就很短的。
+   * 警示的第一句一定留在畫面上：「未驗證」「觸發緊急停止」這種字不能只藏在浮層裡。
+   * 用 DOM 切句而不是改各頁的文字 —— 各頁字串有一大半是 Python 端產的，
+   * 兩邊各改一份遲早會不一致。 */
+  var CUT_MIN = 10;     // 剩下的字少於這個就不收，收起來反而多一步
+  function infoIcon(html) {
+    var s = document.createElement('span');
+    s.className = 'tip infoi';
+    s.setAttribute('tabindex', '0');
+    s.setAttribute('role', 'button');
+    s.setAttribute('aria-label', '說明');
+    s.setAttribute('data-tip', html);
+    s.textContent = 'i';
+    return s;
+  }
+  // 連結可以進浮層（浮層可點）；按鈕、輸入框、表格、圖不行 —— 那些要留在頁面上操作
+  function interactive(el) {
+    return !!el.querySelector('button,input,select,textarea,details,table,svg');
+  }
+  /* 浮層裡不能再套浮層（滑鼠一移進去外層就關了）：名詞解釋的虛線字改回純文字 */
+  function tipHTML(el) {
+    var c = el.cloneNode(true);
+    c.querySelectorAll('.tip').forEach(function (t) {
+      t.replaceWith(document.createTextNode(t.textContent));
+    });
+    return c.innerHTML.replace(/^[\s　]+/, '');
+  }
+  /* 在第一個句號後切開：回傳 [前半的節點們, 後半的 HTML]；切不開回傳 null。
+     只在最上層切：句號在 <b>…。</b> 裡面時，整個 <b> 算前半。 */
+  function splitFirst(el) {
+    var nodes = [].slice.call(el.childNodes);
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      if (n.nodeType === 3) {
+        var k = n.nodeValue.search(/[。！？]/);
+        if (k >= 0 && k < n.nodeValue.length - 1) {
+          var rest = n.nodeValue.slice(k + 1);
+          n.nodeValue = n.nodeValue.slice(0, k + 1);
+          var tail = document.createElement('span');
+          tail.appendChild(document.createTextNode(rest));
+          for (var j = i + 1; j < nodes.length; j++) tail.appendChild(nodes[j]);
+          return tail;
+        }
+        if (k === n.nodeValue.length - 1 && i < nodes.length - 1) {
+          var t2 = document.createElement('span');
+          for (var j2 = i + 1; j2 < nodes.length; j2++) t2.appendChild(nodes[j2]);
+          return t2;
+        }
+      } else if (n.nodeType === 1 && n.tagName !== 'BR' &&
+                 /[。！？]\s*$/.test(n.textContent) && i < nodes.length - 1) {
+        var t3 = document.createElement('span');
+        for (var j3 = i + 1; j3 < nodes.length; j3++) t3.appendChild(nodes[j3]);
+        return t3;
+      } else if (n.nodeType === 1 && n.tagName === 'BR' && i > 0) {
+        var t4 = document.createElement('span');
+        for (var j4 = i + 1; j4 < nodes.length; j4++) t4.appendChild(nodes[j4]);
+        el.removeChild(n);
+        return t4;
+      }
+    }
+    return null;
+  }
+  function trimTo(el) {
+    if (el.getAttribute('data-compact') || el.id || el.classList.contains('keep') ||
+        interactive(el)) return;
+    el.setAttribute('data-compact', '1');
+    var tail = splitFirst(el);
+    if (!tail) return;
+    var rest = tail.textContent.replace(/^[\s　]+|[\s　]+$/g, '');
+    if (rest.length < CUT_MIN) {           // 太短：放回去
+      while (tail.firstChild) el.appendChild(tail.firstChild);
+      return;
+    }
+    el.appendChild(infoIcon(tipHTML(tail)));
+  }
+  function compact(root) {
+    root = root || document;
+    root.querySelectorAll('.tiphint').forEach(function (e) { e.remove(); });
+    root.querySelectorAll('.lead:not([data-compact])').forEach(function (p) {
+      p.setAttribute('data-compact', '1');
+      if (p.id || interactive(p)) return;
+      var card = p.closest('.card');
+      var h = card && card.querySelector('h2');
+      if (!h) return trimTo(p);
+      h.appendChild(infoIcon(tipHTML(p)));
+      p.remove();
+    });
+    root.querySelectorAll('.statusbar .txt, .note, .chk .s, .stale .in > span, ' +
+                          '.card > p:not([class])').forEach(trimTo);
+    // 入選理由（今日清單、首頁卡片）：只留一行，完整內容移到浮層
+    root.querySelectorAll('td.why, .mcard .w, .hcard .wy').forEach(function (w) {
+      if (w.getAttribute('data-compact')) return;
+      w.setAttribute('data-compact', '1');
+      w.classList.add('tip', 'clamp1');
+      w.setAttribute('tabindex', '0');
+      w.setAttribute('data-tip', w.innerHTML);
+    });
+  }
+  var _cq = null;
+  function watchCompact() {
+    compact();
+    // 頁面之後還會局部重畫（改參數、切分頁、展開明細），新長出來的也要處理
+    new MutationObserver(function () {
+      clearTimeout(_cq);
+      _cq = setTimeout(function () { compact(); }, 30);
+    }).observe(document.body, { childList: true, subtree: true });
   }
 
   /* ---------- 搜尋 ----------
@@ -416,7 +537,7 @@
      先用 cache:'reload' 把這一頁用到的檔案重抓一次，再載入頁面。
      （這正是「改了樣式或連結，但畫面沒變」的原因。） */
   function hardReload() {
-    var files = ['', 'assets/app.js', 'assets/style.css', 'assets/pick.js']
+    var files = ['', 'assets/app.js', 'assets/style.css', 'assets/stable.js']
       .map(function (f) { return f ? f : location.pathname; });
     Promise.all(files.map(function (f) {
       return fetch(f, { cache: 'reload' }).catch(function () {});
@@ -456,6 +577,7 @@
       return Promise.resolve(r).then(function () { buildStamp(meta); });
     }).then(function () {
       initSearch();          // 頁面渲染後才存在的搜尋框（首頁大框）要補綁
+      watchCompact();
     }).catch(function (e) {
       var w = document.querySelector('.wrap') || document.body;
       w.innerHTML = '<div class="empty"><h2>載入失敗</h2>' +

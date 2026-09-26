@@ -111,7 +111,7 @@ def build(datasets=None, verbose=True):
             print(f"  倉儲 {DB.stat().st_size/1e6:.0f} MB", flush=True)
 
 
-def append(days, verbose=True):
+def append(days, verbose=True, datasets=None):
     """只把指定交易日寫進既有倉儲，不動其他日期。
 
     給 CI 用。CI 的環境只有倉儲種子、沒有完整的原始檔封存，所以不能全量重建
@@ -120,6 +120,8 @@ def append(days, verbose=True):
 
     只寫「四個資料集的原始檔都拿到」以外的也照寫 —— 哪些日子算數由呼叫端
     （ci_update 的齊備閘門）決定，這裡不重複判斷。
+
+    datasets：只重寫這幾個資料集（例如晚上補進來的融資券），其他表不動。
     """
     if not days:
         return 0
@@ -127,6 +129,8 @@ def append(days, verbose=True):
     total = 0
     try:
         for ds, tbl in TABLES.items():
+            if datasets and ds not in datasets:
+                continue
             rows = []
             for d in days:
                 j = ingest.load_raw(ds, d)

@@ -16,6 +16,10 @@ on:
     - cron: "40 6-9 * * 1-5"
     # 台北 19:10，最後一次補抓
     - cron: "10 11 * * 1-5"
+    # 台北 21:50、22:40：融資券約 21:30 公布，公布了就用完整資料重新產出名單（這一版為準）。
+    # 兩次是保險：GitHub 排程常延遲，融資券也偶爾晚出。已經補過的話第二次會直接略過。
+    - cron: "50 13 * * 1-5"
+    - cron: "40 14 * * 1-5"
     # 刻意避開整點：GitHub 在整點負載最高，排程延遲最嚴重。
   workflow_dispatch:
     inputs:
@@ -120,7 +124,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "快照沒有變化"
           else
-            git commit -m "每日清單快照 $(ls snapshots/*.json | tail -1 | xargs basename | sed 's/\.json$//')"
+            git commit -m "每日名單快照 $(ls snapshots/stable/*.json | tail -1 | xargs basename | sed 's/\.json$//')"
             git pull --rebase --autostash && git push || { echo "::warning::快照 commit 推送失敗"; exit 1; }
           fi
 

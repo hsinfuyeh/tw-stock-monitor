@@ -113,6 +113,25 @@ def revenue_stale(latest, today=None):
     return latest is None or latest < "{:04d}{:02d}".format(y, m)
 
 
+def refresh_margin(cal, cutoff):
+    """融資券是最晚公布的（約 21:30），下午的排程通常還拿不到。
+
+    舊版的問題：某天的三張核心表齊了之後，那一天就不會再被抓，融資券從此缺著，
+    而且沒有任何錯誤。穩定強勢股名單（第 11 輪）有兩條用到融資：融資暴增排除、籌碼乾淨，
+    缺值時會安靜地變成「不排除、給中間值」。所以每次都補抓最近還沒拿到的日子，
+    只重寫 margin 表。回傳這次新補進來的交易日。"""
+    days = [d for d in cal[-LOOKBACK:] if d <= cutoff and not ingest.have("margin", d)]
+    if not days:
+        return []
+    log("融資券還沒拿到的交易日: {}".format(", ".join(days)))
+    ingest.backfill(["margin"], days)
+    got = [d for d in days if ingest.have("margin", d)]
+    if got:
+        store.append(got, verbose=True, datasets=("margin",))
+    log("融資券補進 {} 天：{}".format(len(got), "、".join(got) or "（還沒公布）"))
+    return got
+
+
 def main(ignore_gate=False):
     refresh_revenue()
     n_rev, rev_latest = check_revenue()
@@ -145,6 +164,14 @@ def main(ignore_gate=False):
     todo = [d for d in cal[-LOOKBACK:] if d > cutoff]
 
     if not todo:
+        # 晚上的排程（21:45、22:30）：當天的融資券公布了，就用完整資料重新發佈一次。
+        # 名單以這一版為準（下午那版的融資券是前一天的）。
+        got = refresh_margin(cal, cutoff)
+        if cutoff in got:
+            write_summary(["當天（{}）的融資券已公布，用完整資料重新產出名單。".format(_d(last_ok))])
+            set_output("publish", "true")
+            set_output("changed", "true")
+            return 0
         # 排程一天會跑好幾次；第一次發佈之後，後面幾次都會走到這裡。
         # 排程觸發就直接略過，不要每小時重做一次 4 分鐘的產出。
         # 手動觸發則照樣重新產出 —— 那通常是改了程式碼、想讓網站跟上。
@@ -208,6 +235,7 @@ def main(ignore_gate=False):
     store.append(ready, verbose=True)
     now_ok = usable_last_date()
     log("完成，三表齊備到 {}".format(_d(now_ok)))
+    refresh_margin(cal, max(ready))           # 前幾天漏掉的融資券順便補
 
     # 上櫃（只供個股頁查詢）。不在閘門裡：它是附加資訊，缺了不該擋住發佈。
     # 每次最多抓 15 個交易日：櫃買回應慢，實測約 1 分鐘一天，job 上限 60 分鐘、

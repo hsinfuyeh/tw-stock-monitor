@@ -7,454 +7,106 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:wght@400;500&display=swap">
 <link rel="stylesheet" href="assets/style.css">
-<title>今日清單</title>
+<title>今日名單</title>
 <style>
-.pickcard{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:6px 28px;
-  border:1px solid var(--line2);border-radius:var(--r);padding:20px 22px;margin:18px 0;background:var(--card)}
-.pickcard .eyebrow{font-size:12.5px;letter-spacing:.08em;color:var(--mut)}
-.pk-t{font-size:26px;font-weight:500;letter-spacing:-.02em;margin:4px 0 6px}
-.pk-t a{color:inherit;text-decoration:none}
-.pk-row{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--line2);font-size:14px}
-.pk-row span{color:var(--mut);font-weight:300}
-.pk-row b{font-weight:500;text-align:right;font-variant-numeric:tabular-nums}
-.pk-foot{grid-column:1/-1;font-size:13px;margin-top:6px}
-.mcards{display:none}
-@media (max-width:680px){
-  .pickcard{grid-template-columns:1fr;padding:16px}
-  #list .scroll,#list .pager{display:none}
-  .mcards{display:grid;gap:10px}
-  .mcard{border:1px solid var(--line2);border-radius:var(--r);padding:12px 14px}
-  .mcard .h{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
-  .mcard .h a{font-weight:500;color:inherit;text-decoration:none}
-  .mcard .p{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-top:8px;font-size:13px;font-variant-numeric:tabular-nums}
-  .mcard .p span{display:block;color:var(--mut);font-size:11.5px}
-  .mcard .w{font-size:12.5px;color:var(--mut);margin-top:6px;line-height:1.6}
-}
+.pscore td{font-variant-numeric:tabular-nums}
+.pscore td.hi{color:var(--fg);font-weight:500}
+.pscore td.lo{color:var(--faint)}
+.funnel{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:13.5px;color:var(--mut)}
+.funnel b{color:var(--fg);font-weight:500;font-variant-numeric:tabular-nums}
 </style></head><body>
 <div class="wrap" id="app"></div>
 <script src="assets/app.js"></script>
-<script src="assets/pick.js"></script>
+<script src="assets/stable.js"></script>
 <script>
-/* 今日清單（stock-screener-PRD：每日清單 + 參數設定）。
+/* 今日名單：穩定強勢股，每天 10 檔（stable.py，RESEARCH_LOG 第 11 輪）。
  *
- * 評分在瀏覽器裡算：publish 只送當日每檔的原始數字（均線、前 20 日高、
- * 法人連買天數、營收年增…），調參數時直接重算，不用重抓資料。
- *
- * 這裡的規則必須和 shortterm.py 的 score / pick / ref_prices / reasons
- * <b>完全一致</b>。頁面載入時會用預設參數跑一次，跟 Python 算出來的清單
- * （today.json 的 expected）比對，對不上就在頁面頂端直接警告。
- *
- * 調整過的參數存在這台瀏覽器（localStorage），回測報告頁會讀同一份，
- * 在本機可以直接拿來回測。 */
-var T, P = {}, DEF = {}, SORT = { k: null, dir: -1 };
-
-var isNum = Pick.isNum, f2 = Pick.f2, r2 = Pick.r2, tick = Pick.tick;
-var refPrices = Pick.refPrices, scoreRow = Pick.scoreRow, reasons = Pick.reasons;
-var STOP_MIN = Pick.STOP_MIN, STOP_MAX = Pick.STOP_MAX, COST = Pick.COST;
-function rank(p) { return Pick.rank(T, p); }
-
-/* ---------- 成交價換算 ----------
- * 清單上的價位是用今天收盤價估的，但你明天開盤才買得到。
- * 成交之後把實際成交價填進來，這裡用同一套公式重算，不用自己乘。 */
-function calcPanel() {
-  var opts = CUR.map(function (o, i) {
-    return '<option value="' + i + '">' + App.esc(o.r.code + ' ' + o.r.name) + '</option>';
-  }).join('');
-  return '<div class="prow" style="max-width:520px">' +
-    '<label for="c_pick">股票</label>' +
-    '<select class="snap" id="c_pick" style="flex:1">' + opts + '</select></div>' +
-    '<div class="prow" style="max-width:520px"><label for="c_px">你的成交價</label>' +
-    '<input type="number" id="c_px" step="0.01" min="0"><span class="u">元</span></div>' +
-    '<div class="prow" style="max-width:520px"><label for="c_cap">' + App.tip('本金', '停損距離') + '（可不填）</label>' +
-    '<input type="number" id="c_cap" step="10" min="0" value="' + App.esc(loadCap()) + '"><span class="u">萬元</span></div>' +
-    '<div id="c_out" class="note" style="margin-top:10px"></div>';
+ * 這一頁不做任何計算，全部來自 stable/today.json。
+ * 不顯示停利停損、不給買賣建議 —— 使用者要的是「每天的潛力股名單」。 */
+function bar(c, cls, txt) {
+  return '<div class="statusbar ' + cls + '"><span class="txt">' + txt + '</span></div>';
 }
 
-function calcRender() {
-  var i = +document.getElementById('c_pick').value;
-  var o = CUR[i];
-  if (!o) return;
-  var px = parseFloat(document.getElementById('c_px').value);
-  var out = document.getElementById('c_out');
-  if (!isNum(px) || px <= 0) {
-    out.innerHTML = '填入成交價之後，這裡會算出對應的停損價與目標價。';
-    return;
-  }
-  var pr = refPrices(px, o.r.atrp14, P);
-  var risk = (px - pr[0]) / px * 100;
-  out.innerHTML = '<b>' + App.esc(o.r.code + ' ' + o.r.name) + '</b>　成交價 ' + f2(px) + '<br>' +
-    '停損價 <b class="dn">' + f2(pr[0]) + '</b>（跌 ' + App.num(risk, 1) + '%，' +
-    '等於 ' + App.num((px - pr[0]) / (o.r.atrp14 * px), 1) + ' 個 ATR）' +
-    (pr[1] == null ? '<br>目前設定沒有目標價（抱滿 ' + P.hold_days + ' 個交易日）'
-      : '<br>目標價 <b class="up">' + f2(pr[1]) + '</b>（漲 ' +
-        App.num((pr[1] - px) / px * 100, 2) + '%，賣掉後淨賺 ' +
-        App.num((pr[1] / px - 1) * 100 - COST, 2) + '%）') +
-    '<br><span class="mut">最多抱 ' + P.hold_days + ' 個交易日；兩個價位都沒碰到就到期賣出。</span>' +
-    (o.flags.length ? '<br><span class="up"><b>這檔被標記：' + App.esc(o.flags.join('、')) + '</b>，規範規定不買。</span>' : '') +
-    sizeNote(o, px, pr[0]);
+function scoreTable(T) {
+  var F = T.factors;
+  return '<div class="scroll"><table class="pscore"><thead><tr><th>名次</th><th style="text-align:left">股票</th>' +
+    F.map(function (f) { return '<th><span class="tip" tabindex="0" data-tip="' + App.esc(f.desc) + '">' + App.esc(f.name) + '</span></th>'; }).join('') +
+    '<th class="sorted">總分</th></tr></thead><tbody>' +
+    T.rows.map(function (r) {
+      return '<tr><td>' + r.rank + '</td><td style="text-align:left"><a href="stock.html?c=' + r.code + '"><strong>' +
+        r.code + '</strong></a> ' + App.esc(r.name) + '</td>' +
+        F.map(function (f) {
+          var v = r.parts[f.key];
+          return '<td class="' + (v >= 80 ? 'hi' : v <= 30 ? 'lo' : '') + '">' + (v == null ? '—' : v) + '</td>';
+        }).join('') + '<td class="sorted">' + App.num(r.score, 1) + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
 }
 
-/* 部位大小（規範 v1 第 5 節）：每筆碰到停損時最多賠本金的 0.5%，
-   所以 金額 = 本金 × 0.5% ÷ 停損距離，再受「單檔 ≤ 本金 20%」限制。
-   另外對照這檔平常的成交量：回測用固定成本 0.585%，沒有把「你的單子自己推動價格」
-   算進去 —— 金額佔日均成交額超過 1%（規範的排除線）時，實際成本會明顯高於回測。 */
-var RISK = 0.005, CAP = 0.20;
-function loadCap() { try { return localStorage.getItem('short_capital') || ''; } catch (e) { return ''; } }
-function sizeNote(o, px, stop) {
-  var capW = parseFloat(document.getElementById('c_cap').value);
-  try { localStorage.setItem('short_capital', isNum(capW) ? String(capW) : ''); } catch (e) {}
-  if (!isNum(capW) || capW <= 0) return '<br><span class="mut">填入本金，會依規範算出這筆該買多少。</span>';
-  var cap = capW * 1e4, dist = (px - stop) / px;
-  var byRisk = cap * RISK / dist, amt = Math.min(byRisk, cap * CAP);
-  var sh = Math.floor(amt / px), lots = Math.floor(sh / 1000), odd = sh % 1000;
-  var loss = sh * (px - stop) + sh * px * COST / 100;
-  var out = '<br><b>依規範該買：約 ' + Math.round(sh * px).toLocaleString() + ' 元</b>（' +
-    (lots ? lots + ' 張' : '') + (lots && odd ? ' + ' : '') + (odd ? odd + ' 股零股' : '') +
-    (sh ? '' : '不到 1 股') + '）' +
-    '<br><span class="mut">本金 × 0.5% ÷ 停損距離 ' + App.num(dist * 100, 1) + '% = ' +
-    Math.round(byRisk).toLocaleString() + ' 元' +
-    (byRisk > cap * CAP ? '，超過單檔上限（本金 20%），改用 ' + Math.round(cap * CAP).toLocaleString() + ' 元' : '') +
-    '。碰到停損約賠 ' + Math.round(loss).toLocaleString() + ' 元（含手續費和稅，約本金的 ' +
-    App.num(loss / cap * 100, 2) + '%）。</span>';
-  var adtv = o.r.amt20;
-  if (isNum(adtv) && adtv > 0 && sh) {
-    var pct = sh * px / adtv * 100;
-    out += pct <= 1
-      ? '<br><span class="mut">這筆金額是日均成交額的 ' + App.num(pct, 2) + '%，滑價影響有限。</span>'
-      : '<br><span class="up"><b>這筆金額是日均成交額的 ' + App.num(pct, 1) + '%，超過規範的 1%</b>：' +
-        '進出會推動價格，實際成本會高於回測假設的 ' + COST + '%，規範規定這種情況不買。</span>';
-  }
-  return out;
+function detailTable(T) {
+  return '<div class="scroll"><table><thead><tr><th>名次</th><th>代號</th><th style="text-align:left">名稱</th><th>產業</th>' +
+    '<th>收盤</th><th>近 20 日</th><th>近 60 日</th><th>' + App.tip('每天震盪', 'ATR') + '</th>' +
+    '<th>' + App.tip('日均成交額') + '</th><th>上榜</th><th style="text-align:left">入選原因</th></tr></thead><tbody>' +
+    T.rows.map(function (r) {
+      return '<tr><td>' + r.rank + '</td><td><a href="stock.html?c=' + r.code + '"><strong>' + r.code + '</strong></a></td>' +
+        '<td style="text-align:left">' + App.esc(r.name) + '</td><td class="mut">' + App.esc(r.ind || '—') + '</td>' +
+        '<td>' + Stable.f2(r.close) + '</td><td>' + App.pct(r.ret20, 1) + '</td><td>' + App.pct(r.ret60, 1) + '</td>' +
+        '<td>' + App.num(r.atrp, 1) + '%</td><td>' + App.num(r.adtv20, 2) + ' 億</td>' +
+        '<td>' + (r.streak <= 1 ? '<span class="nbadge new" style="margin:0">新</span>' : r.streak + ' 天') + '</td>' +
+        '<td class="why">' + App.esc((r.why || []).join('；')) + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
 }
 
-function calcBind() {
-  var box = document.getElementById('calc');
-  if (!box) return;
-  box.innerHTML = calcPanel();
-  document.getElementById('c_pick').addEventListener('change', calcRender);
-  document.getElementById('c_px').addEventListener('input', calcRender);
-  document.getElementById('c_cap').addEventListener('input', function () { calcRender(); paintPick(); });
-  calcRender();
-}
-
-/* ---------- 參數 ---------- */
-function loadParams() {
-  T.params.forEach(function (x) { DEF[x.key] = x.default; P[x.key] = x.default; });
-  try {
-    var s = JSON.parse(localStorage.getItem('short_params') || '{}');
-    Object.keys(s).forEach(function (k) { if (k in P && isNum(s[k])) P[k] = +s[k]; });
-  } catch (e) {}
-}
-function saveParams() {
-  try { localStorage.setItem('short_params', JSON.stringify(P)); } catch (e) {}
-}
-function isDefault() {
-  return Object.keys(DEF).every(function (k) { return +P[k] === +DEF[k]; });
-}
-
-function paramForm() {
-  var groups = [], by = {};
-  T.params.forEach(function (x) {
-    if (!by[x.group]) { by[x.group] = []; groups.push(x.group); }
-    by[x.group].push(x);
+function funnel(T) {
+  var c = T.counts, n = {};
+  T.exclude.forEach(function (x) { n[x.key] = x.name; });
+  var parts = Object.keys(c.excluded).filter(function (k) { return c.excluded[k] > 0; }).map(function (k) {
+    return (k === 'risk' ? '處置／注意／全額交割' : n[k] || k) + ' <b>' + c.excluded[k] + '</b>';
   });
-  return '<div class="pgrid">' + groups.map(function (g) {
-    return '<div class="pgrp"><h3>' + App.esc(g) + '</h3>' + by[g].map(function (x) {
-      return '<div class="prow"><label for="p_' + x.key + '">' + App.esc(x.label) +
-        '</label><input type="number" id="p_' + x.key + '" data-k="' + x.key +
-        '" min="' + x.min + '" max="' + x.max + '" step="' + x.step + '" value="' + P[x.key] +
-        '"><span class="u">' + App.esc(x.unit) + '</span></div>';
-    }).join('') + '</div>';
-  }).join('') + '</div>' +
-  '<div class="pbar"><button class="btn" id="preset" type="button">恢復預設</button>' +
-  (T.presets || []).map(function (x) {
-    return '<button class="btn" type="button" data-preset="' + x.key + '">' + App.esc(x.label) + '</button>';
-  }).join('') +
-  '<span class="note" id="pnote" style="font-size:13px"></span></div>' +
-  '<p class="note" style="font-size:13px;margin-top:8px">這五個按鈕是第 9 輪研究的五個方案' +
-  '（在預設之上只改一件事），它們也在<a href="history.html">策略追蹤</a>裡紙上跑，' +
-  '回測結果在<a href="backtest.html#r9">回測報告</a>。</p>';
-}
-
-function applyParams(kw) {
-  Object.keys(DEF).forEach(function (k) { P[k] = DEF[k]; });
-  Object.keys(kw || {}).forEach(function (k) { if (k in P) P[k] = +kw[k]; });
-  document.querySelectorAll('.prow input').forEach(function (el) {
-    el.value = P[el.getAttribute('data-k')];
-  });
-  saveParams(); renderList(); markChanged();
-}
-
-function markChanged() {
-  document.querySelectorAll('.prow input').forEach(function (el) {
-    el.classList.toggle('chg', +P[el.getAttribute('data-k')] !== +DEF[el.getAttribute('data-k')]);
-  });
-  var n = document.getElementById('pnote');
-  if (n) n.innerHTML = isDefault() ? '目前是 PRD 的預設參數。' :
-    '參數已調整，清單已重新計算（黃框是改過的）。想知道這組參數過去表現如何，' +
-    '到<a href="backtest.html">回測報告</a>' + (App.local ? '按「用我的參數回測」。' : '（需要在本機開啟）。');
-}
-
-/* ---------- 清單 ---------- */
-var COLS = [
-  ['rank', '#', function (o) { return o.rank; }],
-  ['code', '代號', function (o) { return o.r.code; }],
-  ['name', '名稱', function (o) { return o.r.name; }],
-  ['kind', '類型', function (o) { return o.r.kind; }],
-  ['ind', '產業', function (o) { return o.r.ind || ''; }],
-  ['score', '總分', function (o) { return o.s.score; }],
-  ['close', '收盤（參考進場價）', function (o) { return o.r.close; }],
-  ['stop', '參考停損', function (o) { return o.stop; }],
-  ['target', '參考目標', function (o) { return o.target == null ? -1 : o.target; }]
-];
-
-function listTable(rows) {
-  if (!rows.length)
-    return '<div class="empty"><div class="note">這組參數下沒有任何股票達到門檻。</div></div>';
-  if (SORT.k) {
-    var get = COLS.filter(function (c) { return c[0] === SORT.k; })[0][2];
-    rows = rows.slice().sort(function (a, b) {
-      var x = get(a), y = get(b);
-      return (x > y ? 1 : x < y ? -1 : 0) * SORT.dir;
-    });
-  }
-  var head = COLS.map(function (c) {
-    var cl = 'sortable' + (SORT.k === c[0] ? (SORT.dir > 0 ? ' asc' : ' desc') : '');
-    return '<th class="' + cl + '" data-k="' + c[0] + '">' + c[1] + '</th>';
-  }).join('') + '<th style="text-align:left">入選理由</th>';
-  return '<div class="scroll" data-per="20"><table><thead><tr>' + head +
-    '</tr></thead><tbody>' + rows.map(function (o) {
-      var r = o.r;
-      return '<tr' + (o.flags.length ? ' style="opacity:.6"' : '') + '><td class="mut">' + o.rank + '</td>' +
-        '<td><a href="stock.html?c=' + r.code + '"><strong>' + r.code + '</strong></a>' +
-        o.flags.map(function (f) { return ' <span class="xflag">' + App.tip(f) + '</span>'; }).join('') + '</td>' +
-        '<td><a href="stock.html?c=' + r.code + '">' + App.esc(r.name) + '</a></td>' +
-        '<td class="mut">' + r.kind + '</td>' +
-        '<td class="mut">' + App.esc(r.ind || '—') +
-        (o.indn > 2 ? '<br><span style="font-size:12px" class="up">同產業第 ' + o.indn + ' 檔</span>' : '') + '</td>' +
-        '<td class="sorted">' + App.num(o.s.score, 0) + '</td>' +
-        '<td>' + f2(r.close) + '</td><td class="dn">' + f2(o.stop) + '</td>' +
-        '<td class="up">' + (o.target == null ? '<span class="mut">不設</span>' : f2(o.target)) + '</td>' +
-        '<td class="why">' + App.esc(o.why.join('；')) + '</td></tr>';
-    }).join('') + '</tbody></table></div>' +
-    /* 手機：表格太寬，改成每檔一張卡片 */
-    '<div class="mcards">' + rows.map(function (o) {
-      var r = o.r;
-      return '<div class="mcard"' + (o.flags.length ? ' style="opacity:.6"' : '') + '><div class="h">' +
-        '<a href="stock.html?c=' + r.code + '">' + o.rank + '. ' + r.code + ' ' + App.esc(r.name) + '</a>' +
-        '<span class="mut" style="font-size:12.5px">' + App.esc(r.ind || r.kind) + '　' + App.num(o.s.score, 0) + ' 分</span></div>' +
-        (o.flags.length ? '<div>' + o.flags.map(function (f) { return '<span class="xflag" style="margin:4px 4px 0 0">' + App.esc(f) + '</span>'; }).join('') + '</div>' : '') +
-        '<div class="p"><div><span>收盤</span>' + f2(r.close) + '</div><div><span>停損</span><b class="dn">' + f2(o.stop) +
-        '</b></div><div><span>目標</span><b class="up">' + (o.target == null ? '不設' : f2(o.target)) + '</b></div></div>' +
-        '<div class="w">' + App.esc(o.why.join('；')) + '</div></div>';
-    }).join('') + '</div>';
-}
-
-var CUR = [];
-function paintList() {
-  var box = document.getElementById('list');
-  box.innerHTML = listTable(CUR);
-  App.pager(box);
-  box.querySelectorAll('th.sortable').forEach(function (th) {
-    th.onclick = function () {
-      var k = th.getAttribute('data-k');
-      if (SORT.k === k) SORT.dir = -SORT.dir;
-      else { SORT.k = k; SORT.dir = (k === 'code' || k === 'name' || k === 'kind' || k === 'ind' || k === 'rank') ? 1 : -1; }
-      paintList();
-    };
-  });
-}
-function renderList() {
-  CUR = rank(P);
-  document.getElementById('lcount').textContent = CUR.length;
-  paintList();
-  paintPick();
-  calcBind();
-}
-
-/* ---------- 今天照規則該買哪一檔（規範 v1 的買法） ----------
- * 由上往下第一檔：沒有排除標記、你還沒持有、金額不超過日均成交額 1%。
- * 持有檔數讀「交易紀錄」頁存在這台瀏覽器的資料；本金讀計算機存的那一份。 */
-function journal() { try { return JSON.parse(localStorage.getItem('journal_v1') || '[]'); } catch (e) { return []; } }
-function paintPick() {
-  var box = document.getElementById('pick');
-  if (!box) return;
-  var cap = parseFloat(loadCap()) * 1e4, J = journal();
-  var held = J.filter(function (t) { return !t.sell_date; });
-  var heldCodes = held.map(function (t) { return t.code; });
-  var head = '<div class="pickcard"><div class="pk-l">';
-  if (held.length >= 3) {
-    box.innerHTML = head + '<span class="eyebrow">今天照規則</span><div class="pk-t">不買</div>' +
-      '<div class="note">你在<a href="journal.html">交易紀錄</a>裡已經持有 ' + held.length +
-      ' 檔（上限 3 檔）。等有一檔賣出再說。</div></div></div>';
-    return;
-  }
-  var why = [], o = null;
-  for (var i = 0; i < CUR.length; i++) {
-    var c = CUR[i];
-    if (c.flags.length) { why.push(c.r.code + ' ' + c.flags.join('、')); continue; }
-    if (heldCodes.indexOf(c.r.code) >= 0) { why.push(c.r.code + ' 已持有'); continue; }
-    if (cap > 0 && isNum(c.r.amt20)) {
-      var d0 = (c.r.close - c.stop) / c.r.close, amt0 = Math.min(cap * RISK / d0, cap * CAP);
-      if (amt0 > c.r.amt20 * 0.01) { why.push(c.r.code + ' 金額超過日均成交額 1%'); continue; }
-    }
-    o = c; break;
-  }
-  if (!o) {
-    box.innerHTML = head + '<span class="eyebrow">今天照規則</span><div class="pk-t">沒有可買的</div>' +
-      '<div class="note">' + (CUR.length ? '清單上的都被排除了：' + App.esc(why.join('；')) : '今天沒有股票達到門檻。') +
-      '</div></div></div>';
-    return;
-  }
-  var r = o.r, dist = (r.close - o.stop) / r.close, size = '';
-  if (cap > 0) {
-    var amt = Math.min(cap * RISK / dist, cap * CAP), sh = Math.floor(amt / r.close);
-    var lots = Math.floor(sh / 1000), odd = sh % 1000;
-    size = '<div class="pk-row"><span>依你的本金 ' + (cap / 1e4).toLocaleString() + ' 萬</span><b>約 ' +
-      (lots ? lots + ' 張' : '') + (lots && odd ? ' + ' : '') + (odd ? odd + ' 股' : '') + (sh ? '' : '不到 1 股') +
-      '（' + Math.round(sh * r.close).toLocaleString() + ' 元）</b></div>' +
-      '<div class="pk-row"><span>碰到停損約賠</span><b>' +
-      Math.round(sh * (r.close - o.stop) + sh * r.close * COST / 100).toLocaleString() + ' 元</b></div>';
-  } else {
-    size = '<div class="pk-row"><span>要買多少</span><b>在下面的計算機填一次本金，這裡就會算好</b></div>';
-  }
-  box.innerHTML = head + '<span class="eyebrow">今天照規則可以買' + (held.length ? '（你已持有 ' + held.length + ' 檔）' : '') + '</span>' +
-    '<div class="pk-t"><a href="stock.html?c=' + r.code + '">' + r.code + ' ' + App.esc(r.name) + '</a></div>' +
-    '<div class="mut" style="font-size:13.5px">' + App.esc(r.ind || r.kind) + '　總分 ' + App.num(o.s.score, 0) +
-    '　' + App.esc(o.why.join('；')) + '</div></div><div class="pk-r">' +
-    '<div class="pk-row"><span>明天開盤買（參考今天收盤）</span><b>' + f2(r.close) + '</b></div>' +
-    '<div class="pk-row"><span>參考停損</span><b class="dn">' + f2(o.stop) + '（−' + App.num(dist * 100, 1) + '%）</b></div>' +
-    '<div class="pk-row"><span>參考目標</span><b class="up">' + (o.target == null ? '不設' : f2(o.target)) + '</b></div>' +
-    size + '</div>' +
-    '<div class="pk-foot note">開盤就一字漲停的話不買。成交後用下面的計算機以成交價重算停損與目標，' +
-    '再到<a href="journal.html">交易紀錄</a>記一筆。' +
-    (why.length ? '（跳過：' + App.esc(why.join('；')) + '）' : '') +
-    (isDefault() ? '' : '<br><b>注意：你改過參數</b>，這一檔是照你的參數選的，不是策略追蹤裡 Arm 0 的那一檔。') +
-    '</div></div>';
-}
-
-/* 回測結論的一行摘要：清單旁邊就要看得到「這套規則過去表現如何」，
-   否則很容易把一份沒通過驗收的清單當成推薦。 */
-function btLine(bt) {
-  if (!bt || !bt.all || !bt.all.n) return '';
-  var a = bt.all, pass = a.excess > 0 && bt.recent.excess > 0;
-  var flat = a.t != null && Math.abs(a.t) < 2;
-  var head = pass ? '<b>預設參數過去的表現贏過 0050</b>：'
-    : flat ? '<b>過去的表現跟直接買 0050 差不多</b>：'
-    : '<b>注意：預設參數過去的表現輸給 0050</b>：';
-  return '<div class="statusbar ' + (pass ? 'ok' : flat ? 'warn' : 'bad') + '"><span class="txt">' +
-    head + '照這份清單買，平均每筆' + (a.excess >= 0 ? '多賺 ' : '少賺 ') +
-    App.num(Math.abs(a.excess), 2) + '%（' + a.start.slice(0, 4) + '–' + a.end.slice(0, 4) +
-    ' 年、' + a.n.toLocaleString() + ' 筆，已扣手續費和稅）' +
-    (flat ? '，這個差距在統計上和 0 分不出來' : '') + '。' +
-    '</span><a class="more" href="backtest.html">看回測報告 →</a></div>';
-}
-
-/* 規範 v1 第 8 節：目前在哪個階段。階段 0 = 只紙上記錄，不下單。 */
-function stageLine() {
-  var S = T.stage;
-  if (!S) return '';
-  return '<div class="statusbar warn"><span class="txt"><b>目前階段：' + App.esc(S.current + ' ' + S.name) + '</b>　' +
-    '依「短線交易與研究規範 v1」，這份清單現在只用來紙上追蹤，還沒到可以下單的階段。' +
-    '</span><a class="more" href="history.html">看策略追蹤 →</a></div>';
-}
-
-/* 處置股/注意股名單的狀態。抓不到或還沒公布時要講清楚，不能當成「今天沒有」。 */
-function riskLine() {
-  var R = T.risk;
-  if (!R) return '';
-  var bad = [];
-  if (R.disposal_status !== 'ok') bad.push('處置股名單' + (R.disposal_status === 'unavailable' ? '抓不到' : '沒有資料'));
-  if (R.notice_status === 'pending') bad.push('注意股名單可能還沒公布');
-  else if (R.notice_status !== 'ok') bad.push('注意股名單' + (R.notice_status === 'unavailable' ? '抓不到' : '沒有資料'));
-  if (R.full_status && R.full_status !== 'ok' && R.full_status !== 'current') bad.push('全額交割股名單抓不到');
-  var ok = '今天的處置股 ' + (R.disposal || []).length + ' 檔、注意股 ' + (R.attention || []).length +
-    ' 檔、全額交割股 ' + (R.full_delivery || []).length + ' 檔（名單日期 ' + App.esc(R.date) + '），清單裡有標記的不要買。';
-  return '<div class="statusbar ' + (bad.length ? 'bad' : 'ok') + '"><span class="txt">' +
-    (bad.length ? '<b>' + App.esc(bad.join('、')) + '</b>，下單前請自己到證交所網站確認。' +
-      (R.notice_status === 'pending' ? '明天產出時會回頭補上標記。' : '') : ok) +
-    '</span></div>';
+  return '<div class="funnel"><span>成交額前 300 名 <b>' + c.universe + '</b> 檔</span>' +
+    '<span>→ ' + App.tip('穩定池') + ' <b>' + c.pool + '</b> 檔</span>' +
+    '<span>→ 名單 <b>' + T.rows.length + '</b> 檔</span></div>' +
+    '<p class="note" style="font-size:13px;margin-top:8px">被刷掉的原因（一檔可能同時符合好幾條）：' + parts.join('、') + '</p>';
 }
 
 App.boot('short', function (meta) {
-  return Promise.all([App.get('short/today.json'),
-                      App.get('short/backtest.json').catch(function () { return null; })])
+  return Promise.all([App.get('stable/today.json'), App.get('stable/backtest.json').catch(function () { return null; })])
   .then(function (res) {
-    T = res[0];
-    T.objs = T.rows.map(function (a) {
-      var o = {}; T.cols.forEach(function (c, i) { o[c] = a[i]; }); return o;
-    });
-    loadParams();
+    var T = res[0], B = res[1];
+    document.title = '今日名單 · ' + T.date;
+    var notes = [];
+    var rn = Stable.riskNote(T), mn = Stable.marginNote(T);
+    if (rn) notes.push(bar('', 'warn', '<b>' + rn + '</b>'));
+    if (mn) notes.push(bar('', 'warn', mn));
+    var verdict = T.passed
+      ? '回測（2008–2025）通過淘汰關卡：名單的「' + App.tip('中減倒') + '」比穩定池隨便挑多 ' +
+        (B && B.all ? App.num(B.all.diff, 1) + ' 個百分點（' + App.tip('t 值') + ' ' + App.num(B.all.t, 1) + '）' : '一點') +
+        '。優勢不大' + (B && B.periods && B.periods['2026'] && B.periods['2026'].diff <= 0 ? '，而且 2026 年沒有比隨便挑好' : '') +
+        '；真正的成績看<a href="history.html">名單成績</a>。'
+      : '回測（2008–2025）<b>沒有</b>通過淘汰關卡，名單照常列出，但請當成參考。';
 
-    // 兩份實作的一致性檢查（用預設參數，不受使用者調整影響）
-    var mine = rank(DEF).map(function (o) { return o.r.code; }).join(',');
-    var drift = mine !== T.expected.join(',');
-    (T.presets || []).forEach(function (x) {
-      var q = {}; Object.keys(DEF).forEach(function (k) { q[k] = DEF[k]; });
-      Object.keys(x.params).forEach(function (k) { q[k] = +x.params[k]; });
-      if (x.expected && rank(q).map(function (o) { return o.r.code; }).join(',') !== x.expected.join(',')) {
-        drift = true;
-        if (window.console) console.warn('方案不一致：' + x.label);
-      }
-    });
+    var dropped = T.dropped && T.dropped.length
+      ? '<p class="note" style="font-size:13.5px">' + App.esc(T.prev_day || '前一天') + ' 在榜、今天掉出：' +
+        T.dropped.map(function (d) { return '<a href="stock.html?c=' + d.code + '">' + d.code + ' ' + App.esc(d.name || '') + '</a>'; }).join('、') + '</p>'
+      : '';
 
     document.getElementById('app').innerHTML =
-      '<div class="fnhero"><span class="eyebrow">今日清單 &middot; ' + App.esc(T.date) + ' 收盤</span>' +
-      '<span class="big" id="lcount">0</span>' +
-      '<div class="sub">上市股票與股票型 ETF，依四個條件打分數<span class="sep">&middot;</span>' +
-      '適合抱 2 週到 1 個月<span class="sep">&middot;</span>' +
-      '停損、目標價是依公式算的參考值，<b>不是買賣建議</b></div></div>' +
-      (drift ? '<div class="statusbar bad"><span class="txt"><b>網頁算出的清單和後端不一致</b>：' +
-        '兩邊的計算規則對不上，這份清單不可信。</span></div>' : '') +
-      btLine(res[1]) + stageLine() + riskLine() + '<div id="pick"></div>' +
-      '<div class="card"><h2>今天符合條件的股票</h2>' +
-      '<p class="lead">四個條件各佔一份分數，不必全部符合，依總分排序（同分時成交金額大的在前）。' +
-      '點表頭可以換排序方式。</p>' +
-      '<ol class="note" style="margin:0 0 18px;padding-left:22px">' +
-      '<li><b>月營收強勢</b>：營收比去年同月成長 20% 以上；創 12 個月新高再加分</li>' +
-      '<li><b>法人連續買超</b>：投信或外資連續買超 3 個交易日以上</li>' +
-      '<li><b>突破前 20 日高</b>：收盤價高過前 20 個交易日的最高價，而且成交量是前 5 日平均的 1.5 倍以上</li>' +
-      '<li><b>均線多頭排列</b>：收盤價 &gt; 5 日均價 &gt; 10 日均價 &gt; 20 日均價（短期價格一路在長期之上）</li>' +
-      '</ol><p class="note" style="margin:-8px 0 18px;font-size:13.5px">ETF 沒有月營收，只看後三項，再換算成 100 分，' +
-      '和個股放在同一張表。近 20 日平均每天成交不到 1,000 張的不列入。<br>' +
-      '<b>參考目標 = 賣掉之後淨賺 5%</b>（股價要漲 5.585%，' +
-      '因為手續費 0.1425% × 2 和證交稅 0.3% 都算進去了）。' +
-      '<b>參考停損 = 收盤 − 3 × ATR</b>（ATR 是這檔股票平常一天的波動幅度，' +
-      '距離限制在 2%～10%）。固定百分比的停損實測每個期間都比較差。<br>' +
-      '另外加了<b>波動門檻</b>：ATR 不到股價 2.5% 的不列入 —— 20 天要漲 5.6%，' +
-      '平常一天只動 1% 的股票很難做到，手續費和稅卻一樣要付。' +
-      '它確實讓<b>達標率</b>變高（每個年代都是），但對<b>報酬</b>沒有證據：' +
-      '2019 年後有幫助、2008–2018 反而更差，方向相反。' +
-      '想關掉就把它設成 0。<br>' +
-      '這兩個價位是用<b>今天的收盤價</b>估的（收盤後還不知道明天開盤多少）。' +
-      '實際成交後，請用自己的成交價 × 1.0559 當目標、成交價 − 3 × ATR 當停損。' +
-      '<a href="backtest.html">回測報告</a>有完整數字與取捨。<br>' +
-      '<b>規範 v1 的買法</b>（策略追蹤也照這個算）：由上往下，挑第一檔沒被標成' + App.tip('處置股') +
-      '、' + App.tip('注意股') + '、' + App.tip('全額交割') + '的；一天最多新買 1 檔、同時最多抱 3 檔、同產業最多 2 檔；' +
-      '每筆的金額用下面的計算機依本金算（碰到停損只賠本金 0.5%）。</p>' +
-      '<div id="list"></div>' +
-      '<details id="calcbox"><summary>用我的實際成交價計算停損與目標</summary>' +
-      '<div class="inner"><div id="calc"></div></div></details>' +
-      '<details' + (isDefault() ? '' : ' open') + '><summary>調整條件與參數</summary><div class="inner">' +
-      paramForm() + '</div></details></div>';
-
-    renderList();
-    markChanged();
-    document.querySelectorAll('.prow input').forEach(function (el) {
-      el.addEventListener('input', function () {
-        var v = parseFloat(el.value);
-        if (!isNum(v)) return;
-        P[el.getAttribute('data-k')] = v;
-        saveParams(); renderList(); markChanged();
-      });
-    });
-    document.getElementById('preset').addEventListener('click', function () { applyParams({}); });
-    document.querySelectorAll('[data-preset]').forEach(function (b) {
-      b.addEventListener('click', function () {
-        var x = T.presets.filter(function (q) { return q.key === b.getAttribute('data-preset'); })[0];
-        applyParams(x.params);
-      });
-    });
+      '<h1 style="font-size:30px;letter-spacing:-.03em;font-weight:500;margin:0 0 4px">今日名單</h1>' +
+      '<div class="meta">' + App.esc(T.date) + ' 收盤後 ｜ 穩定強勢股 ' + T.rows.length + ' 檔 ｜ 看的是接下來 10 個交易日</div>' +
+      notes.join('') +
+      bar('', 'ok', Stable.baseline(T)) +
+      bar('', T.passed ? 'ok' : 'warn', verdict) +
+      '<div class="card"><h2>今天的 ' + T.rows.length + ' 檔</h2>' +
+      '<p class="lead">從成交額前 300 名的上市股票裡，先刷掉波動大、常漲停、常跳空、爆量、已經漲太多、融資暴增和被交易所點名的股票，' +
+      '剩下的依 9 個「動能強又穩定」的指標排序。名單不是買賣建議，也不附停利停損。</p>' +
+      (T.rows.length ? '<div class="hcards">' + T.rows.map(Stable.card).join('') + '</div>'
+        : '<div class="empty"><div class="note">今天穩定池裡沒有股票。</div></div>') +
+      dropped + '</div>' +
+      '<div class="card"><h2>名單明細</h2>' + detailTable(T) + '</div>' +
+      '<div class="card"><h2>分數怎麼來的</h2>' +
+      '<p class="lead">每個指標都是在今天的穩定池裡排名次，換成 0–100（100 = 池子裡最好）。總分是 9 個指標的平均，' +
+      '權重一律相同 —— 看過結果才調的權重不能用。滑到指標名稱上看說明。</p>' + scoreTable(T) + '</div>' +
+      '<div class="card"><h2>今天刷掉了誰</h2>' + funnel(T) + '</div>';
+    App.pager(document.getElementById('app'));
   });
 });
 </script>
