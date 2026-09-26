@@ -185,7 +185,8 @@ def main(ignore_gate=False):
             write_summary(["倉儲已是最新：**{}**，沒有新的交易日。".format(_d(last_ok)),
                            "", "手動觸發，仍會重新產出網站，確保線上內容與程式碼一致。"])
             set_output("publish", "true")
-        set_output("changed", "false")
+        # 補進了前幾天的融資券（不是當天的）也要存快取，否則下次又要重抓一遍
+        set_output("changed", "true" if got else "false")
         return 0
 
     log("要補的交易日: {}".format(", ".join(todo)))
