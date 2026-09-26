@@ -1,11 +1,18 @@
 # 使用手冊
 
+> **2026-09 起的日常用法**：資料更新與網站發佈已經由 GitHub Actions 自動完成（見 README「雲端自動更新」），
+> 平常直接開公開網站即可，不需要在本機跑任何東西。本機另有「tw-stock-monitor 排程保險」工作排程
+> （`fallback.py`），雲端漏跑時會自動補觸發。
+>
+> 本機倉儲（`data/twse.duckdb`）**不會**跟著雲端自動更新。要在本機跑研究（`study.py`、`run.py validate`）
+> 之前，先執行 `python run.py daily`（或雙擊 `dashboard.bat`）把本機資料補到最新。
+
 ## 最常用的四件事
 
 ### 1. 開網站（平常就用這個）
 
 ```bash
-cd C:\Users\USER\Claude\twse-quant
+cd C:\Users\USER\Claude\tw-stock-monitor
 python server.py
 ```
 
@@ -24,7 +31,7 @@ python server.py
 直接在終端機跑的話，視窗一關就停。要讓它一直活著：
 
 ```powershell
-Start-Process python -ArgumentList "server.py" -WorkingDirectory "C:\Users\USER\Claude\twse-quant" -RedirectStandardOutput "server.out" -RedirectStandardError "server.err" -WindowStyle Hidden
+Start-Process python -ArgumentList "server.py" -WorkingDirectory "C:\Users\USER\Claude\tw-stock-monitor" -RedirectStandardOutput "server.out" -RedirectStandardError "server.err" -WindowStyle Hidden
 ```
 
 要停掉：`netstat -ano | findstr :5000` 找出 PID，再 `taskkill /PID <PID> /F`。
@@ -32,7 +39,7 @@ Start-Process python -ArgumentList "server.py" -WorkingDirectory "C:\Users\USER\
 **開機自動啟動**（設一次就好）：
 
 ```powershell
-$a = New-ScheduledTaskAction -Execute "python" -Argument "server.py" -WorkingDirectory "C:\Users\USER\Claude\twse-quant"
+$a = New-ScheduledTaskAction -Execute "python" -Argument "server.py" -WorkingDirectory "C:\Users\USER\Claude\tw-stock-monitor"
 Register-ScheduledTask -TaskName "twse-web" -Action $a -Trigger (New-ScheduledTaskTrigger -AtLogOn)
 ```
 
@@ -74,7 +81,7 @@ Register-ScheduledTask -TaskName "twse-web" -Action $a -Trigger (New-ScheduledTa
 ### 2. 每天更新（一行搞定）
 
 ```bash
-cd C:\Users\USER\Claude\twse-quant
+cd C:\Users\USER\Claude\tw-stock-monitor
 python run.py daily
 ```
 
@@ -110,8 +117,8 @@ python -c "import store; print(store.q('''
 ```
 
 可用的表：`quotes`（行情）、`exrights`（除權息）、
-`inst`（三大法人）、`valuation`（估值）、`margin`（融資券）。
-後三個要等回補完成。
+`inst`（三大法人，2012-05 起）、`valuation`（估值）、`margin`（融資券）。
+全部已回補到 2008（三大法人除外，TWSE 沒有更早的資料）。
 
 ---
 
@@ -128,8 +135,10 @@ python -c "import store; print(store.q('''
 | `python run.py validate` | 框架自檢＋因子驗證表 | 3–5 分 |
 | `python run.py ingest` | 續跑回補（冪等，可隨時中斷） | 視進度 |
 | `python run.py build` | 只從 raw/ 重建倉儲 | 1–2 分 |
-| `python tests.py` | 36 項資料層正確性測試 | 2 分 |
+| `python tests.py` | 107 項正確性測試（資料層、短線評分、前瞻實測） | 2 分 |
+| `python tests_short.py` | 只跑短線核心（合成資料） | 幾秒 |
 | `python verify.py` | 29 項統計計算驗證 | 1 分 |
+| `python study.py all` | 重跑 RESEARCH_LOG 裡的每一輪研究 | 視輪數 |
 
 ---
 
@@ -173,8 +182,10 @@ python -c "import store; print(store.q('''
 
 ## 設定每天自動跑（Windows 工作排程器）
 
+> 公開網站已由 GitHub Actions 每天自動更新，這一段只在「想讓本機倉儲也每天跟上」時才需要設定。
+
 ```powershell
-$action  = New-ScheduledTaskAction -Execute "python" -Argument "run.py daily" -WorkingDirectory "C:\Users\USER\Claude\twse-quant"
+$action  = New-ScheduledTaskAction -Execute "python" -Argument "run.py daily" -WorkingDirectory "C:\Users\USER\Claude\tw-stock-monitor"
 $trigger = New-ScheduledTaskTrigger -Daily -At 20:00
 Register-ScheduledTask -TaskName "twse-quant-daily" -Action $action -Trigger $trigger -Description "台股量化倉儲每日更新"
 ```

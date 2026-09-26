@@ -19,16 +19,23 @@ from config import LIQ_MIN_AMT
 ETF_SUBCATS = ("domestic", "dividend")
 
 
-def load_panel(cat="common", subcats=None):
+# 市場 -> (行情表, 除權息表)。上櫃的表由 tpex.py 建立，只供查詢（見 tpex.py 開頭）。
+# 預設一律是上市：選股、研究、前瞻實測都不傳 market，範圍就不會被悄悄改掉。
+MARKET_TABLES = {"twse": ("quotes", "exrights"),
+                 "tpex": ("tpex_quotes", "tpex_exrights")}
+
+
+def load_panel(cat="common", subcats=None, market="twse"):
     """載入行情並計算除權息調整後的日總報酬。"""
+    qt, et = MARKET_TABLES[market]
     where = f"cat = '{cat}'"
     if subcats:
         lst = ", ".join(f"'{x}'" for x in subcats)
         where += f" AND subcat IN ({lst})"
     q = store.q(f"""
         SELECT date, code, name, open, high, low, close, volume, amount, cat, subcat
-        FROM quotes WHERE {where} ORDER BY code, date""")
-    ex = store.q("SELECT date, code, ref_price FROM exrights")
+        FROM {qt} WHERE {where} ORDER BY code, date""")
+    ex = store.q(f"SELECT date, code, ref_price FROM {et}")
     q = q.merge(ex, on=["date", "code"], how="left")
     q = q.sort_values(["code", "date"]).reset_index(drop=True)
 
@@ -195,14 +202,14 @@ def zscore_by_date(s, dates, clip=3.0):
 
 
 def build(cat="common", with_forward=True, subcats=None, horizons=(1, 3, 5, 10, 20),
-          filter_eligible=True):
+          filter_eligible=True, market="twse"):
     """建面板。horizons 指定要算哪些前瞻報酬（在過濾前計算，確保是真實交易日）。
 
     filter_eligible=False 會保留不合格的列（仍標記 eligible 欄位）——
     漏斗頁需要這個，否則「流動性不足」那一層會顯示刷掉 0 檔，
     因為它們在更上游就已經被拿掉了，等於把最大的一刀藏起來。
     """
-    q = load_panel(cat, subcats)
+    q = load_panel(cat, subcats, market=market)
     q = add_features(q)
     if with_forward:
         q = add_forward(q, horizons=horizons)

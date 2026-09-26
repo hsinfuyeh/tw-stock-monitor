@@ -12,6 +12,7 @@
 
     data/twse.duckdb   壓實後約 271 MB（2008-2026，4,597 個交易日）。
     raw/revenue_mops/  月營收，公開資訊觀測站月報表，2007 年起每月一頁。
+    raw/active_etf/    主動式 ETF 持股快照（有的投信無法回補，這是唯一來源）。
 
     月營收必須一起帶。它不在 DuckDB 裡（publish 時才由 revenue.load()
     從原始檔讀），CI 沒有它的話 yoy 全是缺值，漏斗的 L3 營收層會整層失效
@@ -92,6 +93,11 @@ def main(check_only=False):
         with tarfile.open(tar, "w:gz") as t:
             t.add(str(DB), arcname="data/" + DB.name)
             t.add(str(rev), arcname="raw/revenue_mops")
+            # 主動式 ETF 持股快照。群益、國泰只能抓當天、無法回補，
+            # 這份原始檔是唯一來源（倉儲裡的表也有一份，這是備援）。
+            act = RAW / "active_etf"
+            if act.exists():
+                t.add(str(act), arcname="raw/active_etf")
         size = tar.stat().st_size / 1e6
         print("上傳 {:.0f} MB（會覆蓋舊的）…".format(size))
         r = sh("gh", "release", "upload", TAG, str(tar), "--clobber")

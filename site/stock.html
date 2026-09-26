@@ -67,6 +67,39 @@ App.boot(null, function (meta) {
         ' 次，而且只是這一檔股票上的結果 —— 次數這麼少，這種幅度很可能只是運氣。';
     }
 
+    /* 主動式 ETF 動向（activeetf.py）。只陳述事實、標明未驗證。
+       加碼／減碼是看「每單位持股數」，不是張數 —— 張數會被申購贖回帶著走。 */
+    var actBlock = '';
+    if (d.active && (d.active.holders.length || d.active.moves.length)) {
+      var a = d.active;
+      var hold = a.holders.length
+        ? '<p>目前有 <b>' + a.holders.length + '</b> 檔主動式 ETF 持有：' +
+          a.holders.map(function (h) {
+            return App.esc(h.name) + (h.weight != null ? '（' + App.num(h.weight, 2) + '%）' : '');
+          }).join('、') + '。</p>'
+        : '<p>目前追蹤到的主動式 ETF 都沒有持有這檔。</p>';
+      var mv = a.moves.length
+        ? '<div class="scroll"><table><thead><tr><th style="text-align:left">持股日</th>' +
+          '<th style="text-align:left">ETF</th><th style="text-align:left">動作</th>' +
+          '<th>每單位持股變化</th></tr></thead><tbody>' +
+          a.moves.slice(0, 12).map(function (m) {
+            var chg = m.chg == null ? '—' :
+              (m.units_known ? App.num(m.chg, 1, true) + '%' : '張數 ' + App.num(m.chg, 1, true) + '%');
+            return '<tr><td style="text-align:left">' + App.esc(m.date) + '</td><td style="text-align:left">' +
+              App.esc(m.name) + '</td><td style="text-align:left">' + App.esc(m.kind) + '</td><td>' + chg + '</td></tr>';
+          }).join('') + '</tbody></table></div>'
+        : '<p>最近 5 個揭露日沒有明顯的加碼或減碼（每單位持股變化都小於 3%）。</p>';
+      actBlock = '<div class="card"><h2>主動式 ETF 動向</h2>' +
+        '<div class="statusbar warn"><span class="txt"><b>未驗證，僅供參考。</b>' +
+        '主動式 ETF 從 2025 年才開始，資料還太短，本系統還沒有檢驗過「跟著經理人買」有沒有用。</span></div>' +
+        '<p class="lead">有人申購 ETF 時，經理人必須把新資金照比例買成股票，每一檔的張數都會變多，' +
+        '那不代表看好。所以這裡的「加碼／減碼」看的是<b>每單位持股數</b>（持股 ÷ ETF 發行單位數）' +
+        '變化超過 3%；拿不到發行單位數的 ETF 只列出張數變化。</p>' +
+        hold + mv +
+        '<p class="note">目前追蹤 6 家投信（統一、中信、復華、群益、安聯、國泰）的台股主動式 ETF，' +
+        '其他投信尚未接上。</p></div>';
+    }
+
     var tierBlock = '';
     if (d.tier && d.tier_text) {
       var stars = '●'.repeat(d.tier) + '○'.repeat(5 - d.tier);
@@ -91,7 +124,7 @@ App.boot(null, function (meta) {
       '不預測未來、不給買賣建議。</span></div>' + tierBlock +
       '<div class="card"><h2>進場前先確認這幾件事</h2>' +
       '<p class="lead">這些是會實際影響你能否順利買賣、以及該放多大部位的事實。</p>' +
-      chk + '</div>' +
+      chk + '</div>' + actBlock +
       '<div class="card"><h2>最近 30 個交易日</h2>' +
       '<p class="lead">K 線：紅漲綠跌。黃點代表當天出現了至少一種常見型態。</p>' +
       d.chart_svg + '</div>' +

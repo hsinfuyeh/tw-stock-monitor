@@ -209,6 +209,18 @@ def main(ignore_gate=False):
     now_ok = usable_last_date()
     log("完成，三表齊備到 {}".format(_d(now_ok)))
 
+    # 上櫃（只供個股頁查詢）。不在閘門裡：它是附加資訊，缺了不該擋住發佈。
+    # 每次最多抓 15 個交易日：櫃買回應慢，實測約 1 分鐘一天，job 上限 60 分鐘、
+    # 主線本身就要 15 分鐘。新的日子優先，約 5 個交易日後就夠產上櫃個股頁
+    # （要 60 天算波動），300 天大約一個月補齊，不必重新上傳倉儲種子。
+    # tpex.update 不會丟例外。
+    import tpex
+    n_otc = tpex.update(budget=15)
+    log("上櫃寫入 {} 個交易日".format(n_otc))
+    # 主動式 ETF 持股（只顯示）。每檔抓最新一份，另外最多 40 個請求補歷史（約 3 分鐘）。
+    import activeetf
+    activeetf.update(budget=40)
+
     lines = ["資料已更新到 **{}**。".format(_d(now_ok)), ""]
     lines.append("補進 {} 個交易日：{}".format(len(ready), "、".join(ready)))
     if missing:

@@ -252,6 +252,94 @@ def test_revenue():
           "{} 個月、{:,} 家公司".format(n_months, rv["code"].nunique()))
 
 
+# ---------------------------------------------------------------- 上櫃
+def test_tpex():
+    """上櫃只供查詢：解析要對，而且絕不能滲進上市的選股範圍。"""
+    print("\n上櫃（只供查詢）")
+    import tpex
+
+    # 行情：漲跌欄自帶正負號；除權息日是文字；'---' 是停牌
+    f = ["代號", "名稱", "收盤 ", "漲跌", "開盤 ", "最高 ", "最低", "成交股數  ",
+         " 成交金額(元)", " 成交筆數 "]
+    j = {"tables": [{"fields": f, "data": [
+        ["3529", "力旺", "2,640.00", "+240.00", "2,500", "2,650", "2,480", "1,000", "2,640,000", "10"],
+        ["6488", "環球晶", "994.00", "-8.00", "1,000", "1,005", "990", "2,000", "1,988,000", "20"],
+        ["1234", "某某", "50.00", "除息", "50", "51", "49", "3,000", "150,000", "5"],
+        ["5555", "停牌", "---", "---", "---", "---", "---", "0", "0", "0"],
+        ["030001", "某權證", "1.00", "+0.10", "1", "1", "1", "1", "1", "1"]]}]}
+    rows = {r["code"]: r for r in tpex.parse_quotes(j, "2026-09-24")}
+    check("上櫃漲跌欄正號", rows["3529"]["change"] == 240.0)
+    check("上櫃漲跌欄負號（不是絕對值）", rows["6488"]["change"] == -8.0)
+    check("上櫃除權息日標記", rows["1234"]["is_exdiv"] and rows["1234"]["change"] is None)
+    check("上櫃停牌與權證不入表", "5555" not in rows and "030001" not in rows)
+
+    # 法人：欄名重複，按位置取；總計要等於 外資合計 + 投信 + 自營商合計
+    fi = ["代號", "名稱"] + ["買進股數", "賣出股數", "買賣超股數"] * 7 + ["三大法人買賣超股數合計"]
+    r = ["3529", "力旺", "319,048", "904,347", "-585,299", "0", "0", "0",
+         "319,048", "904,347", "-585,299", "420,000", "4,000", "416,000",
+         "33,805", "18,000", "15,805", "20,428", "20,733", "-305",
+         "54,233", "38,733", "15,500", "-153,799"]
+    x = tpex.parse_inst({"tables": [{"fields": fi, "data": [r]}]}, "2026-09-24")[0]
+    check("上櫃法人欄位位置", (x["foreign_net"], x["trust_net"], x["dealer_net"],
+                              x["total_net"]) == (-585299, 416000, 15500, -153799),
+          str(x))
+    check("上櫃法人欄位數不對就放棄",
+          tpex.parse_inst({"tables": [{"fields": fi[:-1], "data": [r[:-1]]}]}, "d") == [])
+
+    # 融資券：按位置取，欄名對不上就放棄
+    fm = ["代號", "名稱", "前資餘額(張)", "資買", "資賣", "現償", "資餘額", "資屬證金",
+          "資使用率(%)", "資限額", "前券餘額(張)", "券賣", "券買", "券償", "券餘額"]
+    m = tpex.parse_margin({"tables": [{"fields": fm, "data": [
+        ["3529", "力旺", "1,991", "1", "2", "0", "1,937", "0", "1", "9", "23", "0", "5", "0", "18"]]}]},
+        "2026-09-24")[0]
+    check("上櫃融資券欄位位置",
+          (m["margin_prev"], m["margin_bal"], m["short_prev"], m["short_bal"]) == (1991, 1937, 23, 18))
+    check("上櫃融資券欄名不符就放棄",
+          tpex.parse_margin({"tables": [{"fields": fm[::-1], "data": [["x"] * 15]}]}, "d") == [])
+
+    # 除權息：類型對齊 TWSE 的 權／息／權息
+    fe = ["除權息日期", "代號", "名稱", "除權息前收盤價", "除權息參考價", "權值", "息值",
+          "權值+息值", "權/息"]
+    e = tpex.parse_exrights({"tables": [{"fields": fe, "data": [
+        ["115/09/01", "1234", "某某", "50.00", "48.00", "0", "2.0", "2.0", "除息"]]}]})[0]
+    check("上櫃除權息解析", (e["date"], e["kind"], e["ref_price"]) == ("2026-09-01", "息", 48.0))
+
+    # 隔離：上市的面板（選股、研究、前瞻實測都走這條）每一列都只能來自上市的表。
+    # 不能用「代號沒出現在上櫃」來檢查：轉市場的股票（例如 6423 億而得 2026-01
+    # 從上市轉上櫃）兩邊都有合法的歷史。
+    try:
+        n_otc = int(store.q("SELECT COUNT(*) n FROM tpex_quotes")["n"][0])
+    except Exception:
+        n_otc = 0
+    if n_otc:
+        p = factors.load_panel("common")
+        n_tw = int(store.q("SELECT COUNT(*) n FROM quotes WHERE cat = 'common'")["n"][0])
+        check("上市面板只來自上市的表（選股範圍沒被改）", len(p) == n_tw,
+              "面板 {:,} 列 vs 上市表 {:,} 列".format(len(p), n_tw))
+        o = factors.load_panel("common", market="tpex")
+        n_o = int(store.q("SELECT COUNT(*) n FROM tpex_quotes WHERE cat = 'common'")["n"][0])
+        check("上櫃面板只來自上櫃的表", len(o) == n_o)
+    else:
+        print("  [SKIP] 本機還沒有上櫃的表，跳過隔離檢查")
+
+
+def test_activeetf():
+    """主動 ETF：申購帶來的張數增加不能被當成加碼。"""
+    print("\n主動式 ETF（只顯示）")
+    import activeetf as a
+    k, c = a.classify_move(1000, 2000, 1e8, 2e8)
+    check("單位數翻倍、張數翻倍 = 持平（被動照比例買）", k == "持平" and abs(c) < 1e-9)
+    k, _ = a.classify_move(1000, 1300, 1e8, 1e8)
+    check("單位數不變、張數 +30% = 加碼", k == "加碼")
+    k, _ = a.classify_move(1000, 1500, 1e8, 2e8)
+    check("張數 +50% 但單位數翻倍 = 減碼（每單位持股變少）", k == "減碼")
+    check("新進／出清", a.classify_move(0, 500, 1e8, 1e8)[0] == "新進"
+          and a.classify_move(500, 0, 1e8, 1e8)[0] == "出清")
+    k, _ = a.classify_move(1000, 2000, None, None)
+    check("拿不到單位數時只陳述張數、不判定加碼", k == "張數增加")
+    check("變化小於門檻 = 持平", a.classify_move(1000, 1020, 1e8, 1e8)[0] == "持平")
+
+
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")   # Windows 主控台預設 cp950，印不出 −
     print("=" * 66)
@@ -264,6 +352,8 @@ if __name__ == "__main__":
     test_exdiv()
     test_no_lookahead()
     test_revenue()
+    test_tpex()
+    test_activeetf()
     test_framework(nd)
     import tests_short
     tests_short.run(check)

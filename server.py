@@ -90,16 +90,21 @@ def panel(kind="common", full=False):
     with _lock:
         _check_fresh()
         if key not in _cache:
+            # "otc" = 上櫃普通股，只供個股頁查詢（見 tpex.py 開頭為什麼要隔開）。
+            # 讀的是 tpex_* 那一組表，其餘流程跟上市一樣；百分位都是「在上櫃股票之間」比。
+            otc = kind == "otc"
+            pfx = "tpex_" if otc else ""
             sub = factors.ETF_SUBCATS if kind == "etf" else None
-            d = factors.build(cat=kind, subcats=sub, horizons=(1, 3, 5, 10, 20),
-                              filter_eligible=not full)
+            d = factors.build(cat="common" if otc else kind, subcats=sub,
+                              horizons=(1, 3, 5, 10, 20), filter_eligible=not full,
+                              market="tpex" if otc else "twse")
             # 併入三大法人買賣超。
             # 這是全系統唯一通過「十分位單調 + 樣本外仍為正」的訊號
             # （單調性 +0.88，樣本外毛價差 +0.23%/5日），但效果小於交易成本，
             # 所以只當參考資訊呈現，不做成買賣訊號。
             try:
                 inst = store.q("SELECT date, code, foreign_net, trust_net, "
-                               "total_net FROM inst")
+                               "total_net FROM {}inst".format(pfx))
                 inst["date"] = pd.to_datetime(inst["date"])
                 d = d.merge(inst, on=["date", "code"], how="left")
                 d["法人買超"] = (d["total_net"] / d["vol20"]).replace(
@@ -122,7 +127,8 @@ def panel(kind="common", full=False):
             #   排除價格位置最低 30% -> 剩餘池子平均 +2.93%/年 (t=2.96)
             # 是排除不是選擇 —— 排除的成本門檻是 0，選擇要先跨過 0.6% 手續費。
             try:
-                v = store.q("SELECT date, code, pe, pb, div_yield FROM valuation")
+                v = store.q("SELECT date, code, pe, pb, div_yield FROM {}valuation"
+                            .format(pfx))
                 v["date"] = pd.to_datetime(v["date"])
                 d = d.merge(v, on=["date", "code"], how="left")
             except Exception as e:
@@ -181,10 +187,16 @@ def panel(kind="common", full=False):
                       flush=True)
                 traceback.print_exc()
                 d["yoy"] = d["yoy_3m"] = d["sue"] = d["days_since"] = np.nan
-            d["L"] = likelihood.score(d)
-            d["tier"] = d.groupby("date")["L"].transform(
-                lambda s: pd.qcut(s.rank(method="first"), 5,
-                                  labels=False, duplicates="drop") + 1)
+            if otc:
+                # 歷史勝率等級是用上市股票驗證的（likelihood.py），上櫃沒有驗證過，
+                # 不能套用那組 46.2%→53.6% 的數字。寧可不顯示，也不要借用別人的成績單。
+                d["L"] = np.nan
+                d["tier"] = np.nan
+            else:
+                d["L"] = likelihood.score(d)
+                d["tier"] = d.groupby("date")["L"].transform(
+                    lambda s: pd.qcut(s.rank(method="first"), 5,
+                                      labels=False, duplicates="drop") + 1)
             # 砍掉「只有行情、還沒有估值／法人」的那幾天（見 usable_last_date）
             cut = usable_last_date()
             if cut is not None:
@@ -277,6 +289,11 @@ def do_update():
         _set(msg="重建倉儲…", detail="約需 3 分鐘，期間網站仍可瀏覽")
         with _lock:
             store.build(verbose=False)
+            # 上櫃（只供查詢）跟著補；失敗只警告，不影響上市主線
+            import tpex
+            tpex.update(budget=15, verbose=False)
+            import activeetf
+            activeetf.update(budget=40, verbose=False)
             _cache.clear()          # 面板要跟著重算，否則畫面還是舊數字
         _set(msg="產生網頁資料…", detail="約需 4 分鐘")
         publish_site()
@@ -323,15 +340,28 @@ def universe():
     with _lock:
         _check_fresh()
         if "uni" not in _cache:
-            _cache["uni"] = store.q("""
+            u = store.q("""
                 SELECT code, name, cat, subcat FROM quotes
                 WHERE date = (SELECT MAX(date) FROM quotes)
                   AND cat IN ('common','etf')
                 ORDER BY code""")
+            # 上櫃普通股（只供查詢）。cat 標成 "otc"，下游才知道要用上櫃的面板。
+            # 表還沒建（CI 還沒回補到）就只有上市，不是錯誤。
+            try:
+                o = store.q("""
+                    SELECT code, name, 'otc' AS cat, subcat FROM tpex_quotes
+                    WHERE date = (SELECT MAX(date) FROM tpex_quotes)
+                      AND cat = 'common'""")
+                o = o[~o["code"].isin(u["code"])]      # 轉上市的股票以上市為準
+                u = pd.concat([u, o], ignore_index=True).sort_values("code") \
+                      .reset_index(drop=True)
+            except Exception:
+                pass
+            _cache["uni"] = u
         return _cache["uni"]
 
 
-KIND_LABEL = {"common": "上市股", "etf": "ETF",
+KIND_LABEL = {"common": "上市股", "otc": "上櫃股", "etf": "ETF",
               "leveraged": "槓桿ETF", "inverse": "反向ETF",
               "bond": "債券ETF", "foreign": "海外ETF",
               "active": "主動式ETF", "dividend": "高股息ETF",
@@ -341,7 +371,7 @@ KIND_LABEL = {"common": "上市股", "etf": "ETF",
 def _kind_of(row):
     if row["cat"] == "etf":
         return KIND_LABEL.get(row["subcat"], "ETF")
-    return "上市股"
+    return KIND_LABEL.get(row["cat"], "上市股")
 
 
 # --------------------------------------------------------------------- 檢查項
@@ -353,6 +383,15 @@ def build_checklist(s, code, cat):
     """
     last = s.iloc[-1]
     items = []
+    # 上櫃（cat="otc"）：百分位都是跟其他上櫃股票比；下面兩條排除規則的「過去統計」
+    # 只在上市股票驗證過，上櫃不能借用那兩個數字，所以只陳述事實、不下紅燈。
+    otc = cat == "otc"
+    mkt = "上櫃股票" if otc else "全市場"
+    if otc:
+        items.append(("warn", "這是上櫃股票",
+                      "本系統的選股與研究只用上市股票。這一頁的比較都是跟其他上櫃股票比，"
+                      "而且「歷史勝率」和兩條排除規則在上櫃沒有驗證過，所以不顯示。",
+                      None))
 
     # 1. 流動性 —— 決定你能放多大部位、進出是否會滑價
     amt = float(last["amt20"])
@@ -419,8 +458,9 @@ def build_checklist(s, code, cat):
 
     # 4. 除權息 —— 影響帳面損益的判讀
     try:
-        ex = sq("""SELECT date, value, kind FROM exrights
-                        WHERE code = ? ORDER BY date DESC LIMIT 40""", [code])
+        ex = sq("""SELECT date, value, kind FROM {}
+                        WHERE code = ? ORDER BY date DESC LIMIT 40""".format(
+                            "tpex_exrights" if otc else "exrights"), [code])
         ex["date"] = pd.to_datetime(ex["date"])
         today = pd.Timestamp(dt.date.today())
         fut = ex[ex["date"] >= today].sort_values("date")
@@ -452,10 +492,12 @@ def build_checklist(s, code, cat):
         rank_txt = ""
         lv = "ok"
         if ppct is not None and not pd.isna(ppct):
-            rank_txt = "（比全市場 {:.0f}% 的股票高）".format(float(ppct) * 100)
+            rank_txt = "（比{} {:.0f}% 的股票高）".format(mkt, float(ppct) * 100)
             if float(ppct) < 0.30:
-                lv = "bad"
-        if lv == "bad":
+                lv = "warn" if otc else "bad"
+        if otc and ppct is not None and not pd.isna(ppct) and float(ppct) < 0.30:
+            extra = "落在上櫃股票最低 30%。"
+        elif lv == "bad":
             extra = ("<strong>落在全市場最低 30%。</strong>"
                      "過去統計，排除這一群之後，剩下的股票平均每年多賺約 2.9%。")
         elif pos >= 90:
@@ -469,7 +511,12 @@ def build_checklist(s, code, cat):
     # 6. 殖利率位階 —— 排除最低 40% 可讓剩餘池子的「中位數」+5.49%/年
     ypct, dy = last.get("ypct"), last.get("div_yield")
     if ypct is not None and not pd.isna(ypct):
-        if float(ypct) < 0.40:
+        if float(ypct) < 0.40 and otc:
+            items.append(("warn", "殖利率偏低",
+                          "殖利率 {:.2f}%，只比上櫃股票 {:.0f}% 的股票高，落在最低 40%。".format(
+                              float(dy) if dy == dy else 0, float(ypct) * 100),
+                          "殖利率排名"))
+        elif float(ypct) < 0.40:
             items.append(("bad", "殖利率偏低",
                           "殖利率 {:.2f}%，只比全市場 {:.0f}% 的股票高。"
                           "<strong>落在最低 40%。</strong>"
@@ -478,9 +525,13 @@ def build_checklist(s, code, cat):
                           "殖利率排名"))
         else:
             items.append(("ok", "殖利率正常",
-                          "殖利率 {:.2f}%，比全市場 {:.0f}% 的股票高。".format(
-                              float(dy) if dy == dy else 0, float(ypct) * 100),
+                          "殖利率 {:.2f}%，比{} {:.0f}% 的股票高。".format(
+                              float(dy) if dy == dy else 0, mkt, float(ypct) * 100),
                           "殖利率排名"))
+    if otc:
+        # 波動那一項的百分位是 panel("otc") 算的 —— 比較對象是上櫃股票，不是整個市場
+        items = [(lv, t, d.replace("市場上 ", "上櫃股票中 "), *rest)
+                 for lv, t, d, *rest in items]
     return items
 
 

@@ -116,8 +116,10 @@ def emit_meta(p, day_date):
     )
 
 
-def emit_universe():
+def emit_universe(include_otc=True):
     u = server.universe()
+    if not include_otc:
+        u = u[u["cat"] != "otc"]
     return [dict(code=str(r["code"]), name=str(r["name"]),
                  kind=server._kind_of(r)) for _, r in u.iterrows()]
 
@@ -276,7 +278,50 @@ def selfcheck(p, funnel_data, screens_data):
         len(steps), len(screens_data), funnel_data["passed"]), flush=True)
 
 
-def emit_stock(code, name, cat, pan):
+def active_index():
+    """主動式 ETF 對每檔股票的持有與最近動作（activeetf.py）。只顯示、不計分。
+
+    拿不到就回 None，個股頁那張卡片就不出現 —— 附加資訊不能擋住發佈。"""
+    try:
+        import activeetf
+        import store
+        hold = store.q("""
+            SELECT h.etf, h.code, h.date, h.weight FROM {t} h
+            JOIN (SELECT etf, MAX(date) d FROM {t} GROUP BY etf) m
+              ON h.etf = m.etf AND h.date = m.d""".format(t=activeetf.HOLD_TABLE))
+        mv = activeetf.moves(lookback=5)
+        names = store.q("""SELECT code, name FROM quotes
+                           WHERE date = (SELECT MAX(date) FROM quotes) AND code LIKE '00%A'""")
+        try:
+            names = pd.concat([names, store.q("""SELECT code, name FROM tpex_quotes
+                           WHERE date = (SELECT MAX(date) FROM tpex_quotes) AND code LIKE '00%A'""")])
+        except Exception:
+            pass
+    except Exception as e:
+        print("::warning::主動 ETF 資料載入失敗，個股頁不顯示這一塊：{}".format(e), flush=True)
+        return None
+    nm = dict(zip(names["code"], names["name"]))
+    out = {}
+    for _, r in hold.iterrows():
+        out.setdefault(r["code"], dict(holders=[], moves=[]))["holders"].append(dict(
+            etf=r["etf"], name=nm.get(r["etf"], r["etf"]), date=str(r["date"])[:10],
+            weight=None if pd.isna(r["weight"]) else float(r["weight"])))
+    if len(mv):
+        mv = mv[mv["kind"] != "持平"].sort_values("date", ascending=False)
+        for _, r in mv.iterrows():
+            out.setdefault(r["code"], dict(holders=[], moves=[]))["moves"].append(dict(
+                etf=r["etf"], name=nm.get(r["etf"], r["etf"]), date=str(r["date"])[:10],
+                kind=r["kind"], units_known=bool(r["units_known"]),
+                chg=None if r["spu_chg"] is None or pd.isna(r["spu_chg"])
+                else round(float(r["spu_chg"]) * 100, 1)))
+    for v in out.values():
+        v["holders"].sort(key=lambda x: -(x["weight"] or 0))
+    print("主動 ETF：{} 檔 ETF、涵蓋 {} 檔股票".format(hold["etf"].nunique(), len(out)),
+          flush=True)
+    return out
+
+
+def emit_stock(code, name, cat, pan, act=None):
     """單檔的完整內容。回傳 None 代表這檔不在可分析範圍。"""
     sub = factors.ETF_SUBCATS if cat == "etf" else None
     s, _ = stock_report.prepare(code, cat=cat, subcats=sub, panel=pan)
@@ -304,6 +349,7 @@ def emit_stock(code, name, cat, pan):
         checklist=chk, signals=sigs, cost_pct=COST_ROUND_TRIP * 100,
         # 預先算好的 SVG。移植畫圖邏輯到 JS 最容易產生「看起來像但其實不同」。
         chart_svg=stock_report.candles_svg(s.tail(30)),
+        active=(act or {}).get(code),
     )
 
 
@@ -317,6 +363,16 @@ def build(limit=None, out=SITE):
     p_etf = server.panel("etf")
     p_full = server.panel("common", full=True)
     day_date = p_common["date"].max()
+    act = active_index()
+    # 上櫃（只供個股頁查詢，見 tpex.py）。表還沒建或載入失敗都不擋住發佈 ——
+    # 上櫃是附加資訊，上市那條主線不能因為它停擺。
+    try:
+        p_otc = server.panel("otc")
+        print("上櫃面板：{:,} 列、{} 檔".format(len(p_otc), p_otc["code"].nunique()),
+              flush=True)
+    except Exception as e:
+        print("::warning::上櫃面板載入失敗，這次不產上櫃個股頁：{}".format(e), flush=True)
+        p_otc = None
 
     # 先全部算出來、檢查過，才動既有的 data/。
     # 順序很重要：原本是一開始就把 data/ 砍掉，中途失敗會留下一個空站。
@@ -346,7 +402,7 @@ def build(limit=None, out=SITE):
 
     sizes = {}
     sizes["meta"] = write(data / "meta.json", emit_meta(p_common, day_date))
-    sizes["universe"] = write(data / "universe.json", emit_universe())
+    sizes["universe"] = write(data / "universe.json", emit_universe(p_otc is not None))
     sizes["funnel"] = write(data / "funnel.json", fn)
     shortterm.write(data, *short)
     forward.write(data, fwd_new, fwd)
@@ -367,9 +423,12 @@ def build(limit=None, out=SITE):
     stot = 0
     for i, (_, r) in enumerate(u.iterrows()):
         code, cat = str(r["code"]), r["cat"]
-        pan = p_etf if cat == "etf" else p_common
+        pan = {"etf": p_etf, "otc": p_otc}.get(cat, p_common)
+        if pan is None:
+            skip += 1
+            continue
         try:
-            d = emit_stock(code, str(r["name"]), cat, pan)
+            d = emit_stock(code, str(r["name"]), cat, pan, act)
         except Exception:
             d = None
         if d is None:
