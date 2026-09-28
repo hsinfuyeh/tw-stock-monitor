@@ -73,6 +73,8 @@ border-radius:var(--pill);border:1px solid transparent}
 font-weight:500}
 .navlink.on:hover{text-decoration:none}
 .navs{display:flex;gap:2px;min-width:0}
+/* 更新、明暗兩顆按鈕靠右：導覽靠左，按鈕推到最右邊 */
+#updbtn2{margin-left:auto}
 .searchbox{position:relative;flex:1;min-width:0}
 .searchbox input{width:100%;padding:11px 15px;border:1px solid var(--line2);
 border-radius:var(--rin);background:var(--bg);color:var(--fg);font-size:16px;
