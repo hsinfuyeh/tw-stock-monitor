@@ -59,6 +59,46 @@ function exPay(r) {
   return parts.join('<br>') || tbd;
 }
 
+/* 社群聲量兩張榜（social.py）。欄位：聲量、來源拆解、平常（前 20 個交易日平均）與倍數。 */
+function socialTable(d) {
+  var surge = d.key === 'social_surge';
+  return '<div class="scroll"><table class="ltable stk"><colgroup><col style="width:64px"><col>' +
+    '<col style="width:92px"><col style="width:78px"><col style="width:78px"><col style="width:84px">' +
+    '<col style="width:150px"><col style="width:110px"></colgroup><thead><tr><th>代號</th>' +
+    '<th style="text-align:left">名稱</th><th>產業</th><th>' + App.tip('收盤') + '</th><th>' + App.tip('今日') + '</th>' +
+    '<th' + (surge ? '' : ' class="sorted"') + '>聲量</th><th>來源</th>' +
+    '<th' + (surge ? ' class="sorted"' : '') + '>平常 → 倍數</th></tr></thead><tbody>' +
+    d.rows.map(function (r) {
+      var src = ['PTT 文章 ' + r.ptt_posts, '推文 ' + r.ptt_pushes];
+      if (r.threads) src.push('Threads ' + r.threads);
+      return '<tr><td><a href="stock?c=' + r.code + '"><strong>' + r.code + '</strong></a></td>' +
+        '<td style="text-align:left"><a href="stock?c=' + r.code + '">' + App.esc(r.name) + '</a>' +
+        (r.otc ? ' <span class="mut" style="font-size:11.5px">上櫃</span>' : '') + '</td>' +
+        '<td class="mut">' + App.esc(r.ind || '—') + '</td><td>' + App.num(r.close) + '</td>' +
+        '<td>' + App.pct(r.chg_pct) + '</td><td' + (surge ? '' : ' class="sorted"') + '>' + r.extra + '</td>' +
+        '<td class="mut" style="white-space:normal;font-size:12.5px;line-height:1.5">' + src.join('<br>') + '</td>' +
+        '<td' + (surge ? ' class="sorted"' : '') + '>' + (r.base == null ? '—' :
+          App.num(r.base, 1) + ' → <b>' + App.num(r.ratio, 1) + ' 倍</b>') + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+}
+
+/* 社群資料的涵蓋範圍與各來源狀態，放在表格上面：哪天到哪天、PTT 抓到幾篇、Threads 有沒有開。 */
+function socialStatus(d) {
+  var st = d.social || {};
+  if (st.error) return '<p class="note up">社群資料這次抓不到：' + App.esc(st.error) + '</p>';
+  var w = st.window || [];
+  var ptt = (st.sources || [])[0] || {};
+  var parts = ['統計期間 ' + App.esc(w[0] === w[1] ? w[0] : (w[0] || '') + ' ~ ' + (w[1] || '')) +
+    '（上一個交易日之後到這個交易日，連假的討論算進開市那天）',
+    'PTT 股票板 ' + (ptt.articles != null ? ptt.articles + ' 篇文章（連同底下的推文一起算）' : '無資料'),
+    'Threads ' + (st.threads === 'on' ? '已啟用' : '未啟用（需要 Meta 官方 API 金鑰）'),
+    'Dcard、Mobile01 被網站防護擋住、CMoney 沒有公開資料，所以沒有收'];
+  if (st.too_new) parts.push('<b>「暴增」需要至少 5 個交易日的歷史才能比，資料還在累積中（目前 ' +
+    (st.base_windows || 0) + ' 天）</b>');
+  // 不用 .note：共用層會把 .note 收成 ⓘ 提示，這幾行（來源開了沒）要直接看得到
+  return '<div class="mut" style="font-size:13px;line-height:1.7;margin:0 0 12px">' + parts.join('<br>') + '</div>';
+}
+
 App.boot('lists', function (meta) {
   var key = App.qs('s') || 'sue';
   var info = {};
@@ -66,7 +106,10 @@ App.boot('lists', function (meta) {
   var tabs = App.otherTabs(meta, key);
 
   var isEx = key === 'exdiv';
-  var metaline = isEx
+  var isSocial = key.indexOf('social_') === 0;
+  var metaline = isSocial
+    ? '社群上被提到的次數 ｜ 上市、上櫃普通股 ｜ 點代號看個股'
+    : isEx
     ? '未來 60 天內的除權息（證交所預告表，全部上市普通股） ｜ 資料截止 ' + App.esc(meta.data_date)
     : '資料截止 ' + App.esc(meta.data_date) +
       ' ｜ 只列近 20 日平均每天成交 2,000 萬以上的股票 ｜ 點代號看個股';
@@ -75,7 +118,10 @@ App.boot('lists', function (meta) {
   return App.get('screens/' + key + '.json').then(function (d) {
     var tbl;
     if (!d.rows.length) {
-      tbl = '<div class="empty"><div class="note">今天沒有符合條件的標的。</div></div>';
+      tbl = (isSocial ? socialStatus(d) : '') +
+        '<div class="empty"><div class="note">今天沒有符合條件的標的。</div></div>';
+    } else if (isSocial) {
+      tbl = socialStatus(d) + socialTable(d);
     } else if (isEx) {
       tbl = '<div class="scroll"><table class="ltable stk"><colgroup><col style="width:64px"><col>' +
         '<col style="width:92px"><col style="width:96px"><col style="width:84px"><col style="width:190px">' +

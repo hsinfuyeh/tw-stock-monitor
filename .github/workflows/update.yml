@@ -90,6 +90,9 @@ jobs:
 
       - name: 抓取新資料
         id: fetch
+        env:
+          # 社群聲量的 Threads 來源（social.py）。沒設這個 Secret 就只用 PTT，不會出錯。
+          THREADS_TOKEN: ${{ secrets.THREADS_TOKEN }}
         run: python ci_update.py ${{ inputs.ignore_gate && '--ignore-gate' || '' }}
 
       # publish=false 時下面全部跳過（綠燈而不是紅燈）：

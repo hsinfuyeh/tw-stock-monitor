@@ -163,6 +163,8 @@ def emit_screens(p):
     for key, title, desc, cat in screens.SCREENS:
         if key == "screen":
             continue          # 已改為導向選股頁，不再單獨產出
+        if key.startswith("social_"):
+            continue          # 社群聲量另外產出（emit_social），不參加自我檢查
         try:
             if key == "exdiv":
                 df = screens.upcoming_exdiv(p)
@@ -230,6 +232,72 @@ def _add_ind(rows):
         ind = _add_ind._map = {c: barrier.IND_NAME.get(v) for c, v in m.items()}
     for r in rows:
         r["ind"] = ind.get(r["code"])
+
+
+def _last_quotes():
+    """每檔股票最新收盤與漲跌幅（上市 + 上櫃，不限流動性）。社群榜要列冷門股，panel 裡沒有。"""
+    import store
+    out = {}
+    for t in ("quotes", "tpex_quotes"):
+        try:
+            q = store.q("""SELECT code, date, close FROM {t}
+                           WHERE date >= (SELECT MAX(date) FROM {t}) - INTERVAL 10 DAY""".format(t=t))
+        except Exception:
+            continue
+        q = q.dropna(subset=["close"]).sort_values(["code", "date"])
+        for code, g in q.groupby("code"):
+            c = g["close"].tolist()
+            out[str(code)] = (c[-1], (c[-1] / c[-2] - 1) * 100 if len(c) > 1 and c[-2] else None,
+                              t == "tpex_quotes")
+    return out
+
+
+def emit_social(day_date):
+    """社群聲量兩張榜（social.py）。任何一步失敗都只回傳「抓不到」的空榜，不擋住發佈 ——
+    這是附加資訊，選股主線不能因為 PTT 當機而停擺。"""
+    info = {k: (t, d, c) for k, t, d, c in screens.SCREENS if k.startswith("social_")}
+
+    def pack(key, rows, extra_title, status):
+        t, d, c = info[key]
+        return dict(key=key, title=t, desc=d, cat=c, extra="social", extra_title=extra_title,
+                    note=screens.NOTES.get(key), rows=rows, social=status)
+
+    try:
+        import ingest
+        import social
+        cal = ["{}-{}-{}".format(x[:4], x[4:6], x[6:]) for x in ingest.trading_calendar()]
+        dd = str(day_date)[:10]
+        df, meta = social.ranking(dd, cal)
+        meta["threads"] = "on" if social.threads_enabled() else "off"
+    except Exception as e:
+        print("::warning::社群聲量產出失敗，這次兩張榜顯示抓不到：{}".format(e), flush=True)
+        st = dict(error=str(e)[:200])
+        return {k: pack(k, [], "", st) for k in info}
+    q = _last_quotes()
+    names = social._names()
+
+    def rows_of(d):
+        rr = []
+        for _, r in d.iterrows():
+            code = str(r["code"])
+            close, chg, otc = q.get(code, (None, None, False))
+            rr.append(dict(code=code, name=names.get(code, code), close=close, chg_pct=chg, otc=otc,
+                           extra=int(r["total"]), ptt_posts=int(r["ptt_posts"]),
+                           ptt_pushes=int(r["ptt_pushes"]), threads=int(r["threads"]),
+                           base=None if pd.isna(r["base"]) else round(float(r["base"]), 1),
+                           ratio=None if pd.isna(r["ratio"]) else round(float(r["ratio"]), 2)))
+        _add_ind(rr)
+        return rr
+
+    if not len(df):
+        return {k: pack(k, [], "", meta) for k in info}
+    hot = df.sort_values(["total", "ptt_posts"], ascending=False).head(screens.LIST_N)
+    surge = df[(df["total"] >= social.MIN_MENTIONS) & df["base"].notna()]
+    surge = surge.sort_values(["ratio", "total"], ascending=False).head(screens.LIST_N)
+    enough = meta.get("base_windows", 0) >= 5       # 基準少於 5 個交易日，「暴增」沒有意義
+    return {"social_hot": pack("social_hot", rows_of(hot), "聲量", meta),
+            "social_surge": pack("social_surge", rows_of(surge) if enough else [],
+                                 "比平常", dict(meta, too_new=not enough))}
 
 
 class Inconsistent(Exception):
@@ -428,6 +496,8 @@ def build(limit=None, out=SITE):
     print("榜單…", flush=True)
     sc = emit_screens(p_common)
     selfcheck(p_common, fn, sc)
+    print("社群聲量…", flush=True)
+    sc.update(emit_social(day_date))
     print("穩定強勢股名單、回測與名單成績（RESEARCH_LOG 第 11 輪）…", flush=True)
     feat = stable.features()
     ds = str(feat["date"].max())[:10]

@@ -579,6 +579,7 @@ TAB_GROUPS_SPEC = [
     ("今日行情", ["amount", "gain", "loss", "volume", "high"]),
     ("法人動向", ["inst", "instout"]),
     ("其他", ["calm", "exdiv"]),
+    ("社群聲量", ["social_hot", "social_surge"]),
     ("過去表現較差", ["low", "score"]),
 ]
 def is_remote():

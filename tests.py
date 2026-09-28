@@ -340,6 +340,57 @@ def test_activeetf():
     check("變化小於門檻 = 持平", a.classify_move(1000, 1020, 1e8, 1e8)[0] == "持平")
 
 
+def test_social():
+    """社群聲量（social.py）：股票比對、交易日窗口、暴增倍數。全部用合成資料，不連網。"""
+    print("\n社群聲量")
+    import datetime as dt
+    import tempfile
+    from pathlib import Path as _P
+    import social
+    names = {"2330": "台積電", "5347": "世界", "1303": "南亞", "2408": "南亞科", "2027": "大成鋼",
+             "1210": "大成",
+             "2618": "長榮航", "2603": "長榮", "8299": "群聯", "3167": "大量"}
+    m = social.Matcher(names)
+    cases = [("2330 台積電 多", {"2330"}), ("東南亞市場", set()), ("南亞科漲停", {"2408"}),
+             ("長榮航大漲", {"2618"}), ("世界很大", set()),
+             ("5347 看好", {"5347"}), ("群聯2300點", {"8299"}), ("2026/09/28 盤後", set()),
+             ("爆出大量", set()), ("2027 年產能", set()), ("2027大成鋼 漲停", {"2027"}),
+             ("大成功", set())]
+    bad = [(t, sorted(m.find(t)), sorted(w)) for t, w in cases if m.find(t) != w]
+    check("代號、名稱、長名稱優先、日常用語與日期不誤判", not bad, str(bad)[:200])
+    m2 = social.Matcher(dict(names, **{"5347": "世界"}))
+    check("被擋掉的名稱用完整稱呼補回（世界先進）", m2.find("世界先進法說") == {"5347"})
+
+    w = social.windows(["2026-09-22", "2026-09-23", "2026-09-24", "2026-09-29"], 2)
+    check("交易日窗口：連假（9/25–9/28）算進開市那天",
+          w.get("2026-09-29") == ["2026-09-25", "2026-09-26", "2026-09-27", "2026-09-28", "2026-09-29"],
+          str(w.get("2026-09-29")))
+
+    # 合成 PTT 文章：2330 每天 3 篇（平穩）、8299 平常 1 篇、最後一天 20 篇（暴增）
+    tmp = _P(tempfile.mkdtemp())
+    old_dir, old_th, old_names = social.PTT_DIR, social.TH_DIR, social._names
+    social.PTT_DIR, social.TH_DIR = tmp / "ptt", tmp / "threads"
+    social._names = lambda: names
+    cal = ["2026-08-{:02d}".format(d) for d in range(3, 29) if dt.date(2026, 8, d).weekday() < 5]
+    k = 0
+    for day in cal:
+        for code, n in (("2330", 3), ("8299", 20 if day == cal[-1] else 1)):
+            for _ in range(n):
+                k += 1
+                social._write(social.PTT_DIR / "M.{}.A.X.json.gz".format(k),
+                              dict(id=str(k), epoch=0, date=day, title=code, body="", pushes=[]))
+    try:
+        df, info = social.ranking(cal[-1], cal)
+        r = df.set_index("code")
+        check("聲量最高：當天的提及次數", int(r.loc["8299", "total"]) == 20 and int(r.loc["2330", "total"]) == 3)
+        check("暴增倍數 = (今天 + 1) ÷ (前 20 個交易日平均 + 1)",
+              abs(r.loc["8299", "ratio"] - 21 / 2) < 1e-9 and abs(r.loc["2330", "ratio"] - 1) < 1e-9,
+              "{:.2f} / {:.2f}".format(r.loc["8299", "ratio"], r.loc["2330", "ratio"]))
+        check("基準只用有資料的交易日窗口", info["base_windows"] == 18, str(info["base_windows"]))
+    finally:
+        social.PTT_DIR, social.TH_DIR, social._names = old_dir, old_th, old_names
+
+
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")   # Windows 主控台預設 cp950，印不出 −
     print("=" * 66)
@@ -354,6 +405,7 @@ if __name__ == "__main__":
     test_revenue()
     test_tpex()
     test_activeetf()
+    test_social()
     test_framework(nd)
     import tests_short
     tests_short.run(check)

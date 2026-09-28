@@ -167,6 +167,9 @@ def main(ignore_gate=False):
         # 晚上的排程（21:45、22:30）：當天的融資券公布了，就用完整資料重新發佈一次。
         # 名單以這一版為準（下午那版的融資券是前一天的）。
         got = refresh_margin(cal, cutoff)
+        import social                         # 社群聲量（只顯示）：每次要發佈都更新
+        if cutoff in got or os.environ.get("GITHUB_EVENT_NAME") != "schedule":
+            social.update()
         if cutoff in got:
             write_summary(["當天（{}）的融資券已公布，用完整資料重新產出名單。".format(_d(last_ok))])
             set_output("publish", "true")
@@ -249,6 +252,9 @@ def main(ignore_gate=False):
     # 主動式 ETF 持股（只顯示）。每檔抓最新一份，另外最多 40 個請求補歷史（約 3 分鐘）。
     import activeetf
     activeetf.update(budget=40)
+    # 社群聲量（只顯示）。PTT 每次最多抓 400 篇（約 5 分鐘），不丟例外、不擋發佈。
+    import social
+    social.update()
 
     lines = ["資料已更新到 **{}**。".format(_d(now_ok)), ""]
     lines.append("補進 {} 個交易日：{}".format(len(ready), "、".join(ready)))

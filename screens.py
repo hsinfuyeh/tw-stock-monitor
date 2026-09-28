@@ -29,6 +29,7 @@ TAB_LABEL = {
     "inst": "法人買", "instout": "法人賣", "score": "綜合評分",
     "screen": "體質篩選", "pos": "接近一年高點", "rev": "營收成長",
     "sue": "營收優於預期",
+    "social_hot": "社群聲量最高", "social_surge": "社群聲量暴增",
 }
 
 # 用詞原則：一般投資人看得懂。不出現 t 值、標準差、因子、宇宙這類詞；
@@ -75,6 +76,13 @@ SCREENS = [
     ("score", "綜合評分",
      "把多個指標加總成一個分數排序。過去統計<b>分數越高、之後表現越差</b>，不要照著買。",
      "score"),
+    # 社群聲量（social.py）。只顯示、不計分；不走 run_screen，publish.emit_social 另外產出。
+    ("social_hot", "社群聲量最高",
+     "PTT 股票板（與 Threads，有開通時）上被提到最多次的股票：文章、推文都算。"
+     "上市、上櫃普通股都列，不看成交量門檻。台積電這類大型股會長期霸榜，想找「突然被討論」的看「聲量暴增」。", "fact"),
+    ("social_surge", "社群聲量暴增",
+     "被討論的次數比自己平常（前 20 個交易日平均）放大最多的股票。至少要被提到 5 次才列，"
+     "免得 1 次變 3 次也算暴增。代表大家突然在注意它，不代表會漲。", "fact"),
 ]
 SCREEN_MAP = {k: (t, d, c) for k, t, d, c in SCREENS}
 
@@ -305,3 +313,15 @@ def score_rows(panel, limit=LIST_N):
     day["chg_pct"] = (day["close"] / day["prev"] - 1) * 100
     return (day.sort_values("_s", ascending=False).head(limit),
             day.sort_values("_s").head(limit))
+
+
+for _k in ["social_hot", "social_surge"]:
+    NOTES[_k] = (
+        "warn", "<b>這是「大家在吵什麼」，不是買進名單。</b>",
+        "研究上，散戶關注度突然升高的股票，常常是短線已經過熱：Da、Engelberg 與 Gao（2011）"
+        "用 Google 搜尋量衡量關注度，發現關注度暴增的股票接下來約兩週偏強、之後會跌回去；"
+        "Barber 與 Odean（2008）也發現散戶傾向追買剛吸引到注意力的股票。<br><br>"
+        "這份名單<b>還沒有用本系統的回測驗證過</b>（社群資料才剛開始收集），所以標成「今天的事實」。"
+        "比對方式是看文章與推文裡有沒有出現股票代號或名稱；名稱是日常用語的"
+        "（例如世界、中華、全家）只認代號，還是可能有少數誤判。")
+
