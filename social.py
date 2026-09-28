@@ -90,16 +90,20 @@ def _read(path):
 
 
 # --------------------------------------------------------------------- PTT
+LAST_ERR = [None]      # 最近一次失敗的原因（狀態碼或例外），抓不到時寫進 log 與頁面
+
+
 def _get(url, tries=3):
     for i in range(tries):
         try:
             r = _s.get(url, timeout=20)
             if r.status_code == 200:
                 return r.text
+            LAST_ERR[0] = "HTTP {}".format(r.status_code)
             if r.status_code == 404:
                 return None
-        except requests.RequestException:
-            pass
+        except requests.RequestException as e:
+            LAST_ERR[0] = type(e).__name__ + ": " + str(e)[:120]
         time.sleep(2 * (i + 1))
     return None
 
@@ -174,6 +178,8 @@ def update_ptt(days=3, budget=600, delay=0.4):
         items, url = _index_page(url)
         pages += 1
         if not items:
+            if pages == 1:
+                log("::warning::PTT 股票板列表抓不到（{}）".format(LAST_ERR[0] or "頁面上沒有文章"))
             break
         for aid, ep, _t in items:
             if ep < cutoff:
