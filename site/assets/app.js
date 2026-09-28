@@ -78,11 +78,11 @@
      首頁只有一個查個股的大搜尋框，品牌名稱也回首頁。
      第 4 欄：除了自己以外，還有哪些頁面算在這一格底下（中長期候選池跟其他排行共用左側清單）。 */
   var NAV = [
-    ['index.html', '首頁', 'home'],
-    ['short.html', '今日名單', 'short'],
-    ['history.html', '名單成績', 'history'],
-    ['backtest.html', '回測報告', 'backtest'],
-    ['lists.html', '其他排行', 'lists', ['funnel']]
+    ['./', '首頁', 'home'],
+    ['short', '今日名單', 'short'],
+    ['history', '名單成績', 'history'],
+    ['backtest', '回測報告', 'backtest'],
+    ['lists', '其他排行', 'lists', ['funnel']]
   ];
   // 本機（python server.py）才有後端：可以按鈕更新、用自訂參數回測
   var LOCAL = !/github\.io$/.test(location.hostname);
@@ -95,7 +95,7 @@
         (n[2] === 'home' ? ' navhome' : '') + '" href="' + n[0] + '">' + n[1] + '</a>';
     }).join('');
     return '<div class="top"><div class="in">' +
-      '<a class="brand" href="index.html">台股觀測</a><nav class="navs">' + links + '</nav>' +
+      '<a class="brand" href="./">台股觀測</a><nav class="navs">' + links + '</nav>' +
       '<button id="updbtn2" class="themebtn" type="button" title="立即更新資料">⟳</button>' +
       '<button id="themebtn" class="themebtn" type="button">☾</button>' +
       '</div></div><div class="stale" id="updbar" data-empty="1"><div class="in"></div></div>' +
@@ -440,7 +440,7 @@
     function render(rows) {
       if (!rows.length) { hide(); return; }
       sug.innerHTML = rows.map(function (r) {
-        return '<a href="stock.html?c=' + encodeURIComponent(r.code) + '">' +
+        return '<a href="stock?c=' + encodeURIComponent(r.code) + '">' +
           '<span class="c">' + esc(r.code) + '</span>' +
           '<span class="n">' + esc(r.name) + '</span>' +
           '<span class="t">' + esc(r.kind) + '</span></a>';
@@ -525,7 +525,7 @@
       e.preventDefault();
       var box = document.querySelector('.searchbox.big .qin') || document.querySelector('.searchbox .qin');
       if (box) box.focus();
-      else location.href = 'index.html';
+      else location.href = './';
     });
   }
 
@@ -558,7 +558,17 @@
   }
 
   /* ---------- 啟動 ---------- */
+  /* 網址不帶 .html（GitHub Pages 會自己對到 short.html 這類檔案）。
+     舊書籤還是 xxx.html 或 index.html 的話，網址列直接換成乾淨的版本，不重新載入。 */
+  function cleanUrl() {
+    var p = location.pathname, c = p.replace(/index\.html$/, '').replace(/\.html$/, '');
+    if (c !== p && history.replaceState) {
+      try { history.replaceState(null, '', c + location.search + location.hash); } catch (e) {}
+    }
+  }
+
   function boot(active, render) {
+    cleanUrl();
     document.body.insertAdjacentHTML('afterbegin', shell(active, qs('c') || ''));
     theme();
     tooltips();
@@ -692,7 +702,7 @@
     if (b) b.addEventListener('click', runUpdate);
   }
 
-  /* 「其他排行」的左側清單（lists.html 與 funnel.html 共用）。
+  /* 「其他排行」的左側清單（lists 與 funnel 共用）。
      桌機是左側清單、手機是下拉選單：原本一排排的分組標籤會隨寬度亂換行，看起來參差不齊。
      每組名單的性質用同一種標籤標出來 —— 「過去有效」跟「只是今天的事實」是兩回事。 */
   var GROUP_BADGE = {
@@ -706,10 +716,10 @@
   function listGroups(meta) {
     var info = {};
     (meta.screens || []).forEach(function (s) { info[s.key] = s; });
-    return [['中長期', [['funnel', 'funnel.html', '中長期候選池']]]].concat(
+    return [['中長期', [['funnel', 'funnel', '中長期候選池']]]].concat(
       (meta.tab_groups || []).map(function (g) {
         return [g.label, g.keys.filter(function (k) { return info[k]; }).map(function (k) {
-          return [k, 'lists.html?s=' + k, info[k].tab || info[k].title];
+          return [k, 'lists?s=' + k, info[k].tab || info[k].title];
         })];
       }));
   }

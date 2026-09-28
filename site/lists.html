@@ -38,8 +38,8 @@ function rowsTable(d, rows) {
          d.extra === '_s' ? App.num(ex, 2, true) :
          d.extra === '法人買超' ? App.pct(ex * 100, 1) :
          App.pct(ex, d.extra === 'yoy' ? 1 : 2));
-      return '<tr><td><a href="stock.html?c=' + r.code + '"><strong>' + r.code +
-        '</strong></a></td><td style="text-align:left"><a href="stock.html?c=' + r.code + '">' +
+      return '<tr><td><a href="stock?c=' + r.code + '"><strong>' + r.code +
+        '</strong></a></td><td style="text-align:left"><a href="stock?c=' + r.code + '">' +
         App.esc(r.name) + '</a></td><td class="mut">' + App.esc(r.ind || '—') + '</td><td>' +
         App.num(r.close) + '</td><td>' + App.pct(r.chg_pct) + '</td><td class="sorted">' + exTxt + '</td>' +
         '<td>' + (instList || r['法人買超'] == null ? '—' : App.pct(r['法人買超'] * 100, 1)) + '</td>' +
@@ -83,7 +83,7 @@ App.boot('lists', function (meta) {
         '<th>' + App.tip('除權息日','除權息') + '</th><th>還有</th><th>' +
         App.tip('配發') + '</th><th>' + App.tip('換算幅度') + '</th></tr></thead><tbody>' +
         d.rows.map(function (r) {
-          return '<tr><td><a href="stock.html?c=' + r.code + '"><strong>' + r.code +
+          return '<tr><td><a href="stock?c=' + r.code + '"><strong>' + r.code +
             '</strong></a></td><td style="text-align:left">' + App.esc(r.name) + '</td><td class="mut">' +
             App.esc(r.ind || '—') + '</td><td>' +
             App.esc(r.date.slice(5)) + '</td><td>' + r.days_left + ' 天後</td><td style="white-space:normal;line-height:1.5">' +

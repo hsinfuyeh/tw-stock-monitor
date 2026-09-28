@@ -36,7 +36,7 @@ function scoreTable(T) {
     F.map(function (f) { return '<th><span class="tip" tabindex="0" data-tip="' + App.esc(f.desc) + '">' + App.esc(f.name) + '</span></th>'; }).join('') +
     '<th class="sorted">總分</th></tr></thead><tbody>' +
     T.rows.map(function (r) {
-      return '<tr><td style="text-align:left;white-space:nowrap"><span class="rk">' + r.rank + '</span><a href="stock.html?c=' + r.code + '"><strong>' +
+      return '<tr><td style="text-align:left;white-space:nowrap"><span class="rk">' + r.rank + '</span><a href="stock?c=' + r.code + '"><strong>' +
         r.code + '</strong></a> ' + App.esc(r.name) + '</td>' +
         F.map(function (f) {
           var v = r.parts[f.key];
@@ -50,7 +50,7 @@ function detailTable(T) {
     '<th>收盤</th><th>近 20 日</th><th>近 60 日</th><th>' + App.tip('每天震盪', 'ATR') + '</th>' +
     '<th>' + App.tip('日均成交額') + '</th><th>上榜</th><th style="text-align:left">入選原因</th></tr></thead><tbody>' +
     T.rows.map(function (r) {
-      return '<tr><td style="text-align:left;white-space:nowrap"><span class="rk">' + r.rank + '</span><a href="stock.html?c=' + r.code + '"><strong>' + r.code + '</strong></a> ' +
+      return '<tr><td style="text-align:left;white-space:nowrap"><span class="rk">' + r.rank + '</span><a href="stock?c=' + r.code + '"><strong>' + r.code + '</strong></a> ' +
         App.esc(r.name) + '</td><td class="mut">' + App.esc(r.ind || '—') + '</td>' +
         '<td>' + Stable.f2(r.close) + '</td><td>' + App.pct(r.ret20, 1) + '</td><td>' + App.pct(r.ret60, 1) + '</td>' +
         '<td>' + App.num(r.atrp, 1) + '%</td><td>' + App.num(r.adtv20, 2) + ' 億</td>' +
@@ -63,7 +63,7 @@ function detailTable(T) {
 function changes(T) {
   var nw = T.rows.filter(function (r) { return r.streak <= 1; });
   var stay = T.rows.filter(function (r) { return r.streak > 1; });
-  function link(c, n) { return '<a href="stock.html?c=' + c + '">' + c + ' ' + App.esc(n || '') + '</a>'; }
+  function link(c, n) { return '<a href="stock?c=' + c + '">' + c + ' ' + App.esc(n || '') + '</a>'; }
   return '<div class="stats">' +
     '<div class="stat"><h3>新進榜 ' + nw.length + ' 檔</h3><div class="sub">今天才進來</div>' +
     '<div class="note" style="margin:0;line-height:1.9">' + (nw.map(function (r) { return link(r.code, r.name); }).join('、') || '沒有') + '</div></div>' +
@@ -99,7 +99,7 @@ App.boot('short', function (meta) {
       ? '回測（2008–2025）通過淘汰關卡：名單的「' + App.tip('中減倒') + '」比穩定池隨便挑多 ' +
         (B && B.all ? App.num(B.all.diff, 1) + ' 個百分點（' + App.tip('t 值') + ' ' + App.num(B.all.t, 1) + '）' : '一點') +
         '。優勢不大' + (B && B.periods && B.periods['2026'] && B.periods['2026'].diff <= 0 ? '，而且 2026 年沒有比隨便挑好' : '') +
-        '；真正的成績看<a href="history.html">名單成績</a>。'
+        '；真正的成績看<a href="history">名單成績</a>。'
       : '回測（2008–2025）<b>沒有</b>通過淘汰關卡，名單照常列出，但請當成參考。';
 
     document.getElementById('app').innerHTML =

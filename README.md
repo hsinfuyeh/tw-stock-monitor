@@ -167,6 +167,7 @@ python tests_stable.py          # 只跑穩定名單那 25 項（合成資料，
 ## 網站
 
 頁面只有一份（`site/`），公開網站（GitHub Pages）和本機（`python server.py` / `dashboard.bat`）共用。
+網址不帶 `.html`（`/short`、`/stock?c=2330`，首頁就是 `/`）：GitHub Pages 會自己對到 `short.html`，本機的 `server.py` 也有同樣的路由；舊的 `xxx.html` 書籤照樣能開，網址列會自動換成乾淨的版本。
 導覽列：首頁、今日名單、名單成績、回測報告、其他排行（每張 10 筆，左側清單裡也有中長期候選池）。
 首頁只有一個查個股的大搜尋框；今日名單、回測報告、名單成績是「穩定強勢股」（`stable.py`，見下一節）。
 頂端的「資料落後幾個交易日」會扣掉週末與證交所公布的休市日（`ingest.holidays()`，放在 `meta.json` 的 `holidays`）。本機多一個功能：資料落後時按「立即更新」。

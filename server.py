@@ -679,6 +679,15 @@ def site_page(name):
     return send_from_directory(SITE, name + ".html")
 
 
+# 網址不帶 .html（/short、/stock?c=2330），跟 GitHub Pages 的行為一樣。
+# /api/...、/assets/... 這些固定路由比這條優先，不會被吃掉。
+@app.route("/<name>")
+def site_page_clean(name):
+    if not (SITE / (name + ".html")).is_file():
+        return "Not Found", 404
+    return send_from_directory(SITE, name + ".html")
+
+
 @app.route("/assets/<path:p>")
 def site_assets(p):
     return send_from_directory(SITE / "assets", p)
@@ -694,23 +703,12 @@ def site_data(p):
 # 舊網址（書籤）轉到新頁面
 @app.route("/s/<code>")
 def _old_stock(code):
-    return redirect("/stock.html?c={}".format(code))
+    return redirect("/stock?c={}".format(code))
 
 
-@app.route("/lists")
 @app.route("/lists/<key>")
-def _old_lists(key="amount"):
-    return redirect("/lists.html?s={}".format(key))
-
-
-@app.route("/funnel")
-def _old_funnel():
-    return redirect("/funnel.html")
-
-
-@app.route("/short")
-def _old_short():
-    return redirect("/short.html")
+def _old_lists(key):
+    return redirect("/lists?s={}".format(key))
 
 
 @app.route("/api/short/backtest", methods=["POST"])

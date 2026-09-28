@@ -107,7 +107,7 @@ App.boot('backtest', function (meta) {
     var a = B.all || {};
     var verdict = B.passed
       ? '<b>通過淘汰關卡</b>：兩段期間名單都比穩定池隨便挑好、也比「波動相同的隨機」好，合計 t ' + App.num(a.t, 1) + '（門檻 3）。' +
-        '但這些年份的資料之前已經被研究過很多次，通過只代表「跟歷史不矛盾」，不代表有效 —— 真正的成績看<a href="history.html">名單成績</a>。'
+        '但這些年份的資料之前已經被研究過很多次，通過只代表「跟歷史不矛盾」，不代表有效 —— 真正的成績看<a href="history">名單成績</a>。'
       : '<b>沒有通過淘汰關卡</b>（事前寫好的標準：兩段期間都要比穩定池好、合計 t ≥ 3、也要比波動相同的隨機好）。名單照常列出，但請當成參考。';
     document.getElementById('app').innerHTML =
       '<h1 style="font-size:30px;letter-spacing:-.03em;font-weight:500;margin:0 0 4px">回測報告</h1>' +

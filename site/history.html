@@ -41,7 +41,7 @@ function detail(h) {
     '<div class="scroll"><table><thead><tr><th>名次</th><th>代號</th><th style="text-align:left">名稱</th>' +
     '<th>狀態</th><th>第幾天</th><th class="sorted">從隔天開盤算起的漲跌</th></tr></thead><tbody>' +
     h.rows.map(function (r) {
-      return '<tr><td>' + (r.rank || '—') + '</td><td><a href="stock.html?c=' + r.code + '"><strong>' + r.code + '</strong></a></td>' +
+      return '<tr><td>' + (r.rank || '—') + '</td><td><a href="stock?c=' + r.code + '"><strong>' + r.code + '</strong></a></td>' +
         '<td style="text-align:left">' + App.esc(r.name) + '</td><td class="' + (ST[r.status] || '') + '">' + App.esc(r.status) + '</td>' +
         '<td>' + (r.day ? r.day + ' / 10' : '—') + '</td><td class="sorted">' + (r.ret == null ? '—' : App.pct(r.ret, 2)) + '</td></tr>';
     }).join('') + '</tbody></table></div>' +

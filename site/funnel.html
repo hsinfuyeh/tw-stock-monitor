@@ -56,8 +56,8 @@ App.boot('funnel', function (meta) {
           App.esc('<b>' + x.title + '</b><br>' + x.detail) + '">' +
           App.esc(x.title) + '</span>';
       }).join('');
-      return '<tr><td><a href="stock.html?c=' + r.code + '"><strong>' + r.code +
-        '</strong></a></td><td><a href="stock.html?c=' + r.code + '">' +
+      return '<tr><td><a href="stock?c=' + r.code + '"><strong>' + r.code +
+        '</strong></a></td><td><a href="stock?c=' + r.code + '">' +
         App.esc(r.name) + '</a>' + flags + '</td>' +
         '<td class="mut">' + App.esc(r.ind || '—') + '</td>' +
         '<td>' + (r.tier || 0) + ' / 5</td>' +
