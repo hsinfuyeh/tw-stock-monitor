@@ -63,7 +63,7 @@ function lamps(r) {
 
 function card(r) {
   return '<div class="hcard">' +
-    '<div class="top"><div class="nm"><span class="rk">' + r.rank + '</span>' +
+    '<div class="hhd"><div class="nm"><span class="rk">' + r.rank + '</span>' +
     '<a href="stock.html?c=' + r.code + '">' + r.code + ' ' + App.esc(r.name) + '</a>' + badge(r) + '</div>' +
     '<div class="sc">' + App.esc(r.ind || '') + '　' + App.num(r.score, 0) + ' 分</div></div>' +
     spark(r.spark) +
