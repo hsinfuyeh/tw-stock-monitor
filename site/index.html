@@ -9,34 +9,22 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <link rel="stylesheet" href="assets/style.css">
 <title>台股觀測</title>
 <style>
-.homehero{padding:18px 0 6px}
-.homehero h1{font-size:clamp(28px,4vw,40px);letter-spacing:-.03em;font-weight:500;margin:0 0 14px}
-.homehero .hint{color:var(--mut);font-size:13.5px;margin-top:10px}
+/* 首頁只有一個查個股的大搜尋框：名單在「今日名單」，不在這裡重複一份 */
+.homehero{max-width:720px;margin:0 auto;padding:clamp(48px,14vh,140px) 0 40px;text-align:center;border:0}
+.homehero h1{font-size:clamp(30px,5vw,46px);letter-spacing:-.03em;font-weight:500;margin:0 0 22px}
+.homehero .searchbox{text-align:left}
+.homehero .hint{color:var(--mut);font-size:13.5px;margin-top:14px}
 </style></head><body>
 <div class="wrap" id="app"></div>
 <script src="assets/app.js"></script>
-<script src="assets/stable.js"></script>
 <script>
-/* 首頁：今天的穩定強勢股名單（stable/today.json），上面是查個股的搜尋框。
- * 資訊卡跟「今日名單」共用 assets/stable.js。 */
-App.boot('home', function (meta) {
-  return App.get('stable/today.json').then(function (T) {
-    var rn = Stable.riskNote(T), mn = Stable.marginNote(T);
-    document.getElementById('app').innerHTML =
-      '<div class="homehero"><h1>查一檔股票</h1>' + App.searchbox('', true) +
-      '<div class="hint">輸入代號或名稱，例如 <strong>2330</strong> 或 <strong>台積電</strong>。' +
-      '任何時候按 <kbd>/</kbd> 都會跳回這個框。</div></div>' +
-      '<div class="card"><h2>今天的穩定強勢股 ' + T.rows.length + ' 檔</h2>' +
-      '<p class="lead">' + App.esc(T.date) + ' 收盤。動能強、但波動不大也沒有炒作跡象的股票，' +
-      '看接下來 10 個交易日能不能漲 5%。不是買賣建議。</p>' +
-      Stable.vsBars(T) +
-      (rn ? '<p class="note up" style="margin-top:-8px"><b>' + rn + '</b></p>' : '') +
-      (mn ? '<p class="note" style="margin-top:-8px">' + mn + '</p>' : '') +
-      (T.rows.length ? '<div class="hcards">' + T.rows.map(Stable.card).join('') + '</div>'
-        : '<div class="empty"><div class="note">今天穩定池裡沒有股票。</div></div>') +
-      '<p class="note" style="margin-top:16px;font-size:13.5px">每一檔的分數拆解與今天刷掉了誰，在<a href="short.html">今日名單</a>；' +
-      '過去 18 年的回測在<a href="backtest.html">回測報告</a>；每天的名單 10 天後對答案的成績在<a href="history.html">名單成績</a>。</p></div>';
-  });
+App.boot('home', function () {
+  document.getElementById('app').innerHTML =
+    '<div class="homehero"><h1>查一檔股票</h1>' + App.searchbox('', true) +
+    '<div class="hint">輸入代號或名稱，例如 <strong>2330</strong> 或 <strong>台積電</strong>。' +
+    '任何頁面按 <kbd>/</kbd> 都會跳回這個框。</div></div>';
+  var box = document.querySelector('.homehero .qin');
+  if (box) box.focus();
 });
 </script>
 </body></html>

@@ -74,36 +74,28 @@
 
   /* ---------- 外框 ---------- */
   /* 導覽列依「每天用到的頻率」排：今日名單每天看；名單成績每週看；
-     回測報告是查資料用的。其他排行、中長期候選池不常用，收進「更多」。
-     查個股不佔一格：頂部的搜尋框隨時可用，品牌名稱回首頁。 */
+     回測報告是查資料用的；其他排行（含中長期候選池）放最後。
+     首頁只有一個查個股的大搜尋框，品牌名稱也回首頁。
+     第 4 欄：除了自己以外，還有哪些頁面算在這一格底下（中長期候選池跟其他排行共用左側清單）。 */
   var NAV = [
     ['index.html', '首頁', 'home'],
     ['short.html', '今日名單', 'short'],
     ['history.html', '名單成績', 'history'],
-    ['journal.html', '交易紀錄', 'journal'],
-    ['backtest.html', '回測報告', 'backtest']
-  ];
-  var MORE = [
-    ['lists.html', '其他排行', 'lists', '營收優於預期、成交金額、法人買賣…'],
-    ['funnel.html', '中長期候選池', 'funnel', '一層層刷掉不適合長抱的股票']
+    ['backtest.html', '回測報告', 'backtest'],
+    ['lists.html', '其他排行', 'lists', ['funnel']]
   ];
   // 本機（python server.py）才有後端：可以按鈕更新、用自訂參數回測
   var LOCAL = !/github\.io$/.test(location.hostname);
 
   function shell(active, q) {
     var links = NAV.map(function (n) {
+      var on = n[2] === active || (n[3] || []).indexOf(active) >= 0;
       // 首頁在手機上不佔一格（點左上角的品牌就是回首頁），否則一行放不下
-      return '<a class="navlink' + (n[2] === active ? ' on' : '') +
+      return '<a class="navlink' + (on ? ' on' : '') +
         (n[2] === 'home' ? ' navhome' : '') + '" href="' + n[0] + '">' + n[1] + '</a>';
     }).join('');
-    var inMore = MORE.some(function (n) { return n[2] === active; });
-    var more = '<details class="navmore"><summary class="navlink' + (inMore ? ' on' : '') + '">更多 ▾</summary>' +
-      '<div class="menu">' + MORE.map(function (n) {
-        return '<a href="' + n[0] + '"' + (n[2] === active ? ' class="on"' : '') + '><b>' + n[1] +
-          '</b><span>' + n[3] + '</span></a>';
-      }).join('') + '</div></details>';
     return '<div class="top"><div class="in">' +
-      '<a class="brand" href="index.html">台股觀測</a><nav class="navs">' + links + '</nav>' + more +
+      '<a class="brand" href="index.html">台股觀測</a><nav class="navs">' + links + '</nav>' +
       '<button id="updbtn2" class="themebtn" type="button" title="立即更新資料">⟳</button>' +
       '<button id="themebtn" class="themebtn" type="button">☾</button>' +
       '</div></div><div class="stale" id="updbar" data-empty="1"><div class="in"></div></div>' +
@@ -132,10 +124,17 @@
     var edge = new Date(now);
     if (now.getHours() < 20) edge.setDate(edge.getDate() - 1);
     edge.setHours(0, 0, 0, 0);
+    // 休市日（中秋、教師節、春節…）來自 TWSE 公布的開休市日期，由 publish.py 放進 meta.json。
+    // 只跳週末的話，連假會被當成「自動更新失敗」、一直叫人手動更新 —— 那幾天根本沒有資料。
+    var off = {};
+    (meta.holidays || []).forEach(function (h) { off[h] = 1; });
+    function ymd(x) {
+      return x.getFullYear() + '-' + ('0' + (x.getMonth() + 1)).slice(-2) + '-' + ('0' + x.getDate()).slice(-2);
+    }
     var n = 0, d = new Date(last);
     d.setDate(d.getDate() + 1);
     while (d <= edge) {
-      if (d.getDay() !== 0 && d.getDay() !== 6) n++;
+      if (d.getDay() !== 0 && d.getDay() !== 6 && !off[ymd(d)]) n++;
       d.setDate(d.getDate() + 1);
     }
     if (n < 1) return;
@@ -145,9 +144,9 @@
        連結指向 Actions 的 workflow 頁：可以手動觸發，也可以在那裡重新啟用排程。
        只有 repo 擁有者按得動，一般訪客點進去只看得到執行紀錄。 */
     bar.querySelector('.in').innerHTML =
-      '<b>資料落後 ' + n + ' 個營業日</b><span>最新是 ' + esc(meta.data_date) +
-      '。每個交易日收盤後會自動更新；中間若有國定假日屬正常，' +
-      '否則是自動更新沒有成功，可以手動更新。</span>' + (LOCAL
+      '<b>資料落後 ' + n + ' 個交易日</b><span>最新是 ' + esc(meta.data_date) +
+      '（已扣掉週末與證交所公布的休市日）。每個交易日收盤後會自動更新，' +
+      '晚上 8 點還沒更新代表自動更新沒有成功（颱風臨時停市除外），可以手動更新。</span>' + (LOCAL
         ? '<button class="updbtn" id="updgo" type="button">立即更新</button>'
         : '<a class="updbtn" href="https://github.com/hsinfuyeh/tw-stock-monitor/actions/workflows/update.yml"' +
           ' target="_blank" rel="noopener">前往更新</a>');
@@ -561,10 +560,6 @@
   /* ---------- 啟動 ---------- */
   function boot(active, render) {
     document.body.insertAdjacentHTML('afterbegin', shell(active, qs('c') || ''));
-    document.addEventListener('click', function (e) {
-      var m = document.querySelector('.navmore');
-      if (m && m.open && !m.contains(e.target)) m.open = false;
-    });
     theme();
     tooltips();
     initSearch();
@@ -697,7 +692,7 @@
     if (b) b.addEventListener('click', runUpdate);
   }
 
-  /* 「更多」裡的名單（lists.html 與 funnel.html 共用）。
+  /* 「其他排行」的左側清單（lists.html 與 funnel.html 共用）。
      桌機是左側清單、手機是下拉選單：原本一排排的分組標籤會隨寬度亂換行，看起來參差不齊。
      每組名單的性質用同一種標籤標出來 —— 「過去有效」跟「只是今天的事實」是兩回事。 */
   var GROUP_BADGE = {

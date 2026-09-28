@@ -87,6 +87,50 @@ def _row(r):
         return None
 
 
+def _f(x):
+    """TWT48U 的數字欄。待公告時是一段 HTML（<p>待公告…</p>），回 None。"""
+    try:
+        return float(str(x).replace(",", ""))
+    except ValueError:
+        return None
+
+
+def upcoming():
+    """還沒發生的除權息（TWT48U「除權除息預告表」）。
+
+    為什麼不能用上面的 TWT49U：那是<b>已經除權息完</b>的結果表，
+    裡面永遠不會有未來的日期 —— 「即將除權息」榜單原本就是拿它篩未來 60 天，
+    所以一直是 0 筆，而且沒有任何錯誤訊息。
+
+    回傳 DataFrame：date, code, name, kind（權／息／權息）, cash（每股現金股利，待公告為 NaN）,
+    stock（每股無償配股，0.05 = 每千股配 50 股）, rights / rights_px（每股現金增資認購比例與認購價，未公告為 NaN）。
+    抓不到就用上一次成功的快取。"""
+    cache = _DIR / "_upcoming.json"
+    rows = None
+    try:
+        r = _s.get(BASE + "/rwd/zh/exRight/TWT48U", params={"response": "json"}, timeout=30)
+        j = r.json()
+        if str(j.get("stat")).upper() == "OK":
+            rows = j.get("data", [])
+            cache.write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+    if rows is None:
+        rows = json.loads(cache.read_text(encoding="utf-8")) if cache.exists() else []
+    out = []
+    for r in rows:
+        try:
+            out.append(dict(date=_roc_cn(r[0]), code=r[1].strip(), name=r[2].strip(),
+                            kind=r[3].strip(), stock=_f(r[4]) or 0.0, cash=_f(r[7]),
+                            rights=_f(r[5]) or 0.0, rights_px=_f(r[6])))   # 認購價常是「尚未公告」
+        except Exception:
+            continue
+    df = pd.DataFrame(out, columns=["date", "code", "name", "kind", "stock", "cash",
+                                    "rights", "rights_px"])
+    df["date"] = pd.to_datetime(df["date"])
+    return df
+
+
 def load(start_year=None, end_year=None):
     """載入除權息事件。預設跟著 config.BACKFILL_START 走。
 

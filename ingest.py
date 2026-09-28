@@ -28,6 +28,38 @@ def _get(path, params):
     return None
 
 
+def holidays(years=None):
+    """TWSE 公布的休市日（週一到週五不開市的日子），'YYYY-MM-DD' 排序好的清單。
+
+    網頁的「資料落後幾個交易日」要靠這個：只跳過週末的話，中秋、教師節這種連假
+    會被當成「自動更新失敗」，一直叫人手動更新 —— 其實那幾天根本沒有資料可抓。
+
+    來源是證交所的「市場開休市日期」（holidaySchedule），每年年初就公布整年。
+    清單裡夾著幾筆<b>有開市</b>的特殊日（開始交易日、春節前最後交易日），要濾掉。
+    颱風停市是臨時宣布的，不會在這裡，但它的影響只是橫幅多跳一天。
+
+    每年一份快取；當年與明年每次重抓（年中可能補公告），抓不到就用快取。"""
+    import datetime as dt
+    this = dt.date.today().year
+    years = years or (this, this + 1)
+    out = []
+    for y in years:
+        cache = RAW / "_holidays_{}.json".format(y)
+        j = _get("/rwd/zh/holidaySchedule/holidaySchedule",
+                 {"response": "json", "queryYear": str(y)})
+        days = None
+        if j and str(j.get("stat")).upper() == "OK":     # 這支回的是小寫 ok
+            days = sorted({r[0] for r in j.get("data", [])
+                           if "交易日" not in r[1]      # 開始交易日／最後交易日：有開市
+                           and dt.date.fromisoformat(r[0]).weekday() < 5})
+            if days:
+                cache.write_text(json.dumps(days))
+        if days is None and cache.exists():
+            days = json.loads(cache.read_text())
+        out += days or []
+    return sorted(set(out))
+
+
 def trading_calendar(start=BACKFILL_START, end=None):
     """用 FMTQIK（每月市場統計）建交易日曆 — 每月 1 次請求就能拿到該月所有交易日。
     絕對不要用「連續日期」去推，休市日會全部算進去。"""

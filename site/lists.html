@@ -47,6 +47,18 @@ function rowsTable(d, rows) {
     }).join('') + '</tbody></table></div>';
 }
 
+/* 除權息的配發：現金股利、無償配股（每股 0.05 = 每千股配 50 股）、現金增資。
+   金額還沒公布就寫「待公告」，不要顯示成 0。 */
+function exPay(r) {
+  var tbd = '<span class="mut">待公告</span>', parts = [];
+  if (r.value == null) parts.push('現金 ' + tbd);
+  else if (r.value > 0) parts.push(App.num(r.value) + ' 元');
+  if (r.stock > 0) parts.push('配股 ' + App.num(r.stock * 100, 1) + '%');
+  if (r.rights > 0) parts.push('現增 ' + App.num(r.rights * 100, 1) + '%（' +
+    (r.rights_px == null ? '認購價' + tbd : App.num(r.rights_px) + ' 元') + '）');
+  return parts.join('<br>') || tbd;
+}
+
 App.boot('lists', function (meta) {
   var key = App.qs('s') || 'sue';
   var info = {};
@@ -55,7 +67,7 @@ App.boot('lists', function (meta) {
 
   var isEx = key === 'exdiv';
   var metaline = isEx
-    ? '未來 60 天內的除權息 ｜ 資料截止 ' + App.esc(meta.data_date)
+    ? '未來 60 天內的除權息（證交所預告表，全部上市普通股） ｜ 資料截止 ' + App.esc(meta.data_date)
     : '資料截止 ' + App.esc(meta.data_date) +
       ' ｜ 只列近 20 日平均每天成交 2,000 萬以上的股票 ｜ 點代號看個股';
   document.title = '其他排行 · ' + (info[key] ? info[key].title : '');
@@ -66,7 +78,7 @@ App.boot('lists', function (meta) {
       tbl = '<div class="empty"><div class="note">今天沒有符合條件的標的。</div></div>';
     } else if (isEx) {
       tbl = '<div class="scroll"><table class="ltable stk"><colgroup><col style="width:64px"><col>' +
-        '<col style="width:92px"><col style="width:96px"><col style="width:84px"><col style="width:96px">' +
+        '<col style="width:92px"><col style="width:96px"><col style="width:84px"><col style="width:190px">' +
         '<col style="width:96px"></colgroup><thead><tr><th>代號</th><th style="text-align:left">名稱</th><th>產業</th>' +
         '<th>' + App.tip('除權息日','除權息') + '</th><th>還有</th><th>' +
         App.tip('配發') + '</th><th>' + App.tip('換算幅度') + '</th></tr></thead><tbody>' +
@@ -74,8 +86,8 @@ App.boot('lists', function (meta) {
           return '<tr><td><a href="stock.html?c=' + r.code + '"><strong>' + r.code +
             '</strong></a></td><td style="text-align:left">' + App.esc(r.name) + '</td><td class="mut">' +
             App.esc(r.ind || '—') + '</td><td>' +
-            App.esc(r.date.slice(5)) + '</td><td>' + r.days_left + ' 天後</td><td>' +
-            App.num(r.value) + ' 元</td><td>' + App.num(r.yield_pct) + '%</td></tr>';
+            App.esc(r.date.slice(5)) + '</td><td>' + r.days_left + ' 天後</td><td style="white-space:normal;line-height:1.5">' +
+            exPay(r) + '</td><td>' + (r.yield_pct == null ? '—' : App.num(r.yield_pct) + '%') + '</td></tr>';
         }).join('') + '</tbody></table></div>';
     } else {
       tbl = rowsTable(d, d.rows);

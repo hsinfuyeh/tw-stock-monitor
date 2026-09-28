@@ -166,23 +166,41 @@ def run_screen(panel, key, limit=LIST_N):
     return day.head(0), None, None
 
 
-def upcoming_exdiv(panel, days=60, limit=LIST_N):
-    """未來 N 天內除權息的標的。這是行事曆，不是預測。"""
+def upcoming_exdiv(panel, days=60, limit=40):
+    """未來 N 天內除權息的標的。這是行事曆，不是預測。
+
+    來源是 TWSE 的除權除息預告表（exrights.upcoming / TWT48U）。原本讀倉儲裡的
+    exrights 表，但那是 TWT49U「已除權息結果」，不會有未來日期，這份榜單因此一直是空的。"""
+    import exrights
     today = pd.Timestamp(dt.date.today())
     try:
-        ex = store.q("SELECT date, code, value, prev_close, ref_price, kind FROM exrights")
+        ex = exrights.upcoming()
     except Exception:
         return pd.DataFrame()
-    ex["date"] = pd.to_datetime(ex["date"])
     fut = ex[(ex["date"] >= today) & (ex["date"] <= today + pd.Timedelta(days=days))].copy()
     if not len(fut):
         return fut
-    day, _ = _latest(panel)
-    info = day.set_index("code")[["name", "close", "amt20"]]
-    fut = fut.join(info, on="code", how="inner")
-    fut["yield_pct"] = (fut["prev_close"] - fut["ref_price"]) / fut["prev_close"] * 100
+    # 行事曆要列全部上市普通股，不只分析範圍（panel 只有流動性夠的 500 多檔），
+    # 否則華豐、泰銘這類成交量小的會整個不見。收盤取倉儲裡最新一天的。
+    import server
+    u = server.universe()
+    common = set(u.loc[u["cat"] == "common", "code"].astype(str))
+    px = store.q("SELECT code, close FROM quotes WHERE date = (SELECT MAX(date) FROM quotes)")
+    px = px[px["code"].isin(common)].set_index("code")["close"]
+    fut = fut[fut["code"].isin(px.index)].copy()
+    fut["close"] = fut["code"].map(px)
+    # 換算幅度：除權息參考價 = (收盤 − 現金股利 + 現增比例 × 認購價) ÷ (1 + 配股率 + 現增比例)，
+    # 跟收盤差多少。金額還沒公布（現金股利待公告、或「權」但配股率還是 0）就不算，免得把未公布當成 0。
+    ref = ((fut["close"] - fut["cash"] + fut["rights"] * fut["rights_px"])
+           / (1 + fut["stock"] + fut["rights"]))
+    fut["yield_pct"] = (1 - ref / fut["close"]) * 100
+    fut["pending"] = (fut["cash"].isna()
+                      | (fut["kind"].str.contains("權") & (fut["stock"] + fut["rights"] == 0))
+                      | ((fut["rights"] > 0) & fut["rights_px"].isna()))
+    fut.loc[fut["pending"], "yield_pct"] = np.nan
     fut["days_left"] = (fut["date"] - today).dt.days
-    return fut.sort_values("date").head(limit)
+    # 行事曆不是排行，60 天內的全部列出（通常二、三十筆）；40 只是保險上限
+    return fut.sort_values(["date", "code"]).head(limit)
 
 
 # 各榜單的警語。結構化放在這裡，是為了讓本機版（webui.statusbar）與

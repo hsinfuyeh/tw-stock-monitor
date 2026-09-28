@@ -94,10 +94,21 @@ LIST_COLS = ["code", "name", "close", "chg_pct", "amt20", "div_yield", "pos252",
              "yoy", "法人買超", "tier", "vol_ratio", "sd60"]
 
 
+def _holidays():
+    """TWSE 休市日（週間），給前端算「落後幾個交易日」。抓不到不擋發佈，前端退回只跳週末。"""
+    try:
+        import ingest
+        return ingest.holidays()
+    except Exception as e:
+        print("::warning::休市日抓不到，網頁的落後天數只會跳過週末：{}".format(e), flush=True)
+        return []
+
+
 def emit_meta(p, day_date):
     """資料日期與各層證據強度。前端的過期橫幅也靠這個。"""
     return dict(
         data_date=str(day_date)[:10],
+        holidays=_holidays(),
         built_at=dt.datetime.now().isoformat(timespec="seconds"),
         cost_round_trip=COST_ROUND_TRIP,
         evidence_labels=funnel.EV_LABEL,
@@ -158,8 +169,12 @@ def emit_screens(p):
                 rows = [dict(code=str(r["code"]), name=str(r["name"]),
                              date=str(r["date"])[:10],
                              days_left=int(r["days_left"]),
-                             value=float(r["value"]),
-                             yield_pct=float(r["yield_pct"]))
+                             kind=str(r["kind"]),
+                             value=r["cash"],            # NaN（待公告）會被 _clean 轉成 null
+                             stock=float(r["stock"]),
+                             rights=float(r["rights"]), rights_px=r["rights_px"],
+                             pending=bool(r["pending"]),
+                             yield_pct=r["yield_pct"])
                         for _, r in df.iterrows()]
                 out[key] = dict(key=key, title=title, desc=desc, cat=cat,
                                 extra=None, extra_title=None,
