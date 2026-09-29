@@ -59,7 +59,7 @@ App.boot('funnel', function (meta) {
       return '<tr><td><a href="stock?c=' + r.code + '"><strong>' + r.code +
         '</strong></a></td><td><a href="stock?c=' + r.code + '">' +
         App.esc(r.name) + '</a>' + flags + '</td>' +
-        '<td class="mut">' + App.esc(r.ind || '—') + '</td>' +
+        '<td class="mut ind">' + App.esc(r.ind || '—') + '</td>' +
         '<td>' + (r.tier || 0) + ' / 5</td>' +
         '<td>' + App.num(r.close) + '</td><td>' + App.pct(r.chg_pct) + '</td>' +
         '<td>' + (r.div_yield == null ? '—' : App.num(r.div_yield) + '%') + '</td>' +

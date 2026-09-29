@@ -616,7 +616,7 @@
   function askToken() {
     msgbar('<b>需要一把 GitHub 鑰匙才能從網頁按更新</b>' +
       '<span>到 <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" ' +
-      'rel="noopener" style="color:#fff;text-decoration:underline">GitHub 建立 Fine-grained token</a>：' +
+      'rel="noopener" style="color:inherit;text-decoration:underline">GitHub 建立 Fine-grained token</a>：' +
       'Repository access 選 ' + GH.repo + '，Permissions 只開 <b>Actions: Read and write</b>。' +
       '建好後貼進來，它只存在這台瀏覽器。</span>' +
       '<input id="ghtok" type="password" placeholder="github_pat_…" ' +

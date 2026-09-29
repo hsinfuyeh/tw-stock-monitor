@@ -4,13 +4,15 @@
 :root{
 /* 畫布與墨 */
 --bg:#ffffff; --card:#ffffff; --sunk:#f5f5f5;
---fg:#000000; --mut:#5b5b5b; --faint:#808080;
+--fg:#000000; --mut:#5b5b5b; --faint:#6e6e6e;
 /* 髮絲線：--line2 是結構性的實心墨線，--line 是表格列的細分隔 */
 --line:rgba(0,0,0,.13); --line2:#000000; --hair:rgba(0,0,0,.30);
 /* 深色藥丸（全站唯一的「浮起」）*/
 --pillbg:#3c3c3c; --pillfg:#ffffff;
 /* 資料語意色 —— 刻意偏離原規格，理由見模組說明 */
---up:#c2362e; --dn:#0d7a52; --warn:#96690c; --ok:#0f8f73;
+--up:#c2362e; --dn:#0d7a52; --warn:#96690c; --ok:#0b7a62;
+/* 彩色底（警示列、勾叉圖示、紅綠長條）上的文字：淺色模式白字，深色模式的彩色較亮，改用深色字 */
+--onc:#ffffff;
 /* 痕跡等級的口音色。只出現在：最終通過數的長條、已驗證標記的圓點。*/
 --mint:#3cd9b3;
 /* --accent 在舊程式碼裡等同「可點擊」，這裡指向墨色而非藍色 */
@@ -25,10 +27,10 @@
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
   --bg:#0b0b0c; --card:#0b0b0c; --sunk:#17171a;
-  --fg:#f2f2f2; --mut:#9b9b9b; --faint:#787878;
+  --fg:#f2f2f2; --mut:#9b9b9b; --faint:#8c8c8c;
   --line:rgba(255,255,255,.14); --line2:#4a4a4e; --hair:rgba(255,255,255,.32);
   --pillbg:#ededed; --pillfg:#0b0b0c;
-  --up:#ff6f66; --dn:#3fc48f; --warn:#d8a72e; --ok:#3fc48f;
+  --up:#ff6f66; --dn:#3fc48f; --warn:#d8a72e; --ok:#3fc48f; --onc:#0b0b0c;
   --mint:#3cd9b3; --accent:#f2f2f2;
   --washop:.26;
   }
@@ -36,10 +38,10 @@
 /* ===== 深夜（手動切換）===== */
 :root[data-theme="dark"]{
 --bg:#0b0b0c; --card:#0b0b0c; --sunk:#17171a;
---fg:#f2f2f2; --mut:#9b9b9b; --faint:#787878;
+--fg:#f2f2f2; --mut:#9b9b9b; --faint:#8c8c8c;
 --line:rgba(255,255,255,.14); --line2:#4a4a4e; --hair:rgba(255,255,255,.32);
 --pillbg:#ededed; --pillfg:#0b0b0c;
---up:#ff6f66; --dn:#3fc48f; --warn:#d8a72e; --ok:#3fc48f;
+--up:#ff6f66; --dn:#3fc48f; --warn:#d8a72e; --ok:#3fc48f; --onc:#0b0b0c;
 --mint:#3cd9b3; --accent:#f2f2f2;
 --washop:.26;
 }
@@ -101,7 +103,10 @@ letter-spacing:.09em;text-transform:uppercase}
 /* ---------- 資料過期橫幅 ---------- */
 /* 全站唯一會主動搶注意力的元素。它存在的理由是：這個工具是拿來決定下單的，
    安靜地顯示過期價格比顯示錯誤更危險。 */
-.stale{background:var(--warn);color:#fff}
+.stale{background:var(--warn);color:var(--onc)}
+/* 警示列裡的 ⓘ 跟著文字顏色走，不然是灰字壓在黃底上 */
+.stale .tip.infoi{color:inherit;border-color:currentColor}
+.stale .tip{border-bottom-color:currentColor}
 .stale .in{max-width:1200px;margin:0 auto;padding:10px 22px;font-size:13.5px;
 display:flex;gap:10px;flex-wrap:wrap;align-items:baseline;line-height:1.55}
 .stale b{font-weight:600;white-space:nowrap}
@@ -113,9 +118,9 @@ background:rgba(255,255,255,.2);padding:1px 6px;border-radius:4px;font-size:12.5
 .stale.bad{background:var(--up)}
 .stale.ok{background:var(--ok)}
 .updbtn{margin-left:auto;padding:5px 14px;border-radius:var(--pill);
-border:1px solid rgba(255,255,255,.55);background:transparent;color:#fff;
+border:1px solid currentColor;background:transparent;color:inherit;
 font-family:inherit;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap}
-.updbtn:hover:not(:disabled){background:#fff;color:var(--warn)}
+.updbtn:hover:not(:disabled){background:var(--onc);color:var(--warn);border-color:var(--onc)}
 .updbtn:disabled{opacity:.5;cursor:default}
 a.updbtn:hover{text-decoration:none}
 .spin{width:12px;height:12px;border-radius:50%;flex:0 0 auto;
@@ -184,9 +189,9 @@ align-items:flex-start}
 .chk li:first-child{padding-top:0}
 .ico{flex:0 0 22px;height:22px;border-radius:var(--pill);display:flex;
 align-items:center;justify-content:center;font-size:12px;font-weight:600;margin-top:3px}
-.ico.ok{background:var(--ok);color:#fff}
-.ico.warn{background:var(--warn);color:#fff}
-.ico.bad{background:var(--up);color:#fff}
+.ico.ok{background:var(--ok);color:var(--onc)}
+.ico.warn{background:var(--warn);color:var(--onc)}
+.ico.bad{background:var(--up);color:var(--onc)}
 .chk .body{flex:1;min-width:0}
 .chk .t{font-weight:500;font-size:16px;letter-spacing:-.015em}
 .chk .s{color:var(--mut);font-size:15px;margin-top:3px;font-weight:300}
@@ -215,18 +220,22 @@ padding:0;margin:0 0 26px}
 .lgrp{margin-bottom:16px}
 .lgrp .glabel{display:block;margin:0 0 4px 10px}
 .litem{display:block;padding:6px 10px;border-radius:8px;color:var(--mut);font-size:14px}
-.litem:hover{color:var(--fg);background:var(--line2);text-decoration:none}
+.litem:hover{color:var(--fg);background:var(--sunk);text-decoration:none}
 .litem.on{background:var(--pillbg);color:var(--pillfg);font-weight:500}
 .litem.bad{color:var(--up)}
-.litem.bad.on{background:var(--up);color:#fff}
+.litem.bad.on{background:var(--up);color:var(--onc)}
 .lsel{display:none;width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--line2);
 background:var(--card);color:var(--fg);font:inherit;margin-bottom:12px}
 .stocksearch{max-width:520px;margin:0 0 18px}
 .lbadge{display:inline-block;font-size:12.5px;padding:2px 10px;border-radius:var(--pill);
 border:1px solid currentColor;vertical-align:4px;margin-left:10px;font-weight:400;letter-spacing:0}
 .lbadge.ok{color:var(--ok)}.lbadge.bad{color:var(--up)}.lbadge.fact,.lbadge.long{color:var(--mut)}
-table.ltable{table-layout:fixed;width:100%;min-width:760px}
-table.ltable td,table.ltable th{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 欄寬跟著內容走（colgroup 的寬度當最小值）：數字一律完整顯示、不截成「…」，
+   整張表比畫面寬時由外層 .scroll 左右滑動。
+   原本是固定欄寬＋省略號，四位數股價（2475.00）、「電腦及週邊設備業」、「57.4 → 2.4 倍」都會被切掉。 */
+table.ltable{table-layout:auto;width:100%;min-width:760px}
+table.ltable td,table.ltable th{white-space:nowrap}
+/* 產業名稱最長 5 個字（電子零組件、電腦及週邊），一行放得下，不換行 */
 @media(max-width:760px){
   .lgrid{grid-template-columns:minmax(0,1fr);gap:0}
   .lside{display:none}
@@ -242,7 +251,7 @@ color:var(--mut);white-space:nowrap;border:1px solid var(--hair);background:tran
 font-weight:500}
 .tabs a.warnTab{color:var(--up);border-color:var(--up);opacity:.7}
 .tabs a.warnTab:hover{opacity:1;border-color:var(--up);color:var(--up)}
-.tabs a.warnTab.on{background:var(--up);color:#fff;border-color:var(--up);opacity:1}
+.tabs a.warnTab.on{background:var(--up);color:var(--onc);border-color:var(--up);opacity:1}
 .tabs .sepr{flex:0 0 auto;width:1px;background:var(--line);margin:7px 6px}
 
 /* ---------- 摺疊 ---------- */
@@ -447,9 +456,9 @@ border-color:var(--fg);outline:none}
 .card h2 .tip.infoi{vertical-align:5px}
 #tipbox p{margin:0 0 8px}
 #tipbox ul,#tipbox ol{margin:4px 0 0;padding-left:18px}
-/* 入選理由只留一行，完整內容滑過去看 */
-.clamp1{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;
-border-bottom:none;max-width:100%}
+/* 入選理由最多兩行，完整內容滑過去（手機點一下）看 */
+.clamp1{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;
+overflow:hidden;white-space:normal;border-bottom:none;max-width:100%}
 td.why.clamp1{display:table-cell;max-width:340px;white-space:nowrap;
 overflow:hidden;text-overflow:ellipsis}
 #tipbox b{color:var(--bg);font-weight:600}
@@ -529,7 +538,7 @@ line-height:1.6;white-space:nowrap;font-weight:500;vertical-align:2px}
 .nbadge.run{border:1px solid var(--hair);color:var(--mut);font-weight:400}
 .bars{display:flex;flex-direction:column;gap:5px;font-size:12.5px}
 .bars .b{display:grid;grid-template-columns:92px 1fr 34px;align-items:center;gap:8px;color:var(--mut)}
-.bars .t{height:6px;background:var(--line2);border-radius:3px;overflow:hidden}
+.bars .t{height:6px;background:var(--line);border-radius:3px;overflow:hidden}
 .bars .t i{display:block;height:100%;background:var(--fg);opacity:.75}
 .bars .b span:last-child{text-align:right;font-variant-numeric:tabular-nums}
 .st-hit{color:var(--up)}.st-fail{color:var(--dn)}
@@ -544,7 +553,7 @@ color:var(--fg);white-space:nowrap;line-height:1.7}
 .spark line{stroke:var(--hair);stroke-width:1;stroke-dasharray:2 3;vector-effect:non-scaling-stroke}
 .gbars{display:flex;flex-direction:column;gap:4px;font-size:12px}
 .gbars .b{display:grid;grid-template-columns:64px 1fr 26px;align-items:center;gap:8px;color:var(--mut)}
-.gbars .t{height:5px;background:var(--line2);border-radius:3px;overflow:hidden}
+.gbars .t{height:5px;background:var(--line);border-radius:3px;overflow:hidden}
 .gbars .t i{display:block;height:100%;background:var(--ok)}
 .gbars .b span:last-child{text-align:right;font-variant-numeric:tabular-nums;color:var(--fg)}
 .lamps{display:flex;flex-wrap:wrap;gap:3px 10px;font-size:11.5px;color:var(--mut);
@@ -564,9 +573,9 @@ td.h5,.hlegend i.h5{background:color-mix(in srgb,var(--ok) 60%,transparent);font
 .vs .row{display:grid;grid-template-columns:78px 1fr;gap:10px;align-items:center;font-size:13px}
 .vs .row>span{color:var(--mut)}
 .vs .row b{color:var(--fg);font-weight:500}
-.stk3{display:flex;height:18px;border-radius:3px;overflow:hidden;font-size:11px;line-height:18px;color:#fff}
+.stk3{display:flex;height:18px;border-radius:3px;overflow:hidden;font-size:11px;line-height:18px;color:var(--onc)}
 .stk3 i{display:block;font-style:normal;text-align:center;white-space:nowrap;overflow:hidden}
-.stk3 .h{background:var(--up)}.stk3 .f{background:var(--line2);color:var(--mut)}.stk3 .d{background:var(--dn)}
+.stk3 .h{background:var(--up)}.stk3 .f{background:var(--hair);color:var(--fg)}.stk3 .d{background:var(--dn)}
 .vs .key{font-size:12px;color:var(--mut);display:flex;gap:14px}
 .vs .key i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
 /* 分級圖：每組兩條（中、倒） */
@@ -577,7 +586,7 @@ td.h5,.hlegend i.h5{background:color-mix(in srgb,var(--ok) 60%,transparent);font
 .tiers .p div{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--mut);font-variant-numeric:tabular-nums}
 .tiers .p i{display:block;height:9px;border-radius:2px}
 /* 進度條與每日色帶 */
-.prog{height:10px;background:var(--line2);border-radius:5px;overflow:hidden;margin:6px 0}
+.prog{height:10px;background:var(--line);border-radius:5px;overflow:hidden;margin:6px 0}
 .prog i{display:block;height:100%;background:var(--fg)}
 .strip{display:flex;flex-wrap:wrap;gap:3px;margin:6px 0 4px}
 .strip i{display:block;width:14px;height:14px;border-radius:2px;background:var(--line2)}

@@ -10,7 +10,8 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <title>名單成績</title>
 <style>
 #daylist tr{cursor:pointer}
-#daylist tr.on td{background:var(--line2)}
+/* 選中的那一天：淺灰底加粗。原本是 --line2（淺色模式是純黑），黑字就看不見了 */
+#daylist tr.on td{background:var(--sunk);font-weight:500}
 </style>
 </head><body>
 <div class="wrap" id="app"></div>
