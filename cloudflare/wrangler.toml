@@ -1,0 +1,26 @@
+# Cloudflare Worker 設定（npx wrangler deploy 會讀這個檔）。說明見 README.md。
+name = "tw-stock-monitor-cron"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+
+# 不開公開網址：這個 Worker 只靠排程觸發，不需要被人連進來
+workers_dev = false
+
+[vars]
+GH_REPO = "hsinfuyeh/tw-stock-monitor"
+GH_WORKFLOW = "update.yml"
+
+# 時間是 UTC（台北 = UTC+8），只在週一到週五。休市日照樣會觸發，
+# 但 ci_update.py 發現沒有新的交易日就會安靜略過，不會發佈。
+[triggers]
+crons = [
+  # 台北 14:10–19:40 每半小時：行情約 14:30、估值與三大法人更晚，資料一齊就發佈，
+  # 已經發佈過的後面幾次直接略過
+  "10,40 6-11 * * MON-FRI",
+  # 台北 21:50、22:40：融資券約 21:30 公布，公布了就用完整資料重新產出名單（這一版為準）
+  "50 13 * * MON-FRI",
+  "40 14 * * MON-FRI",
+]
+
+[observability]
+enabled = true          # 在 Cloudflare 後台的 Logs 看得到每次觸發成功或失敗

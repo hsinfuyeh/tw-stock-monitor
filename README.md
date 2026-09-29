@@ -254,6 +254,7 @@ M2 回檔從持平 → −0.228（t = −5.38）、我自己加的波動門檻�
 - **處置股／注意股／全額交割股**（`risk_lists.py`）：每次發佈從 TWSE 抓（全額交割用 OpenAPI 的 TWT85U 變更交易），
   快取在 `raw/risklists/`。抓不到標 unavailable、注意股 0 筆標 pending（可能還沒公布），網頁會請你自己確認。
   補算缺日、以及前幾天名單還沒確定的，下次發佈會回頭重抓（最多 10 個交易日）再重標快照。
+- **定時觸發**（`cloudflare/`）：GitHub 內建排程常常略過，改由 Cloudflare Worker 每個交易日台北 14:10–19:40 每半小時、21:50、22:40 觸發更新（帶 `trigger=cron`，比照排程：已發佈過就略過）。設定步驟見 `cloudflare/README.md`。
 - **排程保險**（`fallback.py`）：GitHub 排程常常只跑最後一次。Windows 工作排程器「tw-stock-monitor 排程保險」
   在交易日 20:20、21:30 檢查公開網站，資料不是今天的就用 `gh workflow run` 觸發，紀錄在 `data/fallback.log`。
 - **一致性**：評分在網頁（JS）與 Python 各有一份，頁面載入時會用預設參數比對兩邊的清單，

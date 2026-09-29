@@ -27,6 +27,13 @@ on:
         description: "忽略資料齊備檢查（TWSE 還沒發完就強制發佈，除錯用）"
         type: boolean
         default: false
+      trigger:
+        # Cloudflare Worker（cloudflare/worker.js）定時觸發時帶 cron：比照排程處理 ——
+        # 當天已經發佈過、也沒有新的融資券就直接略過，不會每半小時重新產出一次。
+        # 手動按的維持 manual：沒有新資料也照樣重新產出（通常是改了程式碼）。
+        description: "觸發來源（cron = Cloudflare 定時觸發，比照排程；手動請留 manual）"
+        type: string
+        default: manual
 
 # 同時只允許一個，避免排程與手動撞在一起把倉儲寫壞
 concurrency:
@@ -93,6 +100,7 @@ jobs:
         env:
           # 社群聲量的 Threads 來源（social.py）。沒設這個 Secret 就只用 PTT，不會出錯。
           THREADS_TOKEN: ${{ secrets.THREADS_TOKEN }}
+          TRIGGER: ${{ inputs.trigger || github.event_name }}
         run: python ci_update.py ${{ inputs.ignore_gate && '--ignore-gate' || '' }}
 
       # publish=false 時下面全部跳過（綠燈而不是紅燈）：

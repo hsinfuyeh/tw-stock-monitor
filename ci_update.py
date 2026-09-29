@@ -57,6 +57,16 @@ def set_output(key, value):
     log("[output] {}={}".format(key, value))
 
 
+def automatic():
+    """這次是定時觸發的嗎：GitHub 排程，或 Cloudflare Worker 帶 trigger=cron 的手動觸發。
+
+    GitHub 內建排程常常延遲或整個略過（2026-09-21～29 下午的 4 次一次都沒跑），
+    所以改由 Cloudflare 準時觸發；它走 workflow_dispatch，要靠 TRIGGER 才分得出來。
+    定時觸發：當天已發佈過就略過。手動：照樣重新產出（通常是改了程式碼）。"""
+    return (os.environ.get("GITHUB_EVENT_NAME") == "schedule"
+            or os.environ.get("TRIGGER") == "cron")
+
+
 def usable_last_date():
     """三張核心表都有資料的最後一天。"""
     try:
@@ -168,7 +178,7 @@ def main(ignore_gate=False):
         # 名單以這一版為準（下午那版的融資券是前一天的）。
         got = refresh_margin(cal, cutoff)
         import social                         # 社群聲量（只顯示）：每次要發佈都更新
-        if cutoff in got or os.environ.get("GITHUB_EVENT_NAME") != "schedule":
+        if cutoff in got or not automatic():
             social.update()
         if cutoff in got:
             write_summary(["當天（{}）的融資券已公布，用完整資料重新產出名單。".format(_d(last_ok))])
@@ -178,7 +188,7 @@ def main(ignore_gate=False):
         # 排程一天會跑好幾次；第一次發佈之後，後面幾次都會走到這裡。
         # 排程觸發就直接略過，不要每小時重做一次 4 分鐘的產出。
         # 手動觸發則照樣重新產出 —— 那通常是改了程式碼、想讓網站跟上。
-        scheduled = os.environ.get("GITHUB_EVENT_NAME") == "schedule"
+        scheduled = automatic()
         log("沒有新的交易日，倉儲已是最新。")
         if scheduled:
             write_summary(["倉儲已是最新：**{}**。今天已經發佈過，這次排程略過。"
