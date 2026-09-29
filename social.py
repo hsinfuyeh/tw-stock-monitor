@@ -12,8 +12,12 @@
     Dcard、Mobile01   Cloudflare 直接擋（403），雲端排程不可能通過，不做。
     CMoney 爆料同學會 公開網頁裡沒有個股文章，文章是用登入憑證打私有 API 拿的，不做。
 
-原始資料存在 raw/social/：每篇 PTT 文章一個檔（標題、內文、推文與時間），
-股票比對在匯總時才做 —— 改排除清單不必重抓。
+PTT 擋 GitHub 的雲端主機（HTTP 403，2026-09-29 實測），所以 PTT <b>由使用者自己的電腦抓</b>：
+Windows 工作排程器「tw-stock-monitor 社群聲量」每天跑 social_push.py ——
+抓文章（原文存 raw/social/ptt/，每篇一個檔）→ 比對股票 → 匯總成每天每檔的次數
+（snapshots/social/ptt.json，約 100 KB）→ 用 GitHub API 只更新這一個檔。
+雲端發佈時讀這個檔，自己不抓 PTT。電腦沒開的那幾天，頁面會寫「PTT 資料停在哪天」。
+Threads 走官方 API，雲端抓得到，還是在 CI 裡查。
 
 「聲量」＝ 一個交易日的窗口內，提到這檔股票的文章數 + 推文數 + Threads 貼文數。
 窗口是「上一個交易日之後 ~ 這個交易日」的日曆日，所以連假期間的討論會算進開市那天。
@@ -34,9 +38,11 @@ from pathlib import Path
 import pandas as pd
 import requests
 
-from config import RAW
+from config import DATA, RAW, ROOT
 
 DIR = RAW / "social"
+SNAP_FILE = ROOT / "snapshots" / "social" / "ptt.json"   # 進版控，雲端讀這個
+LOCAL_FILE = DATA / "social_ptt.json"                    # 本機剛匯出、可能還沒 pull 下來的同一份
 PTT_DIR = DIR / "ptt"
 TH_DIR = DIR / "threads"
 TW = dt.timezone(dt.timedelta(hours=8))           # 台北時間；CI 跑在 UTC，不能用本機時區
@@ -263,24 +269,9 @@ def update_threads(names, day, delay=0.3):
     return status
 
 
-def update(data_date=None, ptt_budget=400, threads_n=400):
-    """CI 每次發佈前呼叫。PTT 抓最近幾天（沒有歷史就一路補到 35 天前，每次 ptt_budget 篇，
-    新的先抓；一篇約 0.7 秒。股票板一天約 35 篇，35 天約 1,200 篇，三次排程就補齊）；晚上 21 點後那次再查 Threads。不丟例外。"""
-    # 60 天前的文章用不到了（基準只看前 20 個交易日），刪掉，CI 快取才不會越長越大
-    old = time.time() - 60 * 86400
-    for f in (PTT_DIR.glob("*.json.gz") if PTT_DIR.exists() else []):
-        try:
-            if int(f.name.split(".")[1]) < old:
-                f.unlink()
-        except (IndexError, ValueError, OSError):
-            pass
-    try:
-        eps = [int(f.name.split(".")[1]) for f in PTT_DIR.glob("*.json.gz")] if PTT_DIR.exists() else []
-        # 最舊的一篇不到 30 天前，代表基準還沒補齊：往回抓 35 天（新的先抓，每次 ptt_budget 篇）
-        full = bool(eps) and min(eps) < time.time() - 30 * 86400
-        update_ptt(days=3 if full else 35, budget=ptt_budget)
-    except Exception as e:
-        log("::warning::PTT 抓取失敗：{}".format(e))
+def update(data_date=None, threads_n=400):
+    """CI 每次發佈前呼叫：只查 Threads（PTT 擋雲端，改由本機 social_push.py 抓）。
+    晚上 21 點後那次才查（每天額度有限）。不丟例外。"""
     if not threads_enabled():
         return
     now = dt.datetime.now(TW)
@@ -289,7 +280,7 @@ def update(data_date=None, ptt_budget=400, threads_n=400):
         return
     try:
         names = _names()
-        dc = daily_counts(names)
+        dc = daily_counts(load_ptt())
         top = (dc.groupby("code")[["posts", "pushes"]].sum().sum(axis=1)
                .sort_values(ascending=False).head(threads_n).index) if len(dc) else list(names)[:threads_n]
         update_threads({c: names[c] for c in top if c in names}, (data_date or now.date().isoformat()))
@@ -341,22 +332,63 @@ def _names():
     return dict(zip(u["code"].astype(str), u["name"].astype(str)))
 
 
-def daily_counts(names=None):
-    """每檔股票每個日曆日的提及次數：DataFrame(date, code, src, posts, pushes)。"""
+def prune_ptt(days=60):
+    """60 天前的文章用不到了（基準只看前 20 個交易日），刪掉。"""
+    old = time.time() - days * 86400
+    for f in (PTT_DIR.glob("*.json.gz") if PTT_DIR.exists() else []):
+        try:
+            if int(f.name.split(".")[1]) < old:
+                f.unlink()
+        except (IndexError, ValueError, OSError):
+            pass
+
+
+def export_ptt(names=None):
+    """把 raw/social/ptt/ 的文章匯總成 {date: {code: [文章數, 推文數]}}，寫到 LOCAL_FILE 並回傳。
+
+    比對（Matcher）在這一步做，所以改排除清單之後，下一次匯出整份都會照新規則重算。"""
     names = names or _names()
     m = Matcher(names)
-    rows = []
+    days, arts = {}, {}
     for p in PTT_DIR.glob("*.json.gz"):
         try:
             a = _read(p)
         except Exception:
             continue
+        arts[a["date"]] = arts.get(a["date"], 0) + 1
         for c in m.find(a["title"] + "\n" + a["body"]):
-            rows.append((a["date"], c, "ptt", 1, 0))
+            days.setdefault(a["date"], {}).setdefault(c, [0, 0])[0] += 1
         for day, txt in a["pushes"]:
             for c in m.find(txt):
-                rows.append((day, c, "ptt", 0, 1))
-    for p in TH_DIR.glob("*.json.gz"):
+                days.setdefault(day, {}).setdefault(c, [0, 0])[1] += 1
+    obj = dict(updated_at=dt.datetime.now(TW).isoformat(timespec="seconds"),
+               articles=dict(sorted(arts.items())),
+               days={d: dict(sorted(v.items())) for d, v in sorted(days.items())})
+    LOCAL_FILE.parent.mkdir(parents=True, exist_ok=True)
+    LOCAL_FILE.write_text(json.dumps(obj, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    return obj
+
+
+def load_ptt():
+    """PTT 匯總檔：版控裡的（雲端）與本機剛匯出的，取比較新的那份。都沒有回 None。"""
+    best = None
+    for f in (SNAP_FILE, LOCAL_FILE):
+        try:
+            o = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if best is None or o.get("updated_at", "") > best.get("updated_at", ""):
+            best = o
+    return best
+
+
+def daily_counts(ptt=None):
+    """每檔股票每個日曆日的提及次數：DataFrame(date, code, src, posts, pushes)。"""
+    rows = []
+    for day, v in ((ptt or {}).get("days") or {}).items():
+        for c, (n_post, n_push) in v.items():
+            rows.append((day, c, "ptt", n_post, n_push))
+    for p in (TH_DIR.glob("*.json.gz") if TH_DIR.exists() else []):
         day = p.name[:10]
         for c, v in _read(p).items():
             if v.get("n"):
@@ -381,12 +413,17 @@ def ranking(data_date, cal):
 
     回傳 (DataFrame, info)。DataFrame 欄位：code, ptt_posts, ptt_pushes, threads, total, base, ratio。
     info 說明涵蓋範圍（前端顯示用）。"""
-    names = _names()
-    dc = daily_counts(names)
+    ptt = load_ptt()
+    dc = daily_counts(ptt)
     cal = [d for d in cal if d <= data_date]
     win = windows(cal, BASELINE)
     today_days = win.get(data_date, [data_date])
-    info = dict(window=[today_days[0], today_days[-1]], sources=[])
+    ptt_at = (ptt or {}).get("updated_at")
+    info = dict(window=[today_days[0], today_days[-1]], ptt_updated=ptt_at,
+                # 匯總檔在這個交易日結束前就停了（電腦沒開）：數字只算到那個時間
+                ptt_stale=bool(ptt_at) and ptt_at[:10] < today_days[-1],
+                sources=[dict(key="ptt", name="PTT 股票板", status="missing" if ptt is None else "ok",
+                              articles=sum((ptt or {}).get("articles", {}).get(d, 0) for d in today_days))])
     if not len(dc):
         return pd.DataFrame(), info
 
@@ -412,16 +449,13 @@ def ranking(data_date, cal):
     cur["ratio"] = (cur["total"] + 1) / (cur["base"] + 1)       # +1：從 0 到 3 不該是無限大倍
     cur.index.name = "code"
     info["base_windows"] = len(prior)
-    # 這段期間股票板一共幾篇文章（檔名 M.<發文時間>.A.xxx 就有時間，不必打開檔案）
-    n_art = sum(1 for f in PTT_DIR.glob("*.json.gz")
-                if dt.datetime.fromtimestamp(int(f.name.split(".")[1]), TW).date().isoformat() in today_days)
-    info["sources"] = [dict(key="ptt", name="PTT 股票板", status="ok" if len(cur) else "empty",
-                            articles=n_art)]
     return cur.reset_index(), info
 
 
 if __name__ == "__main__":
+    # 手動回補：python social.py 35   （平常由 social_push.py 排程跑）
     if sys.stdout:
         sys.stdout.reconfigure(encoding="utf-8")
     days = int(sys.argv[1]) if len(sys.argv) > 1 else 3
     update_ptt(days=days, budget=100000)
+    export_ptt()

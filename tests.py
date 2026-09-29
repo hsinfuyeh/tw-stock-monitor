@@ -344,6 +344,7 @@ def test_social():
     """社群聲量（social.py）：股票比對、交易日窗口、暴增倍數。全部用合成資料，不連網。"""
     print("\n社群聲量")
     import datetime as dt
+    import json
     import tempfile
     from pathlib import Path as _P
     import social
@@ -368,8 +369,9 @@ def test_social():
 
     # 合成 PTT 文章：2330 每天 3 篇（平穩）、8299 平常 1 篇、最後一天 20 篇（暴增）
     tmp = _P(tempfile.mkdtemp())
-    old_dir, old_th, old_names = social.PTT_DIR, social.TH_DIR, social._names
+    saved = (social.PTT_DIR, social.TH_DIR, social._names, social.SNAP_FILE, social.LOCAL_FILE)
     social.PTT_DIR, social.TH_DIR = tmp / "ptt", tmp / "threads"
+    social.SNAP_FILE, social.LOCAL_FILE = tmp / "snap.json", tmp / "local.json"
     social._names = lambda: names
     cal = ["2026-08-{:02d}".format(d) for d in range(3, 29) if dt.date(2026, 8, d).weekday() < 5]
     k = 0
@@ -380,15 +382,26 @@ def test_social():
                 social._write(social.PTT_DIR / "M.{}.A.X.json.gz".format(k),
                               dict(id=str(k), epoch=0, date=day, title=code, body="", pushes=[]))
     try:
+        check("沒有匯總檔 -> 空榜、標成 missing，不丟例外",
+              social.ranking(cal[-1], cal)[1]["sources"][0]["status"] == "missing")
+        # 本機匯出（social_push.py 做的事），雲端只讀匯總檔
+        social.export_ptt(names)
         df, info = social.ranking(cal[-1], cal)
         r = df.set_index("code")
+        check("匯總檔記下每天的文章數", info["sources"][0]["articles"] == 23, str(info["sources"][0]))
         check("聲量最高：當天的提及次數", int(r.loc["8299", "total"]) == 20 and int(r.loc["2330", "total"]) == 3)
         check("暴增倍數 = (今天 + 1) ÷ (前 20 個交易日平均 + 1)",
               abs(r.loc["8299", "ratio"] - 21 / 2) < 1e-9 and abs(r.loc["2330", "ratio"] - 1) < 1e-9,
               "{:.2f} / {:.2f}".format(r.loc["8299", "ratio"], r.loc["2330", "ratio"]))
         check("基準只用有資料的交易日窗口", info["base_windows"] == 18, str(info["base_windows"]))
+        # 版控裡的比本機的新（別的電腦推的）-> 用新的那份
+        newer = dict(json.loads(social.LOCAL_FILE.read_text(encoding="utf-8")), updated_at="2099-01-01T00:00:00")
+        newer["days"][cal[-1]]["8299"] = [0, 0]
+        social.SNAP_FILE.write_text(json.dumps(newer), encoding="utf-8")
+        r2 = social.ranking(cal[-1], cal)[0].set_index("code")
+        check("版控與本機的匯總檔取比較新的", "8299" not in r2.index or int(r2.loc["8299", "total"]) == 0)
     finally:
-        social.PTT_DIR, social.TH_DIR, social._names = old_dir, old_th, old_names
+        (social.PTT_DIR, social.TH_DIR, social._names, social.SNAP_FILE, social.LOCAL_FILE) = saved
 
 
 if __name__ == "__main__":
