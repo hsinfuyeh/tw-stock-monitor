@@ -268,7 +268,7 @@ M2 回檔從持平 → −0.228（t = −5.38）、我自己加的波動門檻�
 
 | 來源 | 狀態 | 說明 |
 |---|---|---|
-| PTT 股票板 | 使用中（雲端） | 公開網頁。GitHub 雲端主機直接連是 **HTTP 403**（PTT 整站在 Cloudflare 後面，含 RSS），但從 Cloudflare Worker 讀是 200，所以 CI 透過自己的 Worker 代讀（`cloudflare/worker.js` 的 `/ptt/…`，只放行股票板的列表與文章頁；workflow 的 `PTT_RELAY`）。每次發佈抓最近 3 天、匯總進 `snapshots/social/ptt.json`（約 100 KB）並 commit 回 repo，**不用電腦開著**。本機的 `social_push.py`（直接連 PTT）留著當備援，Windows 排程已停用。文章（標題＋內文）與每一則推文都算一次，推文照自己的時間戳算日期 |
+| PTT 股票板 | 使用中（**本機抓**） | 公開網頁，但整站在 Cloudflare 後面，**GitHub 雲端主機直接連是 HTTP 403**（含 RSS）。所以由這台電腦抓：Windows 工作排程器「tw-stock-monitor 社群聲量」每天 14:25、19:00、21:35 跑 `social_push.py` → 匯總成 `snapshots/social/ptt.json`（約 100 KB）→ 用 GitHub API 只更新這個檔（數字沒變不推）。電腦沒開的日子頁面會寫「PTT 資料停在哪天」。試過透過自己的 Cloudflare Worker 代讀（`cloudflare/worker.js` 的 `/ptt/…`、`PTT_RELAY`）：從家用網路呼叫是 200，但**從 GitHub 主機呼叫一樣 403**（2026-09-30），所以 workflow 沒有設 `PTT_RELAY`；程式留著，之後若改成由 Worker 自己的排程去讀可以再試。文章（標題＋內文）與每一則推文都算一次，推文照自己的時間戳算日期 |
 | Threads | 有金鑰才啟用 | 只能走 Meta 官方 `keyword_search` API：要建 Meta App、`threads_keyword_search` 權限**通過審核**（沒過只搜得到自己的貼文），把金鑰放進 repo 的 Secret `THREADS_TOKEN`。額度 2,200 次 / 24 小時，所以只在晚上 21 點後那次排程、查 PTT 聲量前 400 檔 |
 | Dcard、Mobile01 | 不做 | Cloudflare 直接回 403，雲端排程不可能通過 |
 | CMoney 爆料同學會 | 不做 | 公開網頁沒有個股文章；文章要帶登入憑證打私有 API，違反使用規範、也隨時會壞 |

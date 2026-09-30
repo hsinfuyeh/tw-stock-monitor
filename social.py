@@ -12,12 +12,15 @@
     Dcard、Mobile01   Cloudflare 直接擋（403），雲端排程不可能通過，不做。
     CMoney 爆料同學會 公開網頁裡沒有個股文章，文章是用登入憑證打私有 API 拿的，不做。
 
-PTT 整站在 Cloudflare 後面，GitHub 的雲端主機直接連是 HTTP 403（含 RSS，2026-09-29 實測）；
-但從 Cloudflare Worker 讀是 200（2026-09-30 實測）。所以 CI 透過自己的 Worker 代讀
-（cloudflare/worker.js 的 /ptt/…，只放行股票板的列表與文章頁；環境變數 PTT_RELAY）：
-抓最近 3 天的文章（原文存 raw/social/ptt/）→ 比對股票 → 匯總成每天每檔的次數
-（snapshots/social/ptt.json，約 100 KB）→ workflow 把它 commit 回 repo，歷史就留在版控裡。
-不用任何電腦開著。本機也能跑同一套（social_push.py，直接連 PTT），當備援。
+PTT 整站在 Cloudflare 後面，GitHub 的雲端主機直接連是 HTTP 403（含 RSS，2026-09-29 實測），
+所以 PTT <b>由使用者自己的電腦抓</b>：Windows 工作排程器「tw-stock-monitor 社群聲量」每天跑
+social_push.py —— 抓文章（原文存 raw/social/ptt/）→ 比對股票 → 匯總成每天每檔的次數
+（snapshots/social/ptt.json，約 100 KB）→ 用 GitHub API 只更新這一個檔。雲端發佈時讀這個檔。
+電腦沒開的那幾天，頁面會寫「PTT 資料停在哪天」。
+
+試過讓 CI 透過自己的 Cloudflare Worker 代讀（PTT_RELAY、cloudflare/worker.js 的 /ptt/…）：
+從家用網路呼叫 Worker 是 200，但從 GitHub 主機呼叫一樣 403（2026-09-30）——
+PTT 的防護看的是最初呼叫 Worker 的來源。程式留著（update() 有設 PTT_RELAY 才會走），目前沒有啟用。
 Threads 走官方 API，雲端抓得到，還是在 CI 裡查。
 
 「聲量」＝ 一個交易日的窗口內，提到這檔股票的文章數 + 推文數 + Threads 貼文數。

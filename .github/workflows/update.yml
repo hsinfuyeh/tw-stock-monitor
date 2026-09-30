@@ -101,9 +101,8 @@ jobs:
           # 社群聲量的 Threads 來源（social.py）。沒設這個 Secret 就只用 PTT，不會出錯。
           THREADS_TOKEN: ${{ secrets.THREADS_TOKEN }}
           TRIGGER: ${{ inputs.trigger || github.event_name }}
-          # PTT 擋 GitHub 的雲端主機（403），改由自己的 Cloudflare Worker 代讀（cloudflare/worker.js）。
-          # 拿掉這行就不抓 PTT，沿用 repo 裡現有的 snapshots/social/ptt.json。
-          PTT_RELAY: https://tw-stock-monitor-cron.sam19920516-923.workers.dev/ptt
+          # PTT_RELAY（Cloudflare Worker 代讀 PTT）目前不設：2026-09-30 實測，從 GitHub 主機呼叫 Worker，
+          # PTT 一樣回 403（PTT 的防護看的是最初呼叫 Worker 的來源）。PTT 仍由本機排程 social_push.py 提供。
         run: python ci_update.py ${{ inputs.ignore_gate && '--ignore-gate' || '' }}
 
       # publish=false 時下面全部跳過（綠燈而不是紅燈）：
