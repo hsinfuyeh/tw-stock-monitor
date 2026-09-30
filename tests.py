@@ -398,6 +398,27 @@ def test_social():
         newer = dict(json.loads(social.LOCAL_FILE.read_text(encoding="utf-8")), updated_at="2099-01-01T00:00:00")
         newer["days"][cal[-1]]["8299"] = [0, 0]
         social.SNAP_FILE.write_text(json.dumps(newer), encoding="utf-8")
+        # 雲端只有最近幾天的原文：更早的日子沿用上一份匯總，邊界那天逐格取大的，之後的以原文為準
+        first = cal[0]
+        prev = dict(updated_at="2026-01-01T00:00:00", articles={"2026-07-31": 7, first: 99, cal[-1]: 1},
+                    days={"2026-07-31": {"2330": [5, 50]}, first: {"2330": [1, 40], "8299": [9, 0]},
+                          cal[-1]: {"2330": [99, 99]}})
+        real_now = social.dt.datetime
+        class _Now(real_now):
+            @classmethod
+            def now(cls, tz=None):
+                return real_now(2026, 8, 28, 12, 0, tzinfo=tz)
+        social.dt.datetime = _Now
+        try:
+            mg = social.export_ptt(names, prev=prev)
+        finally:
+            social.dt.datetime = real_now
+        check("合併：原文沒涵蓋的舊日子沿用上一份", mg["days"].get("2026-07-31") == {"2330": [5, 50]}
+              and mg["articles"].get("2026-07-31") == 7, str(mg["days"].get("2026-07-31")))
+        check("合併：邊界那天逐格取大的", mg["days"][first]["2330"] == [3, 40] and mg["days"][first]["8299"] == [9, 0]
+              and mg["articles"][first] == 99, str(mg["days"][first]))
+        check("合併：原文完整的日子以重算為準，不被舊匯總蓋掉", mg["days"][cal[-1]]["2330"] == [3, 0],
+              str(mg["days"][cal[-1]]["2330"]))
         r2 = social.ranking(cal[-1], cal)[0].set_index("code")
         check("版控與本機的匯總檔取比較新的", "8299" not in r2.index or int(r2.loc["8299", "total"]) == 0)
     finally:

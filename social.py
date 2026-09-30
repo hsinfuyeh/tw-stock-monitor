@@ -12,11 +12,12 @@
     Dcard、Mobile01   Cloudflare 直接擋（403），雲端排程不可能通過，不做。
     CMoney 爆料同學會 公開網頁裡沒有個股文章，文章是用登入憑證打私有 API 拿的，不做。
 
-PTT 擋 GitHub 的雲端主機（HTTP 403，2026-09-29 實測），所以 PTT <b>由使用者自己的電腦抓</b>：
-Windows 工作排程器「tw-stock-monitor 社群聲量」每天跑 social_push.py ——
-抓文章（原文存 raw/social/ptt/，每篇一個檔）→ 比對股票 → 匯總成每天每檔的次數
-（snapshots/social/ptt.json，約 100 KB）→ 用 GitHub API 只更新這一個檔。
-雲端發佈時讀這個檔，自己不抓 PTT。電腦沒開的那幾天，頁面會寫「PTT 資料停在哪天」。
+PTT 整站在 Cloudflare 後面，GitHub 的雲端主機直接連是 HTTP 403（含 RSS，2026-09-29 實測）；
+但從 Cloudflare Worker 讀是 200（2026-09-30 實測）。所以 CI 透過自己的 Worker 代讀
+（cloudflare/worker.js 的 /ptt/…，只放行股票板的列表與文章頁；環境變數 PTT_RELAY）：
+抓最近 3 天的文章（原文存 raw/social/ptt/）→ 比對股票 → 匯總成每天每檔的次數
+（snapshots/social/ptt.json，約 100 KB）→ workflow 把它 commit 回 repo，歷史就留在版控裡。
+不用任何電腦開著。本機也能跑同一套（social_push.py，直接連 PTT），當備援。
 Threads 走官方 API，雲端抓得到，還是在 CI 裡查。
 
 「聲量」＝ 一個交易日的窗口內，提到這檔股票的文章數 + 推文數 + Threads 貼文數。
@@ -47,11 +48,14 @@ PTT_DIR = DIR / "ptt"
 TH_DIR = DIR / "threads"
 TW = dt.timezone(dt.timedelta(hours=8))           # 台北時間；CI 跑在 UTC，不能用本機時區
 
-PTT = "https://www.ptt.cc"
+# PTT_RELAY：Cloudflare Worker 的代讀網址（…workers.dev/ptt）。雲端直接連 PTT 是 403，
+# 設了就改走代讀；沒設（本機）就直接連。兩邊的路徑完全一樣（/bbs/Stock/…）。
+RELAY = os.environ.get("PTT_RELAY", "").rstrip("/")
+PTT = RELAY or "https://www.ptt.cc"
 UA = "Mozilla/5.0 (compatible; personal-research/1.0)"
 _s = requests.Session()
 _s.headers.update({"User-Agent": UA})
-_s.cookies.set("over18", "1", domain="www.ptt.cc")
+_s.cookies.set("over18", "1", domain="www.ptt.cc")     # 走代讀時由 Worker 帶，這個 cookie 不會送出去
 
 BASELINE = 20          # 暴增的基準：前幾個交易日窗口的平均
 MIN_MENTIONS = 5       # 暴增榜的門檻：聲量太小的「10 倍」只是 1 次變 10 次，沒有意義
@@ -269,9 +273,26 @@ def update_threads(names, day, delay=0.3):
     return status
 
 
-def update(data_date=None, threads_n=400):
-    """CI 每次發佈前呼叫：只查 Threads（PTT 擋雲端，改由本機 social_push.py 抓）。
-    晚上 21 點後那次才查（每天額度有限）。不丟例外。"""
+def update(data_date=None, threads_n=400, ptt_budget=400):
+    """CI 每次發佈前呼叫。不丟例外。
+
+    PTT：有設 PTT_RELAY（Cloudflare Worker 代讀，見 cloudflare/worker.js）才抓 —— 最近 3 天、
+    最多 ptt_budget 篇（約 5 分鐘），匯總後寫回 snapshots/social/ptt.json，由 workflow commit。
+    沒設就不抓（直接連 PTT 在雲端是 403），沿用 repo 裡現有的匯總檔。
+    Threads：有金鑰才查，而且只在晚上 21 點後那次（每天額度有限）。"""
+    if RELAY:
+        try:
+            prune_ptt()
+            prev = load_ptt()
+            n = update_ptt(days=3, budget=ptt_budget)
+            if n or not LOCAL_FILE.exists():
+                export_ptt(prev=prev, to_repo=True)
+            elif LAST_ERR[0]:
+                log("::warning::PTT 這次沒抓到新文章（{}），沿用上一份匯總".format(LAST_ERR[0]))
+        except Exception as e:
+            log("::warning::PTT 更新失敗，沿用上一份匯總：{}".format(e))
+    else:
+        log("PTT：沒有設 PTT_RELAY，這次不抓（沿用 repo 裡的匯總檔）")
     if not threads_enabled():
         return
     now = dt.datetime.now(TW)
@@ -343,10 +364,12 @@ def prune_ptt(days=60):
             pass
 
 
-def export_ptt(names=None):
+def export_ptt(names=None, prev=None, to_repo=False):
     """把 raw/social/ptt/ 的文章匯總成 {date: {code: [文章數, 推文數]}}，寫到 LOCAL_FILE 並回傳。
 
-    比對（Matcher）在這一步做，所以改排除清單之後，下一次匯出整份都會照新規則重算。"""
+    prev：上一份匯總（load_ptt()），原文沒涵蓋到的舊日子沿用它。
+    to_repo：同時寫進版控的 snapshots/social/ptt.json（CI 用，workflow 會 commit 回 repo）。
+    比對（Matcher）在這一步做，所以改排除清單之後，原文還在的日子下一次匯出會照新規則重算。"""
     names = names or _names()
     m = Matcher(names)
     days, arts = {}, {}
@@ -361,11 +384,29 @@ def export_ptt(names=None):
         for day, txt in a["pushes"]:
             for c in m.find(txt):
                 days.setdefault(day, {}).setdefault(c, [0, 0])[1] += 1
+    # 手上的原文不一定涵蓋全部歷史：雲端每次只抓最近 3 天（快取掉了就只剩這 3 天），
+    # 更早的日子沿用上一份匯總。「最舊那篇文章的日期」之後的日子原文是完整的，以這次重算為準；
+    # 那一天（只抓到半天）與更早的，跟上一份逐格取大的 —— 提及次數只會隨推文增加，不會變少。
+    if prev:
+        oldest = min(arts) if arts else "9999"
+        keep_from = (dt.datetime.now(TW).date() - dt.timedelta(days=60)).isoformat()
+        for d, v in (prev.get("days") or {}).items():
+            if d > oldest or d < keep_from:
+                continue
+            cur = days.setdefault(d, {})
+            for c, (n_post, n_push) in v.items():
+                a = cur.setdefault(c, [0, 0])
+                a[0], a[1] = max(a[0], n_post), max(a[1], n_push)
+        for d, n in (prev.get("articles") or {}).items():
+            if keep_from <= d <= oldest:
+                arts[d] = max(arts.get(d, 0), n)
     obj = dict(updated_at=dt.datetime.now(TW).isoformat(timespec="seconds"),
                articles=dict(sorted(arts.items())),
                days={d: dict(sorted(v.items())) for d, v in sorted(days.items())})
-    LOCAL_FILE.parent.mkdir(parents=True, exist_ok=True)
-    LOCAL_FILE.write_text(json.dumps(obj, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    txt = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+    for f in ([LOCAL_FILE, SNAP_FILE] if to_repo else [LOCAL_FILE]):
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(txt, encoding="utf-8")
     return obj
 
 

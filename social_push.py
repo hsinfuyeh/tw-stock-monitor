@@ -1,8 +1,9 @@
 """本機排程：抓 PTT 股票板 → 匯總 → 推上 GitHub（social.py 的 PTT 來源）。
 
-為什麼在本機跑：PTT 擋 GitHub 的雲端主機（HTTP 403），家用網路抓得到。
-由 Windows 工作排程器「tw-stock-monitor 社群聲量」每天 14:25、19:00、21:35 執行 ——
-排在雲端發佈（14:40 起、19:10、21:50）之前，發佈時就讀得到最新的數字。
+備援用：平常 PTT 由雲端透過 Cloudflare Worker 代讀（見 social.update、cloudflare/worker.js），
+不需要這支。哪天 PTT 開始擋 Worker，可以手動跑這支，或重新啟用 Windows 工作排程器的
+「tw-stock-monitor 社群聲量」（2026-09-30 起停用；原本每天 14:25、19:00、21:35）。
+本機直接連 PTT（家用網路不會被擋）。
 
 推送方式刻意用 GitHub API 直接更新 snapshots/social/ptt.json 這一個檔，
 <b>不碰本機的 git 工作目錄</b>：你本機正在改、還沒推的東西不會被排程順手推上去，

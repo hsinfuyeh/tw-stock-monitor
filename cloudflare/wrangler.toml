@@ -3,8 +3,9 @@ name = "tw-stock-monitor-cron"
 main = "worker.js"
 compatibility_date = "2026-09-01"
 
-# 不開公開網址：這個 Worker 只靠排程觸發，不需要被人連進來
-workers_dev = false
+# 要有網址：GitHub Actions 透過 <這個 Worker>.workers.dev/ptt/... 讀 PTT 股票板（見 worker.js 的 pttRelay）
+workers_dev = true
+preview_urls = false
 
 [vars]
 GH_REPO = "hsinfuyeh/tw-stock-monitor"

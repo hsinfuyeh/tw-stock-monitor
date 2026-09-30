@@ -262,7 +262,7 @@ def main(ignore_gate=False):
     # 主動式 ETF 持股（只顯示）。每檔抓最新一份，另外最多 40 個請求補歷史（約 3 分鐘）。
     import activeetf
     activeetf.update(budget=40)
-    # 社群聲量（只顯示）：這裡只查 Threads。PTT 擋雲端，由本機 social_push.py 推匯總檔上來。不丟例外。
+    # 社群聲量（只顯示）：PTT 透過 Cloudflare Worker 代讀（PTT_RELAY），Threads 有金鑰才查。不丟例外。
     import social
     social.update()
 

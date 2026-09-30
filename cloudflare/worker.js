@@ -1,4 +1,4 @@
-/* tw-stock-monitor 定時觸發器（Cloudflare Worker）
+/* tw-stock-monitor 定時觸發器＋PTT 代讀（Cloudflare Worker）
  *
  * 為什麼需要：GitHub Actions 內建的 schedule 在免費方案常常延遲或整個略過 ——
  * 2026-09-21～29 每天排 5 次，下午那 4 次一次都沒跑，網站多半到晚上 8 點才更新。
@@ -17,13 +17,36 @@ export default {
     ctx.waitUntil(dispatch(env, event.cron));
   },
 
-  // 只回一段說明。刻意不提供「從網址觸發」—— 否則任何人打這個網址都能叫 GitHub 跑更新。
-  async fetch() {
+  async fetch(req) {
+    const path = new URL(req.url).pathname;
+    if (req.method === "GET" && path.startsWith("/ptt/")) return pttRelay(path.slice(4));
+    // 其他網址只回一段說明。刻意不提供「從網址觸發更新」—— 否則任何人打這個網址都能叫 GitHub 跑更新。
     return new Response(
-      "tw-stock-monitor 定時觸發器：每個交易日定時請 GitHub Actions 更新資料。這個網址不接受觸發。\n",
+      "tw-stock-monitor：每個交易日定時請 GitHub Actions 更新資料，並代讀 PTT 股票板（/ptt/bbs/Stock/…）。\n",
       { headers: { "content-type": "text/plain; charset=utf-8" } });
   },
 };
+
+/* 代讀 PTT 股票板（社群聲量，social.py）。
+ *
+ * PTT 整站在 Cloudflare 後面，對 GitHub 雲端主機一律回 403；從 Worker 讀則是 200
+ *（2026-09-30 實測，執行機房 SJC）。所以 GitHub Actions 改成透過這裡讀。
+ *
+ * 只放行股票板的列表頁與文章頁，其他路徑一律 404 —— 這不是通用的代理。
+ * 不登入、不帶任何帳號，只帶「已滿 18 歲」的確認（跟瀏覽器按下同意一樣）。 */
+const PTT_PATH = /^\/bbs\/Stock\/(index\d*|M\.\d+\.A\.[0-9A-F]+)\.html$/;
+
+async function pttRelay(path) {
+  if (!PTT_PATH.test(path)) return new Response("not found\n", { status: 404 });
+  const r = await fetch("https://www.ptt.cc" + path, {
+    headers: { "User-Agent": "Mozilla/5.0 (compatible; personal-research/1.0)", "Cookie": "over18=1" },
+  });
+  // 狀態碼原樣傳回去：PTT 哪天開始擋 Worker（403），social.py 才看得到、會記下來
+  return new Response(r.body, {
+    status: r.status,
+    headers: { "content-type": r.headers.get("content-type") || "text/html; charset=utf-8" },
+  });
+}
 
 async function dispatch(env, cron) {
   if (!env.GITHUB_TOKEN) {
