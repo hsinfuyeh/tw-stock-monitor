@@ -34,6 +34,12 @@ on:
         description: "觸發來源（cron = Cloudflare 定時觸發，比照排程；手動請留 manual）"
         type: string
         default: manual
+      social:
+        # 網頁按「更新」時，瀏覽器算好的 PTT 聲量（JSON）。由 Cloudflare Worker 的 /update 帶進來，
+        # social.apply_payload 檢查後併進 snapshots/social/ptt.json。手動跑請留空。
+        description: "社群聲量（網頁更新按鈕自動帶入，手動請留空）"
+        type: string
+        default: ""
 
 # 同時只允許一個，避免排程與手動撞在一起把倉儲寫壞
 concurrency:
@@ -101,6 +107,7 @@ jobs:
           # 社群聲量的 Threads 來源（social.py）。沒設這個 Secret 就只用 PTT，不會出錯。
           THREADS_TOKEN: ${{ secrets.THREADS_TOKEN }}
           TRIGGER: ${{ inputs.trigger || github.event_name }}
+          SOCIAL_PAYLOAD: ${{ inputs.social }}
           # PTT_RELAY（Cloudflare Worker 代讀 PTT）目前不設：2026-09-30 實測，從 GitHub 主機呼叫 Worker，
           # PTT 一樣回 403（PTT 的防護看的是最初呼叫 Worker 的來源）。PTT 仍由本機排程 social_push.py 提供。
         run: python ci_update.py ${{ inputs.ignore_gate && '--ignore-gate' || '' }}

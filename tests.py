@@ -419,6 +419,29 @@ def test_social():
               and mg["articles"][first] == 99, str(mg["days"][first]))
         check("合併：原文完整的日子以重算為準，不被舊匯總蓋掉", mg["days"][cal[-1]]["2330"] == [3, 0],
               str(mg["days"][cal[-1]]["2330"]))
+        # 網頁按「更新」送來的聲量（公開入口、不可信）：只收最近幾天、真的代號、合理的整數
+        today = social.dt.datetime.now(social.TW).date()
+        d0, old_day = today.isoformat(), (today - social.dt.timedelta(days=30)).isoformat()
+        before = social.load_ptt()          # 版控與本機取比較新的那份，apply_payload 就是併進這一份
+        got = social.apply_payload(json.dumps(dict(
+            days={d0: {"2330": [2, 30], "9999": [5, 5], "8299": [1, 999999], "1303": [-1, 3],
+                       "2408": ["3", 1], "2618": [True, 1], "2603": [0, 0]},
+                  old_day: {"2330": [50, 50]}, "not-a-date": {"2330": [1, 1]}},
+            articles={d0: 40, old_day: 9, "x": 1})), names)
+        after = json.loads(social.SNAP_FILE.read_text(encoding="utf-8"))
+        check("網頁送來的聲量：只收下合格的那一格", got == 1 and after["days"][d0] == {"2330": [2, 30]},
+              "{} {}".format(got, after["days"].get(d0)))
+        check("網頁送來的聲量：太舊的日子、亂寫的日期不收",
+              old_day not in after["days"] and "not-a-date" not in after["days"] and after["articles"].get(d0) == 40
+              and old_day not in after["articles"])
+        diff = [d for d, v in before["days"].items() if after["days"].get(d) != v]
+        check("網頁送來的聲量：原有的歷史不動", not diff, str(diff))
+        social.apply_payload(json.dumps(dict(days={d0: {"2330": [1, 45]}})), names)
+        check("網頁送來的聲量：跟現有的逐格取大的",
+              json.loads(social.SNAP_FILE.read_text(encoding="utf-8"))["days"][d0]["2330"] == [2, 45])
+        check("網頁送來的聲量：格式不對回 0、不丟例外",
+              social.apply_payload("not json", names) == 0 and social.apply_payload("[1,2]", names) == 0
+              and social.apply_payload(json.dumps(dict(days="x")), names) == 0)
         r2 = social.ranking(cal[-1], cal)[0].set_index("code")
         check("版控與本機的匯總檔取比較新的", "8299" not in r2.index or int(r2.loc["8299", "total"]) == 0)
     finally:

@@ -143,6 +143,15 @@ def refresh_margin(cal, cutoff):
 
 
 def main(ignore_gate=False):
+    # 網頁按「更新」帶進來的 PTT 聲量：先併進匯總檔，後面不管走哪條路，發佈時都讀得到。
+    # 走環境變數、不進命令列：內容來自公開入口，不能讓它有機會被當成指令的一部分。
+    payload = os.environ.get("SOCIAL_PAYLOAD", "").strip()
+    if payload:
+        try:
+            import social
+            social.apply_payload(payload)
+        except Exception as e:
+            log("::warning::社群聲量併入失敗，這次沿用原本的匯總：{}".format(e))
     refresh_revenue()
     n_rev, rev_latest = check_revenue()
     log("月營收資料: {} 個月，最新 {}".format(n_rev, rev_latest))

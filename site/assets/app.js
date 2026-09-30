@@ -141,19 +141,16 @@
     bar.removeAttribute('data-empty');
     /* 走到這裡代表晚上 8 點過後當天資料還沒上來 —— 排程五次都沒成功，
        或排程被停用（GitHub 對 60 天沒有 commit 的公開 repo 會自動停用排程）。
-       連結指向 Actions 的 workflow 頁：可以手動觸發，也可以在那裡重新啟用排程。
-       只有 repo 擁有者按得動，一般訪客點進去只看得到執行紀錄。 */
+       按「立即更新」直接更新（公開網站交給 Cloudflare Worker，見下方 runUpdate）。
+       排程被停用的話，要到 GitHub 的 Actions 頁重新啟用。 */
     bar.querySelector('.in').innerHTML =
       '<b>資料落後 ' + n + ' 個交易日</b><span>最新是 ' + esc(meta.data_date) +
       '（已扣掉週末與證交所公布的休市日）。每個交易日收盤後會自動更新，' +
-      '晚上 8 點還沒更新代表自動更新沒有成功（颱風臨時停市除外），可以手動更新。</span>' + (LOCAL
-        ? '<button class="updbtn" id="updgo" type="button">立即更新</button>'
-        : '<a class="updbtn" href="https://github.com/hsinfuyeh/tw-stock-monitor/actions/workflows/update.yml"' +
-          ' target="_blank" rel="noopener">前往更新</a>');
+      '晚上 8 點還沒更新代表自動更新沒有成功（颱風臨時停市除外），可以手動更新。</span>' + '<button class="updbtn" id="updgo" type="button">立即更新</button>';
     var go = document.getElementById('updgo');
     if (go) go.addEventListener('click', function () {
       go.disabled = true;
-      fetch('api/update', { method: 'POST' }).then(function () { watchUpdate(); });
+      runUpdate();             // 本機打自己的後端，公開網站交給 Cloudflare Worker
     });
   }
 
@@ -592,18 +589,21 @@
   }
 
   /* ---------- 立即更新（右上角的 ⟳）----------
-   * 本機版直接打自己的 /api/update。
-   * 公開網站是靜態的、沒有後端，所以改成請 GitHub 跑那個自動更新流程
-   * （跟每天排程跑的是同一個）。這需要一把只能「觸發這個 repo 的 workflow」
-   * 的鑰匙，存在<b>你自己的瀏覽器</b>（localStorage），不會進 repo、
-   * 也不會傳給別人。第一次按會請你貼上，之後就記住。
+   * 本機版（python server.py）直接打自己的 /api/update。
+   *
+   * 公開網站是靜態的、沒有後端，所以交給自己的 Cloudflare Worker（cloudflare/worker.js）：
+   *   1. 先在這個瀏覽器裡透過 Worker 讀 PTT 股票板，算出社群聲量（assets/social.js）。
+   *      PTT 擋雲端主機，只有從使用者的瀏覽器發起才讀得到，所以這一步只能在這裡做。
+   *      讀不到也沒關係，照樣更新其他資料。
+   *   2. POST /update：Worker 用它保管的 GitHub 金鑰觸發更新流程（跟每天自動跑的是同一個），
+   *      社群聲量跟著一起送過去。
+   *   3. GET /status：每 10 秒問一次進度，跑完提示重新載入。
+   * 瀏覽器裡沒有任何金鑰，也不需要輸入任何東西（以前要貼一把 GitHub token）。
    */
-  var GH = { owner: 'hsinfuyeh', repo: 'tw-stock-monitor', wf: 'update.yml' };
-  var TOKEN_KEY = 'gh_token';
-
-  function ghToken() {
-    try { return localStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; }
-  }
+  var WORKER = 'https://tw-stock-monitor-cron.sam19920516-923.workers.dev';
+  // 本機預覽要測公開網站這條路時，網址加 ?cloud=1
+  var CLOUD = !LOCAL || /[?&]cloud=1\b/.test(location.search);
+  try { localStorage.removeItem('gh_token'); } catch (e) {}     // 以前存在瀏覽器裡的 GitHub 金鑰，用不到了
 
   function msgbar(html, cls) {
     var bar = document.getElementById('updmsg');
@@ -613,87 +613,94 @@
     bar.querySelector('.in').innerHTML = html;
   }
 
-  function askToken() {
-    msgbar('<b>需要一把 GitHub 鑰匙才能從網頁按更新</b>' +
-      '<span>到 <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" ' +
-      'rel="noopener" style="color:inherit;text-decoration:underline">GitHub 建立 Fine-grained token</a>：' +
-      'Repository access 選 ' + GH.repo + '，Permissions 只開 <b>Actions: Read and write</b>。' +
-      '建好後貼進來，它只存在這台瀏覽器。</span>' +
-      '<input id="ghtok" type="password" placeholder="github_pat_…" ' +
-      'style="flex:1 0 220px;padding:6px 10px;border-radius:6px;border:none;font:inherit">' +
-      '<button class="updbtn" id="ghsave" type="button">儲存並更新</button>');
-    document.getElementById('ghsave').addEventListener('click', function () {
-      var v = (document.getElementById('ghtok').value || '').trim();
-      if (!v) return;
-      try { localStorage.setItem(TOKEN_KEY, v); } catch (e) {}
-      runUpdate();
+  function loadScript(src) {
+    return new Promise(function (ok, fail) {
+      if (window.Social) return ok();
+      var s = document.createElement('script');
+      s.src = src + (STAMP ? '?v=' + encodeURIComponent(STAMP) : '');
+      s.onload = ok;
+      s.onerror = function () { fail(new Error('載入 ' + src + ' 失敗')); };
+      document.head.appendChild(s);
     });
   }
 
-  function gh(path, opts) {
-    opts = opts || {};
-    opts.headers = Object.assign({
-      'Accept': 'application/vnd.github+json',
-      'Authorization': 'Bearer ' + ghToken()
-    }, opts.headers || {});
-    return fetch('https://api.github.com/repos/' + GH.owner + '/' + GH.repo + path, opts);
+  function runLink(run) {
+    return run && run.url ? '<a class="updbtn" href="' + esc(run.url) + '" target="_blank" rel="noopener">看進度</a>' : '';
   }
 
-  function watchGh(since) {
-    gh('/actions/workflows/' + GH.wf + '/runs?per_page=1').then(function (r) {
-      return r.ok ? r.json() : null;
-    }).then(function (j) {
-      var run = j && j.workflow_runs && j.workflow_runs[0];
+  /* 問 Worker 目前的進度。since：這次觸發的時間，比它舊的執行不是我們這一次。 */
+  function watchCloud(since, note) {
+    fetch(WORKER + '/status', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+      var run = j && j.run;
       if (!run || new Date(run.created_at) < since) {
-        return setTimeout(function () { watchGh(since); }, 5000);
+        return setTimeout(function () { watchCloud(since, note); }, 5000);
       }
       if (run.status !== 'completed') {
-        msgbar('<span class="spin"></span><b>GitHub 正在更新資料…</b>' +
-          '<span>大約 5–8 分鐘。可以關掉頁面，更新完再回來。</span>' +
-          '<a class="updbtn" href="' + run.html_url + '" target="_blank" rel="noopener">看進度</a>',
-          'busy');
-        return setTimeout(function () { watchGh(since); }, 10000);
+        msgbar('<span class="spin"></span><b>正在更新資料…</b>' +
+          '<span>大約 5–8 分鐘。可以關掉頁面，更新完再回來。' + (note || '') + '</span>' + runLink(run), 'busy');
+        return setTimeout(function () { watchCloud(since, note); }, 10000);
       }
       if (run.conclusion === 'success') {
-        msgbar('<b>更新完成</b><span>重新載入頁面看最新資料。</span>' +
+        msgbar('<b>更新完成</b><span>重新載入頁面看最新資料。' + (note || '') + '</span>' +
           '<button class="updbtn" id="reloadbtn" type="button">重新載入</button>', 'ok');
         var rb = document.getElementById('reloadbtn');
         if (rb) rb.addEventListener('click', hardReload);
       } else {
         msgbar('<b>更新沒有成功（' + esc(run.conclusion || '') + '）</b>' +
-          '<span>多半是 TWSE 當天的資料還沒發完，晚點再按一次即可。</span>' +
-          '<a class="updbtn" href="' + run.html_url + '" target="_blank" rel="noopener">看紀錄</a>',
+          '<span>多半是證交所當天的資料還沒發完，晚點再按一次即可。</span>' +
+          (run.url ? '<a class="updbtn" href="' + esc(run.url) + '" target="_blank" rel="noopener">看紀錄</a>' : ''),
           'bad');
       }
     }).catch(function () {
-      setTimeout(function () { watchGh(since); }, 10000);
+      setTimeout(function () { watchCloud(since, note); }, 10000);
     });
   }
 
+  var updating = false;
   function runUpdate() {
-    if (LOCAL) {                       // 本機：叫自己的後端做
+    if (!CLOUD) {                      // 本機：叫自己的後端做
       msgbar('<span class="spin"></span><b>開始更新…</b>', 'busy');
       fetch('api/update', { method: 'POST' }).then(function () { watchUpdate(); });
       return;
     }
-    if (!ghToken()) return askToken();
-    var since = new Date(Date.now() - 60000);
-    msgbar('<span class="spin"></span><b>送出更新要求…</b>', 'busy');
-    gh('/actions/workflows/' + GH.wf + '/dispatches', {
-      method: 'POST', body: JSON.stringify({ ref: 'main' })
-    }).then(function (r) {
-      if (r.status === 204) return watchGh(since);
-      if (r.status === 401 || r.status === 403 || r.status === 404) {
-        try { localStorage.removeItem(TOKEN_KEY); } catch (e) {}
-        return msgbar('<b>這把鑰匙不能用（' + r.status + '）</b>' +
-          '<span>可能是權限不足或已過期。重新建一把，Permissions 要開 Actions: Read and write。</span>',
-          'bad');
-      }
-      return r.text().then(function (t) {
-        msgbar('<b>觸發失敗（' + r.status + '）</b><span>' + esc(t.slice(0, 160)) + '</span>', 'bad');
+    if (updating) return;
+    updating = true;
+    var note = '';
+    msgbar('<span class="spin"></span><b>讀取社群聲量…</b><span>準備中</span>', 'busy');
+    loadScript('assets/social.js').then(function () {
+      return window.Social.collect(WORKER, DATA + 'social_rules.json', function (txt) {
+        msgbar('<span class="spin"></span><b>讀取社群聲量…</b><span>' + esc(txt) +
+          '（約 1 分鐘，請不要關掉頁面）</span>', 'busy');
       });
+    }).then(function (social) {
+      note = '（含 PTT ' + social.fetched + ' 篇文章的社群聲量）';
+      return social;
+    }, function (e) {
+      // PTT 讀不到不擋更新：其他資料照常更新，社群聲量沿用上一次的
+      note = '（這次沒有更新社群聲量：' + esc(e.message || String(e)) + '）';
+      return null;
+    }).then(function (social) {
+      msgbar('<span class="spin"></span><b>送出更新要求…</b>', 'busy');
+      return fetch(WORKER + '/update', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(social ? { social: { days: social.days, articles: social.articles } } : {})
+      }).then(function (r) { return r.json(); });
+    }).then(function (j) {
+      updating = false;
+      if (j.state === 'started') return watchCloud(new Date(Date.parse(j.since) - 60000), note);
+      if (j.state === 'busy') {
+        // 已經有一次更新在跑（排程或別的裝置按的）：接著看它的進度
+        return watchCloud(new Date(Date.parse(j.run.created_at) - 1000),
+          '（已經有一次更新在進行，這次沒有另外觸發）');
+      }
+      if (j.state === 'cooldown') {
+        return msgbar('<b>剛剛才更新過</b><span>兩次更新至少隔 5 分鐘，請在 ' +
+          Math.ceil(j.wait / 60) + ' 分鐘後再按。</span>', 'ok');
+      }
+      msgbar('<b>更新沒有送出</b><span>' + esc(j.message || '') + '</span>', 'bad');
     }).catch(function (e) {
-      msgbar('<b>連不上 GitHub</b><span>' + esc(e.message) + '</span>', 'bad');
+      updating = false;
+      msgbar('<b>連不上更新服務</b><span>' + esc(e.message) + '</span>', 'bad');
     });
   }
 

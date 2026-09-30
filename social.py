@@ -413,6 +413,82 @@ def export_ptt(names=None, prev=None, to_repo=False):
     return obj
 
 
+PAYLOAD_DAYS = 5        # 網頁送來的聲量只收最近幾天的（它每次只讀最近 3 天的文章）
+PAYLOAD_CAP = 3000      # 一檔一天的上限。實際最高是幾百；超過的當成壞資料丟掉
+
+
+def apply_payload(text, names=None):
+    """網頁按「更新」時，瀏覽器算好送來的 PTT 聲量（見 site/assets/social.js、cloudflare/worker.js）。
+
+    那個入口是公開的、不需要密碼，所以送進來的東西一律當成不可信：
+    只收最近 PAYLOAD_DAYS 天、只收真的存在的代號、數字要是 0～PAYLOAD_CAP 的整數，
+    其他一概丟掉。通過的跟現有匯總逐格取大的（提及次數只會隨推文增加），寫回
+    snapshots/social/ptt.json（workflow 會 commit）。回傳收下幾格；格式不對回 0、不丟例外。
+
+    這擋不住有心人送「看起來合理」的假數字，影響只限社群聲量兩張榜（只顯示、不計分）。"""
+    try:
+        p = json.loads(text)
+        days_in = p.get("days") or {}
+        arts_in = p.get("articles") or {}
+        assert isinstance(days_in, dict) and isinstance(arts_in, dict)
+    except Exception as e:
+        log("::warning::社群聲量：網頁送來的內容格式不對，忽略（{}）".format(str(e)[:80]))
+        return 0
+    names = names or _names()
+    today = dt.datetime.now(TW).date()
+    ok_days = {(today - dt.timedelta(days=i)).isoformat() for i in range(PAYLOAD_DAYS)}
+
+    def num(v):
+        return v if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= PAYLOAD_CAP else None
+
+    cur = load_ptt() or dict(days={}, articles={})
+    days, arts, n = cur.get("days") or {}, cur.get("articles") or {}, 0
+    for d, v in days_in.items():
+        if d not in ok_days or not isinstance(v, dict):
+            continue
+        for c, pair in v.items():
+            if c not in names or not (isinstance(pair, list) and len(pair) == 2):
+                continue
+            a, b = num(pair[0]), num(pair[1])
+            if a is None or b is None or a + b == 0:
+                continue
+            old = days.setdefault(d, {}).get(c, [0, 0])
+            days[d][c] = [max(old[0], a), max(old[1], b)]
+            n += 1
+    for d, v in arts_in.items():
+        if d in ok_days and num(v) is not None and v <= 500:        # 股票板一天 35–50 篇
+            arts[d] = max(arts.get(d, 0), v)
+    if not n:
+        log("社群聲量：網頁送來的內容沒有可用的數字，忽略")
+        return 0
+    obj = dict(updated_at=dt.datetime.now(TW).isoformat(timespec="seconds"),
+               articles=dict(sorted(arts.items())),
+               days={d: dict(sorted(v.items())) for d, v in sorted(days.items())})
+    txt = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+    for f in (LOCAL_FILE, SNAP_FILE):
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(txt, encoding="utf-8")
+    log("社群聲量：收下網頁送來的 {} 格（{}）".format(n, "、".join(sorted(d for d in days_in if d in ok_days))))
+    return n
+
+
+# 比對規則給網頁用（publish 寫成 data/social_rules.json）。網頁的比對（social.js）是照 Matcher
+# 重寫的一份，所以附上這幾句的正確答案：網頁開始抓之前先自己對一次，對不上就不送，
+# 免得兩邊規則漂移之後，悄悄送進跟 Python 算法不一樣的數字。
+RULE_CASES = [
+    "2330 台積電 多", "東南亞市場", "南亞科漲停", "長榮航大漲", "世界很大", "世界先進法說",
+    "群聯2300點", "2026/09/28 盤後", "爆出大量", "2027 年產能", "2027大成鋼 漲停", "大成功",
+    "我的海力士", "買了1000張", "聯發科跟鴻海", "中華車銷量", "川寶又發文", "1303 南亞 36.5",
+]
+
+
+def rules(names=None):
+    names = names or _names()
+    m = Matcher(names)
+    return dict(names=names, ambiguous=sorted(AMBIGUOUS), aliases=ALIASES, strip=STRIP,
+                cases=[dict(text=t, codes=sorted(m.find(t))) for t in RULE_CASES])
+
+
 def load_ptt():
     """PTT 匯總檔：版控裡的（雲端）與本機剛匯出的，取比較新的那份。都沒有回 None。"""
     best = None

@@ -528,6 +528,12 @@ def build(limit=None, out=SITE):
     sizes["universe"] = write(data / "universe.json", emit_universe(p_otc is not None))
     sizes["funnel"] = write(data / "funnel.json", fn)
     stable.write(data, *st)
+    # 社群聲量的比對規則：網頁按「更新」時在瀏覽器裡讀 PTT、自己算聲量，用的是這份
+    try:
+        import social
+        sizes["social_rules"] = write(data / "social_rules.json", social.rules())
+    except Exception as e:
+        print("::warning::社群比對規則寫不出來，網頁更新時不會帶社群聲量：{}".format(e), flush=True)
     tot = 0
     for k, v in sc.items():
         tot += write(data / "screens" / "{}.json".format(k), v)
