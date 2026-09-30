@@ -38,3 +38,6 @@ backfill_hist.err
 site/_data_new/
 site/_data_old/
 data/study_panel.pkl
+
+# wrangler 的本機快取與暫存（含帳號名稱、網路位置等，不進版控）
+cloudflare/.wrangler/
