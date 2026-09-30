@@ -26,6 +26,8 @@
 """
 import datetime as dt
 import json
+import multiprocessing as mp
+import os
 import shutil
 import sys
 import time
@@ -78,9 +80,13 @@ def _clean(o):
         return str(o)
 
 
+def _dumps(obj):
+    return json.dumps(_clean(obj), ensure_ascii=False, separators=(",", ":"))
+
+
 def write(path, obj):
     path.parent.mkdir(parents=True, exist_ok=True)
-    txt = json.dumps(_clean(obj), ensure_ascii=False, separators=(",", ":"))
+    txt = _dumps(obj)
     path.write_text(txt, encoding="utf-8")
     return len(txt.encode())
 
@@ -468,6 +474,77 @@ def emit_stock(code, name, cat, pan, act=None, bench=None, stable_hist=None):
     )
 
 
+# --------------------------------------------------------------------- 個股頁（可以同時產生）
+# 一千多檔個股頁彼此獨立，一檔一檔做在 CI 上要 70 秒左右。GitHub 的機器有 4 顆核心，
+# 所以分給幾個子行程同時做。用 fork：子行程直接繼承下面這份共用資料（面板有 2 GB，
+# 不可能序列化傳過去）。Windows 沒有 fork，本機照舊一檔一檔做，結果完全一樣。
+_W = {}
+
+
+def _stock_text(code, name, cat):
+    """一檔個股頁的 JSON 文字；不在可分析範圍或產生失敗回 None。"""
+    pan = _W["pans"].get(cat, _W["pans"]["common"])
+    if pan is None:
+        return None
+    try:
+        d = emit_stock(code, name, cat, pan, _W["act"], _W["bench"], _W["hist"].get(code))
+    except Exception:
+        return None
+    return None if d is None else _dumps(d)
+
+
+def _stock_chunk(jobs):
+    """子行程做的事：一批股票，產出就直接寫檔，回報 [(代號, 位元組數或 None)]。"""
+    out = []
+    for code, name, cat in jobs:
+        txt = _stock_text(code, name, cat)
+        if txt is None:
+            out.append((code, None))
+            continue
+        (_W["dir"] / "{}.json".format(code)).write_text(txt, encoding="utf-8")
+        out.append((code, len(txt.encode())))
+    return out
+
+
+def _emit_stocks(jobs):
+    """產出全部個股頁，回傳 (可用檔數, 略過檔數, 總位元組數)。"""
+    n = int(os.environ.get("PUBLISH_WORKERS") or min(4, os.cpu_count() or 1))
+    chunks = [jobs[i:i + 40] for i in range(0, len(jobs), 40)]
+    res, parallel = [], False
+    if n > 1 and len(chunks) > 1 and "fork" in mp.get_all_start_methods():
+        # 先在這裡把每份面板的共用索引算好，子行程才不會各算一次
+        for pan in _W["pans"].values():
+            if pan is not None:
+                stock_report._shared(pan)
+        try:
+            with mp.get_context("fork").Pool(n) as pool:
+                for i, part in enumerate(pool.imap_unordered(_stock_chunk, chunks)):
+                    res += part
+                    if (i + 1) % 8 == 0:
+                        print("  {}/{}".format(len(res), len(jobs)), flush=True)
+            parallel = True
+        except Exception as e:
+            print("::warning::個股頁同時產生失敗，改成一檔一檔做：{}".format(e), flush=True)
+            res = []
+    if not parallel:
+        for i, c in enumerate(chunks):
+            res += _stock_chunk(c)
+            if (i + 1) % 5 == 0:
+                print("  {}/{}".format(len(res), len(jobs)), flush=True)
+    done = {c: b for c, b in res if b is not None}
+    if parallel:
+        # 抽樣核對：同時做出來的，要跟這裡單獨重做一次的每個位元都一樣。
+        # 子行程之間理論上互不影響，但這個專案的教訓是「安靜地不一樣」比出錯更糟，所以實際對一次。
+        names = {c: (nm, cat) for c, nm, cat in jobs}
+        sample = sorted(done)[::max(1, len(done) // 20)][:20]
+        bad = [c for c in sample
+               if _stock_text(c, *names[c]) != (_W["dir"] / "{}.json".format(c)).read_text(encoding="utf-8")]
+        if bad:
+            raise Inconsistent("個股頁同時產生的結果跟單獨產生的不一樣：{}".format("、".join(bad)))
+        print("個股頁：{} 個子行程同時產生，抽樣 {} 檔逐位元核對一致".format(n, len(sample)), flush=True)
+    return len(done), len(jobs) - len(done), sum(done.values())
+
+
 # --------------------------------------------------------------------- 主流程
 def build(limit=None, out=SITE):
     t0 = time.time()
@@ -547,26 +624,11 @@ def build(limit=None, out=SITE):
     u = server.universe()
     if limit:
         u = u.head(limit)
-    ok = skip = 0
-    stot = 0
-    for i, (_, r) in enumerate(u.iterrows()):
-        code, cat = str(r["code"]), r["cat"]
-        pan = {"etf": p_etf, "otc": p_otc}.get(cat, p_common)
-        if pan is None:
-            skip += 1
-            continue
-        try:
-            d = emit_stock(code, str(r["name"]), cat, pan, act, bench, stable_hist.get(code))
-        except Exception:
-            d = None
-        if d is None:
-            skip += 1
-            continue
-        stot += write(data / "stocks" / "{}.json".format(code), d)
-        ok += 1
-        if (i + 1) % 200 == 0:
-            print("  {}/{}  可用 {} 略過 {}".format(i + 1, len(u), ok, skip),
-                  flush=True)
+    jobs = [(str(r["code"]), str(r["name"]), r["cat"]) for _, r in u.iterrows()]
+    _W.update(pans={"common": p_common, "etf": p_etf, "otc": p_otc}, act=act, bench=bench,
+              hist=stable_hist, dir=data / "stocks")
+    (data / "stocks").mkdir(parents=True, exist_ok=True)
+    ok, skip, stot = _emit_stocks(jobs)
     sizes["stocks"] = stot
 
     # 原子換檔：舊的先改名、新的換上去、再刪掉舊的。中間只有毫秒級的空窗。
@@ -592,6 +654,45 @@ def build(limit=None, out=SITE):
     return sizes
 
 
+def social_only(out=SITE):
+    """快速通道：site/data 已經是「同一個資料日期、同一份程式碼」產出的，只重算社群聲量。
+
+    網頁按「更新」時，多數情況行情與法人資料都沒變，會變的只有剛送進來的 PTT 聲量。
+    整個重新產出要 4 分鐘；這裡只重寫兩張社群榜、比對規則與 meta.json 的產出時間，幾秒就好。
+    其他檔案一個位元都不動 —— 所以只有在 workflow 確認快取的鍵（資料日期＋程式碼雜湊）
+    完全對得上時才走這條路。任何一步不對就丟例外，由 workflow 退回完整產出。"""
+    t0 = time.time()
+    data = out / "data"
+    meta = json.loads((data / "meta.json").read_text(encoding="utf-8"))
+    idx_path = data / "screens" / "_index.json"
+    index = json.loads(idx_path.read_text(encoding="utf-8"))
+    day_date = meta["data_date"]
+    sc = emit_social(day_date)
+    for k, v in sc.items():
+        if v.get("social", {}).get("error"):
+            raise Inconsistent("社群聲量算不出來：{}".format(v["social"]["error"]))
+        write(data / "screens" / "{}.json".format(k), v)
+    by_key = {e["key"]: e for e in index}
+    for k, v in sc.items():
+        e = dict(key=k, title=v["title"], cat=v["cat"], n=len(v["rows"]))
+        if k in by_key:
+            by_key[k].update(e)
+        else:
+            index.append(e)
+    write(idx_path, index)
+    import social
+    write(data / "social_rules.json", social.rules())
+    # 產出時間要換：前端用它當版本參數，不換的話瀏覽器會繼續拿快取裡的舊社群榜
+    meta["built_at"] = dt.datetime.now().isoformat(timespec="seconds")
+    write(data / "meta.json", meta)
+    print("快速通道：只更新社群聲量（資料日期 {}，{}）  耗時 {:.0f} 秒".format(
+        day_date, "、".join("{} {} 筆".format(k, len(v["rows"])) for k, v in sc.items()),
+        time.time() - t0), flush=True)
+
+
 if __name__ == "__main__":
-    n = int(sys.argv[1]) if len(sys.argv) > 1 else None
-    build(limit=n)
+    if "--social-only" in sys.argv:
+        social_only()
+    else:
+        n = int(sys.argv[1]) if len(sys.argv) > 1 else None
+        build(limit=n)

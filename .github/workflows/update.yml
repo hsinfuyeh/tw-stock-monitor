@@ -114,9 +114,37 @@ jobs:
       #   資料還沒發完 —— 下一個整點再試
       #   排程時發現沒有新交易日 —— 今天已經發佈過了
       # 標成失敗會讓人開始習慣性忽略紅色叉叉。
+      # 快速通道（ci_update 設 light=true：資料沒有任何新東西，只有社群聲量會變）。
+      # 找「同一個資料日期、同一份程式碼」上次完整產出的 site/data；找得到就只重算社群聲量
+      # 那兩張榜（幾秒），不必再花 4 分鐘重建整個網站。改過程式或網頁檔，鍵就對不上，照舊完整產出。
+      - name: 還原上次產出的網站
+        id: sitecache
+        if: steps.fetch.outputs.publish == 'true' && steps.fetch.outputs.light == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: site/data
+          key: site-${{ steps.fetch.outputs.data_date }}-${{ hashFiles('*.py', 'requirements.txt', 'site/*.html', 'site/assets/**') }}-${{ github.run_id }}
+          restore-keys: site-${{ steps.fetch.outputs.data_date }}-${{ hashFiles('*.py', 'requirements.txt', 'site/*.html', 'site/assets/**') }}-
+
+      # 快速通道失敗（例如快取內容不完整）就退回完整產出，不讓這次更新失敗
+      - name: 只更新社群聲量（快速通道）
+        id: light
+        if: steps.sitecache.outputs.cache-matched-key != ''
+        run: python publish.py --social-only || { echo "::warning::快速通道失敗，改成完整產出"; python publish.py; echo "full=true" >> "$GITHUB_OUTPUT"; }
+
       - name: 產出網站
-        if: steps.fetch.outputs.publish == 'true'
+        id: build
+        if: steps.fetch.outputs.publish == 'true' && steps.sitecache.outputs.cache-matched-key == ''
         run: python publish.py
+
+      # 完整產出的結果存起來給快速通道用（約 8 MB）。鍵裡的程式碼雜湊只算版控裡的檔案，
+      # 跟上面還原時是同一個算式；site/data 是產出來的、不在算式裡。
+      - name: 保存產出的網站
+        if: steps.build.outcome == 'success' || steps.light.outputs.full == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: site/data
+          key: site-${{ steps.fetch.outputs.data_date }}-${{ hashFiles('*.py', 'requirements.txt', 'site/*.html', 'site/assets/**') }}-${{ github.run_id }}
 
       - if: steps.fetch.outputs.publish == 'true'
         uses: actions/configure-pages@v5

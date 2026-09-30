@@ -177,6 +177,7 @@ def main(ignore_gate=False):
 
     last_ok = usable_last_date()
     log("倉儲目前最新（三表齊備）: {}".format(_d(last_ok)))
+    set_output("data_date", _d(last_ok))      # 網站快取的鍵（見 workflow 的「還原上次產出的網站」）
 
     cal = ingest.trading_calendar()          # 當月一定重抓，否則日曆會停住
     cutoff = last_ok.strftime("%Y%m%d") if last_ok is not None else "00000000"
@@ -205,8 +206,14 @@ def main(ignore_gate=False):
             set_output("publish", "false")
         else:
             write_summary(["倉儲已是最新：**{}**，沒有新的交易日。".format(_d(last_ok)),
-                           "", "手動觸發，仍會重新產出網站，確保線上內容與程式碼一致。"])
+                           "", "手動觸發：資料沒變，程式碼也沒變的話只更新社群聲量（快速通道），"
+                           "否則重新產出整個網站。"])
             set_output("publish", "true")
+            # 快速通道：行情、法人、融資券都沒有新東西，網站上會變的只有社群聲量。
+            # workflow 會去找「同一個資料日期、同一份程式碼」上次產出的網站；找得到就只重算
+            # 社群聲量那兩張榜（幾秒），找不到（改過程式、或快取過期）就照舊整個重新產出。
+            # 補進了前幾天的融資券也不走快速通道 —— 那會改到名單用的融資特徵。
+            set_output("light", "false" if got else "true")
         # 補進了前幾天的融資券（不是當天的）也要存快取，否則下次又要重抓一遍
         set_output("changed", "true" if got else "false")
         return 0
@@ -258,6 +265,7 @@ def main(ignore_gate=False):
     store.append(ready, verbose=True)
     now_ok = usable_last_date()
     log("完成，三表齊備到 {}".format(_d(now_ok)))
+    set_output("data_date", _d(now_ok))       # 寫進新的交易日了；同名的輸出以最後一次為準
     refresh_margin(cal, max(ready))           # 前幾天漏掉的融資券順便補
 
     # 上櫃（只供個股頁查詢）。不在閘門裡：它是附加資訊，缺了不該擋住發佈。
