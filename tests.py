@@ -384,7 +384,7 @@ def test_social():
     try:
         check("沒有匯總檔 -> 空榜、標成 missing，不丟例外",
               social.ranking(cal[-1], cal)[1]["sources"][0]["status"] == "missing")
-        # 本機匯出（social_push.py 做的事），雲端只讀匯總檔
+        # 從原文匯出（手動回補做的事），發佈時只讀匯總檔
         social.export_ptt(names)
         df, info = social.ranking(cal[-1], cal)
         r = df.set_index("code")

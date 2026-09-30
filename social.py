@@ -12,16 +12,17 @@
     Dcard、Mobile01   Cloudflare 直接擋（403），雲端排程不可能通過，不做。
     CMoney 爆料同學會 公開網頁裡沒有個股文章，文章是用登入憑證打私有 API 拿的，不做。
 
-PTT 整站在 Cloudflare 後面，GitHub 的雲端主機直接連是 HTTP 403（含 RSS，2026-09-29 實測），
-所以 PTT <b>由使用者自己的電腦抓</b>：Windows 工作排程器「tw-stock-monitor 社群聲量」每天跑
-social_push.py —— 抓文章（原文存 raw/social/ptt/）→ 比對股票 → 匯總成每天每檔的次數
-（snapshots/social/ptt.json，約 100 KB）→ 用 GitHub API 只更新這一個檔。雲端發佈時讀這個檔。
-電腦沒開的那幾天，頁面會寫「PTT 資料停在哪天」。
+PTT 整站在 Cloudflare 後面：GitHub 的雲端主機直接連（含 RSS）、或從 GitHub 呼叫自己的
+Cloudflare Worker 代讀，都是 HTTP 403（2026-09-29、09-30 實測；PTT 的防護看的是最初發起請求的來源）。
+從一般使用者的瀏覽器透過 Worker 代讀則是通的，所以 PTT <b>在網頁按「更新」時由瀏覽器讀</b>：
+site/assets/social.js 讀最近 3 天的文章、比對股票、算出每天每檔的次數，跟著更新要求送給 Worker
+（cloudflare/worker.js），轉交 GitHub，apply_payload() 檢查後併進 snapshots/social/ptt.json
+（約 100 KB，workflow 會 commit）。發佈時讀這個檔。沒有人按更新的日子，頁面會寫「PTT 資料停在哪天」。
+不靠任何電腦的排程（2026-09-29～30 曾用本機 Windows 排程抓，已移除）。
+Threads 走官方 API，雲端抓得到，在 CI 裡查。
 
-試過讓 CI 透過自己的 Cloudflare Worker 代讀（PTT_RELAY、cloudflare/worker.js 的 /ptt/…）：
-從家用網路呼叫 Worker 是 200，但從 GitHub 主機呼叫一樣 403（2026-09-30）——
-PTT 的防護看的是最初呼叫 Worker 的來源。程式留著（update() 有設 PTT_RELAY 才會走），目前沒有啟用。
-Threads 走官方 API，雲端抓得到，還是在 CI 裡查。
+這支檔案裡的 PTT 爬蟲（update_ptt、export_ptt）平常不會跑，只留給手動救援用：
+匯總檔的歷史掉了的時候，在家用網路跑 python social.py 35 可以一次補回 35 天（網頁只補 3 天）。
 
 「聲量」＝ 一個交易日的窗口內，提到這檔股票的文章數 + 推文數 + Threads 貼文數。
 窗口是「上一個交易日之後 ~ 這個交易日」的日曆日，所以連假期間的討論會算進開市那天。
@@ -51,14 +52,11 @@ PTT_DIR = DIR / "ptt"
 TH_DIR = DIR / "threads"
 TW = dt.timezone(dt.timedelta(hours=8))           # 台北時間；CI 跑在 UTC，不能用本機時區
 
-# PTT_RELAY：Cloudflare Worker 的代讀網址（…workers.dev/ptt）。雲端直接連 PTT 是 403，
-# 設了就改走代讀；沒設（本機）就直接連。兩邊的路徑完全一樣（/bbs/Stock/…）。
-RELAY = os.environ.get("PTT_RELAY", "").rstrip("/")
-PTT = RELAY or "https://www.ptt.cc"
+PTT = "https://www.ptt.cc"       # 只有手動回補（python social.py N）會直接連；雲端連不到
 UA = "Mozilla/5.0 (compatible; personal-research/1.0)"
 _s = requests.Session()
 _s.headers.update({"User-Agent": UA})
-_s.cookies.set("over18", "1", domain="www.ptt.cc")     # 走代讀時由 Worker 帶，這個 cookie 不會送出去
+_s.cookies.set("over18", "1", domain="www.ptt.cc")
 
 BASELINE = 20          # 暴增的基準：前幾個交易日窗口的平均
 MIN_MENTIONS = 5       # 暴增榜的門檻：聲量太小的「10 倍」只是 1 次變 10 次，沒有意義
@@ -276,26 +274,9 @@ def update_threads(names, day, delay=0.3):
     return status
 
 
-def update(data_date=None, threads_n=400, ptt_budget=400):
-    """CI 每次發佈前呼叫。不丟例外。
-
-    PTT：有設 PTT_RELAY（Cloudflare Worker 代讀，見 cloudflare/worker.js）才抓 —— 最近 3 天、
-    最多 ptt_budget 篇（約 5 分鐘），匯總後寫回 snapshots/social/ptt.json，由 workflow commit。
-    沒設就不抓（直接連 PTT 在雲端是 403），沿用 repo 裡現有的匯總檔。
-    Threads：有金鑰才查，而且只在晚上 21 點後那次（每天額度有限）。"""
-    if RELAY:
-        try:
-            prune_ptt()
-            prev = load_ptt()
-            n = update_ptt(days=3, budget=ptt_budget)
-            if n or not LOCAL_FILE.exists():
-                export_ptt(prev=prev, to_repo=True)
-            elif LAST_ERR[0]:
-                log("::warning::PTT 這次沒抓到新文章（{}），沿用上一份匯總".format(LAST_ERR[0]))
-        except Exception as e:
-            log("::warning::PTT 更新失敗，沿用上一份匯總：{}".format(e))
-    else:
-        log("PTT：沒有設 PTT_RELAY，這次不抓（沿用 repo 裡的匯總檔）")
+def update(data_date=None, threads_n=400):
+    """CI 每次發佈前呼叫：只查 Threads（有金鑰才查，而且只在晚上 21 點後那次，每天額度有限）。
+    PTT 不在這裡抓 —— 雲端連不到，由網頁按「更新」時送進來（apply_payload）。不丟例外。"""
     if not threads_enabled():
         return
     now = dt.datetime.now(TW)
@@ -371,7 +352,7 @@ def export_ptt(names=None, prev=None, to_repo=False):
     """把 raw/social/ptt/ 的文章匯總成 {date: {code: [文章數, 推文數]}}，寫到 LOCAL_FILE 並回傳。
 
     prev：上一份匯總（load_ptt()），原文沒涵蓋到的舊日子沿用它。
-    to_repo：同時寫進版控的 snapshots/social/ptt.json（CI 用，workflow 會 commit 回 repo）。
+    to_repo：同時寫進版控的 snapshots/social/ptt.json（手動回補用，之後自己 commit）。
     比對（Matcher）在這一步做，所以改排除清單之後，原文還在的日子下一次匯出會照新規則重算。"""
     names = names or _names()
     m = Matcher(names)
@@ -387,7 +368,7 @@ def export_ptt(names=None, prev=None, to_repo=False):
         for day, txt in a["pushes"]:
             for c in m.find(txt):
                 days.setdefault(day, {}).setdefault(c, [0, 0])[1] += 1
-    # 手上的原文不一定涵蓋全部歷史：雲端每次只抓最近 3 天（快取掉了就只剩這 3 天），
+    # 手上的原文不一定涵蓋全部歷史（只回補了幾天、或舊的原文已經刪掉），
     # 更早的日子沿用上一份匯總。「最舊那篇文章的日期」之後的日子原文是完整的，以這次重算為準；
     # 那一天（只抓到半天）與更早的，跟上一份逐格取大的 —— 提及次數只會隨推文增加，不會變少。
     if prev:
@@ -573,9 +554,11 @@ def ranking(data_date, cal):
 
 
 if __name__ == "__main__":
-    # 手動回補：python social.py 35   （平常由 social_push.py 排程跑）
+    # 手動救援：匯總檔的歷史掉了的時候，在家用網路（雲端連不到 PTT）跑 python social.py 35，
+    # 會抓 35 天、併進 snapshots/social/ptt.json；之後自己 git add / commit / push 那個檔。
     if sys.stdout:
         sys.stdout.reconfigure(encoding="utf-8")
     days = int(sys.argv[1]) if len(sys.argv) > 1 else 3
+    prev = load_ptt()
     update_ptt(days=days, budget=100000)
-    export_ptt()
+    export_ptt(prev=prev, to_repo=True)

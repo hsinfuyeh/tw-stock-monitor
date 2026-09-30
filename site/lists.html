@@ -92,12 +92,12 @@ function socialStatus(d) {
   var parts = ['統計期間 ' + App.esc(w[0] === w[1] ? w[0] : (w[0] || '') + ' ~ ' + (w[1] || '')) +
     '（上一個交易日之後到這個交易日，連假的討論算進開市那天）',
     ptt.status === 'missing'
-      ? '<b>PTT 股票板還沒有資料</b>：PTT 由使用者電腦上的排程抓，排程還沒跑過'
+      ? '<b>PTT 股票板還沒有資料</b>：按右上角的 ⟳ 更新時才會讀 PTT，還沒有人按過'
       : 'PTT 股票板 ' + (ptt.articles || 0) + ' 篇文章（連同底下的推文一起算），抓取時間 ' + App.esc(upd),
     'Threads ' + (st.threads === 'on' ? '已啟用' : '未啟用（需要 Meta 官方 API 金鑰）'),
     'Dcard、Mobile01 被網站防護擋住、CMoney 沒有公開資料，所以沒有收'];
   if (st.ptt_stale) parts.push('<b>PTT 資料停在 ' + App.esc(upd) +
-    '：抓 PTT 的電腦這段期間沒有開機，之後的討論還沒算進來</b>');
+    '：之後沒有人按過右上角的 ⟳ 更新，後來的討論還沒算進來。按一次就會補上</b>');
   if (st.too_new) parts.push('<b>「暴增」需要至少 5 個交易日的歷史才能比，資料還在累積中（目前 ' +
     (st.base_windows || 0) + ' 天）</b>');
   // 不用 .note：共用層會把 .note 收成 ⓘ 提示，這幾行（來源開了沒）要直接看得到
