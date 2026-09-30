@@ -254,6 +254,7 @@ M2 回檔從持平 → −0.228（t = −5.38）、我自己加的波動門檻�
 - **處置股／注意股／全額交割股**（`risk_lists.py`）：每次發佈從 TWSE 抓（全額交割用 OpenAPI 的 TWT85U 變更交易），
   快取在 `raw/risklists/`。抓不到標 unavailable、注意股 0 筆標 pending（可能還沒公布），網頁會請你自己確認。
   補算缺日、以及前幾天名單還沒確定的，下次發佈會回頭重抓（最多 10 個交易日）再重標快照。
+- **更新按鈕**（右上角 ⟳）：公開網站呼叫自己的 Cloudflare Worker（`POST /update`），由 Worker 用它保管的 GitHub 金鑰觸發更新，瀏覽器裡沒有金鑰、不用輸入任何東西。入口是公開的，所以 Worker 會擋掉「已有更新在跑」與「5 分鐘內觸發過」的要求。按下去時順便在瀏覽器裡讀 PTT 算社群聲量（見下方社群聲量）。
 - **定時觸發**（`cloudflare/`）：GitHub 內建排程常常略過，改由 Cloudflare Worker 每個交易日台北 14:10–19:40 每半小時、21:50、22:40 觸發更新（帶 `trigger=cron`，比照排程：已發佈過就略過）。設定步驟見 `cloudflare/README.md`。
 - **排程保險**（`fallback.py`）：GitHub 排程常常只跑最後一次。Windows 工作排程器「tw-stock-monitor 排程保險」
   在交易日 20:20、21:30 檢查公開網站，資料不是今天的就用 `gh workflow run` 觸發，紀錄在 `data/fallback.log`。
@@ -268,13 +269,14 @@ M2 回檔從持平 → −0.228（t = −5.38）、我自己加的波動門檻�
 
 | 來源 | 狀態 | 說明 |
 |---|---|---|
-| PTT 股票板 | 使用中（**本機抓**） | 公開網頁，但整站在 Cloudflare 後面，**GitHub 雲端主機直接連是 HTTP 403**（含 RSS）。所以由這台電腦抓：Windows 工作排程器「tw-stock-monitor 社群聲量」每天 14:25、19:00、21:35 跑 `social_push.py` → 匯總成 `snapshots/social/ptt.json`（約 100 KB）→ 用 GitHub API 只更新這個檔（數字沒變不推）。電腦沒開的日子頁面會寫「PTT 資料停在哪天」。試過透過自己的 Cloudflare Worker 代讀（`cloudflare/worker.js` 的 `/ptt/…`、`PTT_RELAY`）：從家用網路呼叫是 200，但**從 GitHub 主機呼叫一樣 403**（2026-09-30），所以 workflow 沒有設 `PTT_RELAY`；程式留著，之後若改成由 Worker 自己的排程去讀可以再試。文章（標題＋內文）與每一則推文都算一次，推文照自己的時間戳算日期 |
+| PTT 股票板 | 使用中 | 公開網頁，但整站在 Cloudflare 後面：**GitHub 雲端主機直接連、或從 GitHub 呼叫自己的 Worker 代讀，都是 HTTP 403**（PTT 的防護看的是最初發起請求的來源；2026-09-29、09-30 實測）。從一般使用者的瀏覽器透過 Worker 代讀則是通的，所以有兩條路：（1）**網頁按 ⟳ 更新時**，瀏覽器透過 Worker 讀最近 3 天的文章、自己算出次數（`site/assets/social.js`），跟著更新要求一起送進來，`social.apply_payload` 檢查後併入；（2）這台電腦的 Windows 排程「tw-stock-monitor 社群聲量」每天 14:25、19:00、21:35 跑 `social_push.py`。兩邊都寫 `snapshots/social/ptt.json`（約 100 KB），逐格取大的，不會互相蓋掉。都沒跑的日子頁面會寫「PTT 資料停在哪天」。文章（標題＋內文）與每一則推文都算一次，推文照自己的時間戳算日期 |
 | Threads | 有金鑰才啟用 | 只能走 Meta 官方 `keyword_search` API：要建 Meta App、`threads_keyword_search` 權限**通過審核**（沒過只搜得到自己的貼文），把金鑰放進 repo 的 Secret `THREADS_TOKEN`。額度 2,200 次 / 24 小時，所以只在晚上 21 點後那次排程、查 PTT 聲量前 400 檔 |
 | Dcard、Mobile01 | 不做 | Cloudflare 直接回 403，雲端排程不可能通過 |
 | CMoney 爆料同學會 | 不做 | 公開網頁沒有個股文章；文章要帶登入憑證打私有 API，違反使用規範、也隨時會壞 |
 
 **統計期間**：上一個交易日之後到這個交易日的日曆日（連假的討論算進開市那天）。
 **比對**：股票代號（前後不是數字、後面不接年／點／元／張這類單位）或名稱（長的優先：「長榮航」不會算成「長榮」）。
+網頁端的比對（`social.js`）是照 `social.Matcher` 重寫的一份：規則從 `data/social_rules.json` 讀（不另外抄），開始前先跑檔案裡附的測試句，跟 Python 的答案對不上就不送。
 兩字名稱是日常用語的（世界、中華、統一、大量、幸福…約 90 個，`social.AMBIGUOUS`）只認代號，
 常用全名另外補回（世界先進、中華車…，`social.ALIASES`）；「東南亞」「海力士」「聯合報」先挖掉再比對。
 **資料**：每篇文章的原文一個檔在 `raw/social/ptt/`（跟著 CI 快取走，60 天前的自動刪除），比對在匯出時做。
