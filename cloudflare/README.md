@@ -1,29 +1,24 @@
-# Cloudflare 定時觸發器
+# Cloudflare Worker：網頁更新的後端
 
-GitHub Actions 內建的排程（schedule）在免費方案常常延遲或整個略過：2026-09-21～29
-每個交易日排 5 次，下午那 4 次一次都沒跑，網站多半到晚上 8 點才更新。
+網站沒有任何定時排程（2026-10-01 起）。資料只在有人打開網頁、或按右上角 ⟳ 時更新，
+兩者都呼叫這個 Worker，由它用保管的 GitHub 金鑰觸發 GitHub Actions（瀏覽器裡沒有任何金鑰）：
 
-這個 Worker（Cloudflare 上的小程式）每個交易日準時「按」GitHub 的更新按鈕：
-
-| 台北時間 | 做什麼 |
+| 網址 | 做什麼 |
 |---|---|
-| 14:10–19:40 每半小時 | 資料一齊就發佈；當天已經發佈過的後面幾次直接略過 |
-| 21:50、22:40 | 融資券公布後，用完整資料重新產出名單 |
+| `POST /update` | 觸發更新。`{"auto": true}` 是網頁發現資料過期而自動觸發（比照舊的排程：資料沒齊就略過）；按 ⟳ 的會帶瀏覽器算好的社群聲量 |
+| `GET /status` | 最近一次更新的進度，網頁用來顯示「更新中／完成」 |
+| `GET /ptt/bbs/Stock/…` | 代讀 PTT 股票板（只放行列表頁與文章頁，其他 404；不登入、不帶帳號） |
 
-真正抓資料、產網站的還是 GitHub Actions。這個 Worker 另外還做兩件事：
+入口是公開的、不用密碼（使用者的決定），所以有更新在跑、或 5 分鐘內觸發過，就不再觸發。
 
-- **網頁 ⟳ 更新按鈕的後端**：`POST /update` 代為觸發更新（金鑰只放在 Worker，瀏覽器不用貼），
-  `GET /status` 回報進度。入口是公開的、不用密碼，所以有更新在跑、或 5 分鐘內觸發過，就不再觸發。
-- **代讀 PTT 股票板**：`GET /ptt/bbs/Stock/…`（只放行列表頁與文章頁，其他 404；不登入、不帶帳號）。
-  PTT 對 GitHub 主機一律 403，但從使用者的瀏覽器透過這裡讀是通的，所以由網頁在按更新時讀、
-  算出社群聲量後跟著 `/update` 送進來。
+PTT 對 GitHub 雲端主機一律 403，從 GitHub 呼叫這個 Worker 代讀也一樣 403；
+只有從使用者的瀏覽器透過這裡讀是通的，所以社群聲量是網頁在按 ⟳ 時讀、算好再送進來。
 
-主要資料不用任何電腦開著。休市日也會觸發，但 `ci_update.py` 發現沒有新的交易日就安靜略過。
-GitHub 原本的 schedule 保留當備援。
+`wrangler.toml` 的 `crons = []` 是刻意的：寫成空的，部署時才會把 Cloudflare 上原本登記的排程一併刪掉。
 
 ## 第一次設定（只做一次）
 
-### 1. 建一把 GitHub 金鑰（只能觸發更新）
+### 1. 建一把 GitHub 金鑰（只能觸發更新、讀進度）
 
 到 GitHub → Settings → Developer settings → [Fine-grained tokens](https://github.com/settings/personal-access-tokens/new)：
 
@@ -54,8 +49,8 @@ npx wrangler secret put GITHUB_TOKEN
 
 ## 平常要看的
 
-- **有沒有準時觸發**：GitHub → Actions → 更新資料並發佈，觸發者是 `workflow_dispatch`、
-  每半小時一筆。大部分會是「沒有發佈（已是最新／資料還沒齊）」的綠燈，這是正常的。
+- **更新紀錄**：GitHub → Actions → 更新資料並發佈。觸發者都是 `workflow_dispatch`；
+  自動觸發的大部分會是「沒有發佈（已是最新／資料還沒齊）」的綠燈，這是正常的。
 - **觸發失敗的原因**：Cloudflare 後台 → Workers & Pages → `tw-stock-monitor-cron` → Logs。
-  `401`／`403` 代表金鑰過期或權限不對，照第 1、3 步換一把。
-- **改時間**：改 `wrangler.toml` 的 `[triggers]`（UTC 時間），再 `npx wrangler deploy`。
+  網頁會顯示「更新沒有送出」＋ GitHub 的回應碼：`401`／`403` 代表金鑰過期或權限不對，照第 1、3 步換一把。
+- **改了 worker.js 或 wrangler.toml**：在這個資料夾跑 `npx wrangler deploy`。

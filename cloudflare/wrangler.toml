@@ -3,7 +3,7 @@ name = "tw-stock-monitor-cron"
 main = "worker.js"
 compatibility_date = "2026-09-01"
 
-# 要有網址：GitHub Actions 透過 <這個 Worker>.workers.dev/ptt/... 讀 PTT 股票板（見 worker.js 的 pttRelay）
+# 要有網址：網頁的更新按鈕打 /update、/status，並透過 /ptt/... 讀 PTT 股票板
 workers_dev = true
 preview_urls = false
 
@@ -11,17 +11,10 @@ preview_urls = false
 GH_REPO = "hsinfuyeh/tw-stock-monitor"
 GH_WORKFLOW = "update.yml"
 
-# 時間是 UTC（台北 = UTC+8），只在週一到週五。休市日照樣會觸發，
-# 但 ci_update.py 發現沒有新的交易日就會安靜略過，不會發佈。
+# 沒有定時排程（2026-10-01 起）：更新只在有人按 ⟳、或打開網頁發現資料過期時觸發。
+# 明確寫成空的，wrangler deploy 才會把 Cloudflare 上原本登記的排程一併刪掉。
 [triggers]
-crons = [
-  # 台北 14:10–19:40 每半小時：行情約 14:30、估值與三大法人更晚，資料一齊就發佈，
-  # 已經發佈過的後面幾次直接略過
-  "10,40 6-11 * * MON-FRI",
-  # 台北 21:50、22:40：融資券約 21:30 公布，公布了就用完整資料重新產出名單（這一版為準）
-  "50 13 * * MON-FRI",
-  "40 14 * * MON-FRI",
-]
+crons = []
 
 [observability]
 enabled = true          # 在 Cloudflare 後台的 Logs 看得到每次觸發成功或失敗

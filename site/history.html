@@ -38,7 +38,7 @@ function strip(D) {
 function count(h, s) { return h.rows.filter(function (r) { return r.status === s; }).length; }
 
 function detail(h) {
-  return '<h3 style="font-size:17px;margin:22px 0 6px">' + h.date + ' 的名單</h3>' +
+  return '<h3 style="font-size:17px;margin:22px 0 6px">' + h.date + ' 的名單' + bfTag(h) + '</h3>' +
     '<div class="scroll"><table><thead><tr><th>名次</th><th>代號</th><th style="text-align:left">名稱</th>' +
     '<th>狀態</th><th>第幾天</th><th class="sorted">從隔天開盤算起的漲跌</th></tr></thead><tbody>' +
     h.rows.map(function (r) {
@@ -47,6 +47,12 @@ function detail(h) {
         '<td>' + (r.day ? r.day + ' / 10' : '—') + '</td><td class="sorted">' + (r.ret == null ? '—' : App.pct(r.ret, 2)) + '</td></tr>';
     }).join('') + '</tbody></table></div>' +
     '<p class="note" style="font-size:13px">「中」「倒」一旦出現就不會再變；漲跌停在分出結果的那一天。進行中的是到最新收盤為止。</p>';
+}
+
+/* 補算：那天沒有人更新網站，名單是之後用當天的資料重算的（stable.backfill）。
+   處置股名單只查得到「現在」的，所以補算的那天沒有套用處置股排除。 */
+function bfTag(h) {
+  return h.backfilled ? ' <span class="nbadge run">' + App.tip('補算') + '</span>' : '';
 }
 
 App.boot('history', function (meta) {
@@ -80,7 +86,7 @@ App.boot('history', function (meta) {
         '<th>進行中</th><th>穩定池 中／倒</th><th class="sorted">多出的中減倒</th></tr></thead><tbody id="daylist">' +
         D.map(function (h, i) {
           var going = h.n - h.done;
-          return '<tr data-i="' + i + '"><td><a href="#">' + h.date + '</a></td><td>' + h.n + '</td>' +
+          return '<tr data-i="' + i + '"><td><a href="#">' + h.date + '</a>' + bfTag(h) + '</td><td>' + h.n + '</td>' +
             '<td class="st-hit">' + h.hit + '</td><td class="st-fail">' + h.fail + '</td><td>' + count(h, '平') + '</td>' +
             '<td class="mut">' + (going || '—') + '</td><td class="mut">' + pp(h.pool_hit) + '／' + pp(h.pool_fail) + '</td>' +
             '<td class="sorted">' + (h.diff == null ? '<span class="mut">未完</span>' : pt(h.diff)) + '</td></tr>';

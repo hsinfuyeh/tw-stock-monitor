@@ -645,6 +645,42 @@ def persist():
     return bool(os.environ.get("GITHUB_ACTIONS") or os.environ.get("FORWARD_PERSIST"))
 
 
+def backfill(d, risk_for, max_days=10):
+    """補上沒有人更新的交易日的名單快照（標「補算」）。
+
+    網站沒有定時排程（2026-10-01 起），資料只在有人打開網頁或按更新時才更新。
+    某個交易日一整天都沒人看，那天的名單就沒被記下來，「名單成績」會少一天 ——
+    而前瞻實測最怕的就是安靜地漏掉日子。所以每次發佈時，把「上一份快照之後、今天之前」
+    缺的交易日補算回來（最多 max_days 天）：
+
+      - 名單用當天的資料重算（特徵的滾動視窗都不含未來，跟當天算的一樣）
+      - 處置／注意／全額交割股用 risk_for(日期) 查當天的；處置股的查詢只給「現在」的名單，
+        舊日子會標成 unknown（risk_lists.fetch 的規則），不假裝有資料
+      - 快照加 backfilled=True，名單成績頁會標「補算」
+
+    只在會寫快照的地方做（CI，見 persist）。回傳補了哪些日期。"""
+    if not persist():
+        return []
+    snaps = load_snaps()
+    if not snaps:
+        return []
+    last = max(snaps)
+    cal = sorted({str(x)[:10] for x in d["date"].unique()})
+    missing = [x for x in cal[:-1] if x > last][-max_days:]      # 最新一天由 compute 照常寫
+    SNAP.mkdir(parents=True, exist_ok=True)
+    import shortterm
+    for ds in missing:
+        risk = risk_for(ds)
+        rows, _ = today_list(d, ds, risk)
+        snap = {"date": ds, "backfilled": True,
+                "rows": [{k: r[k] for k in ("rank", "code", "name", "ind", "score", "close", "why")} for r in rows],
+                "margin_same_day": None,
+                "risk_status": {k: (risk or {}).get(k) for k in ("disposal_status", "notice_status", "full_status")}}
+        (SNAP / (ds + ".json")).write_text(
+            json.dumps(shortterm._json_safe(snap), ensure_ascii=False, indent=1), encoding="utf-8")
+    return missing
+
+
 def track(d, lab, snaps, cfg=CFG):
     """每份快照的每一檔：現在的狀態與報酬；每日「名單 − 穩定池」的淨值差。"""
     key = d.set_index(["date", "code"]).index
@@ -675,7 +711,7 @@ def track(d, lab, snaps, cfg=CFG):
         done = [x for x in rows if x["status"] in ("中", "倒", "平")]
         pm = pool & (d["date"] == ts) & L.notna()
         pl = L[pm]
-        rec = {"date": sd, "n": len(rows), "done": len(done),
+        rec = {"date": sd, "n": len(rows), "done": len(done), "backfilled": bool(s.get("backfilled")),
                "hit": sum(x["status"] == "中" for x in done),
                "fail": sum(x["status"] == "倒" for x in done),
                "pool_hit": _p((pl == 1).astype(float)) if len(pl) else None,

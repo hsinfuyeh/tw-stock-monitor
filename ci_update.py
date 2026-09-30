@@ -58,11 +58,10 @@ def set_output(key, value):
 
 
 def automatic():
-    """這次是定時觸發的嗎：GitHub 排程，或 Cloudflare Worker 帶 trigger=cron 的手動觸發。
+    """這次是自動觸發的嗎：網頁發現資料過期而觸發（trigger=cron），或舊的 GitHub 排程。
 
-    GitHub 內建排程常常延遲或整個略過（2026-09-21～29 下午的 4 次一次都沒跑），
-    所以改由 Cloudflare 準時觸發；它走 workflow_dispatch，要靠 TRIGGER 才分得出來。
-    定時觸發：當天已發佈過就略過。手動：照樣重新產出（通常是改了程式碼）。"""
+    沒有定時排程了（2026-10-01 起），但「自動觸發」的規則照舊：證交所還沒發完就安靜略過、
+    當天已發佈過就不重做 —— 開網頁的人很多，不能每個人都叫它重做一次。按 ⟳ 的（manual）照樣發佈。"""
     return (os.environ.get("GITHUB_EVENT_NAME") == "schedule"
             or os.environ.get("TRIGGER") == "cron")
 
@@ -124,7 +123,7 @@ def revenue_stale(latest, today=None):
 
 
 def refresh_margin(cal, cutoff):
-    """融資券是最晚公布的（約 21:30），下午的排程通常還拿不到。
+    """融資券是最晚公布的（約 21:30），下午的更新通常還拿不到。
 
     舊版的問題：某天的三張核心表齊了之後，那一天就不會再被抓，融資券從此缺著，
     而且沒有任何錯誤。穩定強勢股名單（第 11 輪）有兩條用到融資：融資暴增排除、籌碼乾淨，
@@ -184,7 +183,7 @@ def main(ignore_gate=False):
     todo = [d for d in cal[-LOOKBACK:] if d > cutoff]
 
     if not todo:
-        # 晚上的排程（21:45、22:30）：當天的融資券公布了，就用完整資料重新發佈一次。
+        # 晚上 21:30 之後的更新：當天的融資券公布了，就用完整資料重新發佈一次。
         # 名單以這一版為準（下午那版的融資券是前一天的）。
         got = refresh_margin(cal, cutoff)
         import social                         # 社群聲量（只顯示）：每次要發佈都更新
@@ -195,13 +194,13 @@ def main(ignore_gate=False):
             set_output("publish", "true")
             set_output("changed", "true")
             return 0
-        # 排程一天會跑好幾次；第一次發佈之後，後面幾次都會走到這裡。
-        # 排程觸發就直接略過，不要每小時重做一次 4 分鐘的產出。
+        # 開網頁的自動觸發一天會來很多次；第一次發佈之後，後面都會走到這裡。
+        # 自動觸發就直接略過，不要每次都重做一次產出。
         # 手動觸發則照樣重新產出 —— 那通常是改了程式碼、想讓網站跟上。
         scheduled = automatic()
         log("沒有新的交易日，倉儲已是最新。")
         if scheduled:
-            write_summary(["倉儲已是最新：**{}**。今天已經發佈過，這次排程略過。"
+            write_summary(["倉儲已是最新：**{}**。今天已經發佈過，這次自動觸發略過。"
                            .format(_d(last_ok))])
             set_output("publish", "false")
         else:
@@ -247,7 +246,7 @@ def main(ignore_gate=False):
                 "```",
                 "",
                 "各資料源的發布時間不同（行情約 14:30，估值與三大法人更晚）。",
-                "下一個排程（每小時）會再試；急的話也可以手動按 Run workflow。現在發佈的話，",
+                "下次有人打開網頁或按 ⟳ 時會再試（5 分鐘內不會重複觸發）。現在發佈的話，",
                 "殖利率那層排除規則會因為缺值而靜默失效，名單會虛胖將近一倍。",
             ])
             set_output("publish", "false")

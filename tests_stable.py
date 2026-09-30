@@ -158,7 +158,48 @@ def test_perf(check):
     check("上市不到那麼久的期間不列", "一季" not in r)
 
 
+def test_backfill(check):
+    """沒有人更新的交易日要補算快照（網站沒有定時排程了），標 backfilled。"""
+    print("\n名單快照補算")
+    import json, os, tempfile
+    from pathlib import Path
+    import stable
+    tmp = Path(tempfile.mkdtemp())
+    saved = (stable.SNAP, stable.today_list, os.environ.get("FORWARD_PERSIST"), os.environ.get("GITHUB_ACTIONS"))
+    stable.SNAP = tmp
+    (tmp / "2026-09-22.json").write_text(json.dumps({"date": "2026-09-22", "rows": []}), encoding="utf-8")
+    days = ["2026-09-21", "2026-09-22", "2026-09-23", "2026-09-24", "2026-09-29", "2026-09-30"]
+    d = pd.DataFrame({"date": pd.to_datetime(days)})
+    asked = []
+    stable.today_list = lambda d_, ds, risk: ([{"rank": 1, "code": "2330", "name": "台積電", "ind": "半導體",
+                                               "score": 90.0, "close": 1.0, "why": ["x"]}], {})
+    try:
+        os.environ.pop("FORWARD_PERSIST", None); os.environ.pop("GITHUB_ACTIONS", None)
+        check("不寫快照的地方（本機）不補算", stable.backfill(d, lambda ds: {}) == [])
+        os.environ["FORWARD_PERSIST"] = "1"
+        got = stable.backfill(d, lambda ds: asked.append(ds) or {"disposal_status": "unknown"})
+        check("補的是上一份快照之後、最新一天之前缺的交易日", got == ["2026-09-23", "2026-09-24", "2026-09-29"], str(got))
+        check("每一天用自己那天的處置／注意股名單", asked == got)
+        snap = json.loads((tmp / "2026-09-24.json").read_text(encoding="utf-8"))
+        check("補算的快照標 backfilled，處置股狀態照實記", snap["backfilled"] is True
+              and snap["risk_status"]["disposal_status"] == "unknown" and snap["rows"][0]["code"] == "2330")
+        check("最新一天不在這裡寫（compute 照常寫）", not (tmp / "2026-09-30.json").exists())
+        check("已經有快照的不動、再跑一次沒有東西要補",
+              json.loads((tmp / "2026-09-22.json").read_text(encoding="utf-8")).get("backfilled") is None
+              and stable.backfill(d, lambda ds: {}) == [])
+        many = pd.DataFrame({"date": pd.bdate_range("2026-09-23", periods=20)})
+        check("最多補 10 天", len(stable.backfill(many, lambda ds: {}, max_days=10)) == 10)
+    finally:
+        stable.SNAP, stable.today_list = saved[0], saved[1]
+        for k, v in (("FORWARD_PERSIST", saved[2]), ("GITHUB_ACTIONS", saved[3])):
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
 def run(check):
+    test_backfill(check)
     test_labels(check)
     test_features(check)
     test_pick(check)

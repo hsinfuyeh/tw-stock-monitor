@@ -574,6 +574,7 @@
       GLOSSARY = meta.glossary || {};
       staleBanner(meta);
       bindUpdateButton();
+      autoRefresh(meta);
       if (LOCAL) watchUpdate();
       var r = render(meta);
       return Promise.resolve(r).then(function () { buildStamp(meta); });
@@ -702,6 +703,92 @@
       updating = false;
       msgbar('<b>連不上更新服務</b><span>' + esc(e.message) + '</span>', 'bad');
     });
+  }
+
+  /* ---------- 打開網頁時自動更新 ----------
+   * 網站沒有任何定時排程（2026-10-01 起）。取而代之的是：有人打開網頁時，照「現在幾點、今天開不開市」
+   * 算出網站應該要有哪一天的資料；比那個舊，就自動請 Worker 更新（trigger=cron，比照舊的排程：
+   * 證交所還沒發完就安靜略過、今天已發佈過就不重做）。
+   *   交易日 14:40 之後：應該有今天的（行情約 14:30 發布，估值與三大法人更晚，還沒齊的話這次會略過）
+   *   交易日 21:40 之後：今天的融資券也應該進來了（meta.margin_same_day），沒有就再更新一次
+   *   其他時間、週末、休市日：應該有上一個交易日的
+   * 同一個瀏覽器 20 分鐘內只自動觸發一次；Worker 那邊另有「5 分鐘內觸發過、或有更新在跑就不觸發」，
+   * 所以很多人同時打開也只會跑一次。社群聲量要讀 100 多篇 PTT，不在這裡做，按 ⟳ 才做。
+   */
+  var AUTO_KEY = 'auto_update_at', AUTO_GAP = 20 * 60e3;
+
+  function twNow() {
+    var d = new Date(Date.now() + 8 * 3600e3);          // 用 UTC 的欄位讀，就是台北時間
+    return { ymd: d.toISOString().slice(0, 10), min: d.getUTCHours() * 60 + d.getUTCMinutes() };
+  }
+  function isTradingDay(ymd, off) {
+    var w = new Date(ymd + 'T00:00:00Z').getUTCDay();
+    return w !== 0 && w !== 6 && !off[ymd];
+  }
+  function prevTradingDay(ymd, off) {
+    var d = new Date(ymd + 'T00:00:00Z');
+    for (var i = 0; i < 30; i++) {
+      d.setUTCDate(d.getUTCDate() - 1);
+      var s = d.toISOString().slice(0, 10);
+      if (isTradingDay(s, off)) return s;
+    }
+    return ymd;
+  }
+  /* 照現在的時間，網站應該要有的資料日期；margin：那一天的融資券是不是也應該進來了 */
+  function expectedData(meta) {
+    var off = {}, t = twNow();
+    (meta.holidays || []).forEach(function (h) { off[h] = 1; });
+    if (isTradingDay(t.ymd, off) && t.min >= 14 * 60 + 40)
+      return { date: t.ymd, margin: t.min >= 21 * 60 + 40 };
+    return { date: prevTradingDay(t.ymd, off), margin: true };
+  }
+
+  function autoRefresh(meta) {
+    if (!CLOUD || !meta || !meta.data_date) return;
+    var exp = expectedData(meta);
+    var behind = meta.data_date < exp.date;
+    var noMargin = meta.data_date === exp.date && exp.margin && meta.margin_same_day === false;
+    if (!behind && !noMargin) return;
+    try {
+      var last = +localStorage.getItem(AUTO_KEY) || 0;
+      if (Date.now() - last < AUTO_GAP) return;
+      localStorage.setItem(AUTO_KEY, String(Date.now()));
+    } catch (e) { /* 存不了就照樣觸發，Worker 那邊有冷卻 */ }
+    var since = new Date(Date.now() - 60000), was = meta.built_at;
+    msgbar('<span class="spin"></span><b>' + (behind ? '網站的資料是 ' + esc(meta.data_date) + '，正在自動更新到最新'
+      : '今天的融資券應該公布了，正在自動更新名單') + '…</b><span>大約 5 分鐘，可以繼續瀏覽。</span>', 'busy');
+    fetch(WORKER + '/update', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ auto: true })
+    }).then(function (r) { return r.json(); }).then(function (j) {
+      if (j.state === 'started') return watchAuto(new Date(Date.parse(j.since) - 60000), was);
+      if (j.state === 'busy') return watchAuto(new Date(Date.parse(j.run.created_at) - 1000), was);
+      hideMsg();                        // 冷卻中或出錯：這是自動的，不打擾使用者
+    }).catch(hideMsg);
+  }
+
+  function hideMsg() {
+    var bar = document.getElementById('updmsg');
+    if (bar) bar.setAttribute('data-empty', '1');
+  }
+
+  /* 等這次自動更新跑完，再看網站真的變了沒有：證交所還沒發完的話，這次會略過、什麼都沒變 */
+  function watchAuto(since, was) {
+    fetch(WORKER + '/status', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+      var run = j && j.run;
+      if (!run || new Date(run.created_at) < since || run.status !== 'completed') {
+        return setTimeout(function () { watchAuto(since, was); }, 10000);
+      }
+      return fetch(DATA + 'meta.json', { cache: 'no-cache' }).then(function (r) { return r.json(); }).then(function (m) {
+        if (m.built_at !== was) {
+          msgbar('<b>已更新到 ' + esc(m.data_date) + ' 的資料</b><span>重新載入頁面就會看到。</span>' +
+            '<button class="updbtn" id="reloadbtn" type="button">重新載入</button>', 'ok');
+          var rb = document.getElementById('reloadbtn');
+          if (rb) rb.addEventListener('click', hardReload);
+        } else {
+          msgbar('<b>證交所的資料還沒發布完</b><span>晚一點再打開網頁會自動再試，或按右上角 ⟳。</span>', '');
+        }
+      });
+    }).catch(function () { setTimeout(function () { watchAuto(since, was); }, 15000); });
   }
 
   function bindUpdateButton() {

@@ -1,21 +1,20 @@
-/* tw-stock-monitor 的 Cloudflare Worker：定時觸發、網頁「更新」按鈕的後端、代讀 PTT
+/* tw-stock-monitor 的 Cloudflare Worker：網頁「更新」的後端、代讀 PTT
  *
- * 1. 定時觸發（scheduled）
- *    GitHub Actions 內建的 schedule 在免費方案常常延遲或整個略過（2026-09-21～29 下午的 4 次
- *    一次都沒跑）。這裡準時「按」GitHub 的更新按鈕（workflow_dispatch），帶 trigger=cron ——
- *    ci_update.py 會比照排程處理：資料還沒齊就略過、當天已發佈過就不重做。
- *    時間表在 wrangler.toml 的 [triggers]（UTC；台北 = UTC+8）。
- *
- * 2. 網頁右上角 ⟳ 的後端（POST /update、GET /status）
- *    原本瀏覽器要貼一把 GitHub 金鑰才能觸發更新。現在金鑰只放在這裡（Secret），
- *    網頁呼叫 /update，由這裡代為觸發；進度用 /status 查。瀏覽器裡不再有任何金鑰。
- *    這兩個網址是公開的、不需要密碼（使用者的決定，2026-10-01），所以：
+ * 1. 網頁的更新（POST /update、GET /status）
+ *    網站沒有任何定時排程（2026-10-01 起全部拿掉）。資料只在兩種時候更新：
+ *      - 使用者按右上角 ⟳（manual）：先在瀏覽器裡讀 PTT 算好社群聲量，跟著送進來；
+ *        資料沒變時 CI 走快速通道，只重算社群聲量。
+ *      - 有人打開網頁、網頁發現「照時間應該有新資料了，但網站還是舊的」（auto）：
+ *        帶 trigger=cron，ci_update.py 比照舊的排程處理 —— 證交所還沒發完就安靜略過、
+ *        今天已經發佈過就不重做。
+ *    GitHub 金鑰只放在這裡（Secret），瀏覽器裡沒有任何金鑰、不用輸入任何東西。
+ *    這兩個網址是公開的、不需要密碼（使用者的決定），所以：
  *      - 有更新在跑或排隊，就不再觸發
  *      - 距離上一次觸發不到 COOLDOWN_SEC 秒，就不再觸發
- *      - 只能觸發這一個 workflow，不能帶任何其他參數
- *    帶進來的社群聲量（social）只限制大小，內容由 social.apply_payload 檢查。
+ *      - 只能觸發這一個 workflow，參數只有 trigger 與 social
+ *    帶進來的社群聲量只限制大小，內容由 social.apply_payload 檢查。
  *
- * 3. 代讀 PTT 股票板（GET /ptt/bbs/Stock/…）
+ * 2. 代讀 PTT 股票板（GET /ptt/bbs/Stock/…）
  *    PTT 整站在 Cloudflare 後面，GitHub 雲端主機直接連、或從 GitHub 呼叫這裡代讀都是 403
  *    （2026-09-30 實測：PTT 的防護看的是最初呼叫 Worker 的來源）；從一般使用者的瀏覽器呼叫則是 200。
  *    所以由網頁在使用者的瀏覽器裡透過這裡讀 PTT、算出聲量，再跟著 /update 一起送進來。
@@ -52,13 +51,6 @@ function json(req, obj, status) {
 }
 
 export default {
-  async scheduled(event, env, ctx) {
-    ctx.waitUntil(dispatch(env, { trigger: "cron" }).then(function (r) {
-      if (r.ok) console.log("已觸發 GitHub 更新（" + event.cron + "）");
-      else console.error("觸發失敗（" + event.cron + "）：" + r.error);
-    }));
-  },
-
   async fetch(req, env) {
     const path = new URL(req.url).pathname;
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(req) });
@@ -119,8 +111,9 @@ async function update(req, env) {
     const wait = COOLDOWN_SEC - (Date.now() - Date.parse(run.created_at)) / 1000;
     if (wait > 0) return json(req, { state: "cooldown", wait: Math.ceil(wait), run: run });
   }
-  const inputs = { trigger: "manual" };
-  if (social) inputs.social = social;
+  // auto：網頁自己發現資料過期而觸發的，比照舊的排程（資料沒齊就略過）；不帶社群聲量
+  const inputs = { trigger: body && body.auto ? "cron" : "manual" };
+  if (social && inputs.trigger === "manual") inputs.social = social;
   const r = await dispatch(env, inputs);
   if (!r.ok) return json(req, { state: "error", message: r.error }, 502);
   return json(req, { state: "started", social: !!social, since: new Date().toISOString() });

@@ -585,6 +585,21 @@ def build(limit=None, out=SITE):
     risk["attention30_status"] = "ok" if att is not None else "unavailable"
     if err:
         risk["attention30_error"] = err
+    # 沒有人更新的交易日：補算名單快照（標「補算」），名單成績才不會安靜地少一天
+    def _risk_for(day):
+        r = risk_lists.fetch(day)
+        a, e = risk_lists.recent_attention(day)
+        r["attention30"] = a or []
+        r["attention30_status"] = "ok" if a is not None else "unavailable"
+        if e:
+            r["attention30_error"] = e
+        return r
+    try:
+        filled = stable.backfill(feat, _risk_for)
+        if filled:
+            print("補算名單快照：{}".format("、".join(filled)), flush=True)
+    except Exception as e:
+        print("::warning::補算名單快照失敗（名單成績會少這幾天）：{}".format(e), flush=True)
     st = stable.compute(feat, risk)
     stable_hist = st[4] or {}
     del feat
@@ -601,7 +616,9 @@ def build(limit=None, out=SITE):
     data.mkdir(parents=True)
 
     sizes = {}
-    sizes["meta"] = write(data / "meta.json", emit_meta(p_common, day_date))
+    # margin_same_day：當天的融資券進來了沒。網頁用它判斷「晚上 21:30 後要不要自動再更新一次」
+    sizes["meta"] = write(data / "meta.json", dict(emit_meta(p_common, day_date),
+                                                  margin_same_day=st[0].get("margin_same_day")))
     sizes["universe"] = write(data / "universe.json", emit_universe(p_otc is not None))
     sizes["funnel"] = write(data / "funnel.json", fn)
     stable.write(data, *st)
