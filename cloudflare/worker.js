@@ -115,8 +115,10 @@ async function update(req, env) {
     const wait = COOLDOWN_SEC - (Date.now() - Date.parse(run.created_at)) / 1000;
     if (wait > 0) return json(req, { state: "cooldown", wait: Math.ceil(wait), run: run });
   }
-  if (!(await human(req, env, body && body.turnstile))) {
-    return json(req, { state: "error", message: "沒有通過 Cloudflare 的真人驗證，請重新整理頁面再試" }, 403);
+  const hv = await human(req, env, body && body.turnstile);
+  if (!hv.ok) {
+    console.log("turnstile rejected:", hv.why);
+    return json(req, { state: "error", message: "沒有通過 Cloudflare 的真人驗證，請重新整理頁面再試（" + hv.why + "）" }, 403);
   }
   // auto：網頁自己發現資料過期而觸發的，比照舊的排程（資料沒齊就略過）；不帶社群聲量
   const inputs = { trigger: body && body.auto ? "cron" : "manual" };
@@ -128,10 +130,13 @@ async function update(req, env) {
 
 /* ---------- Turnstile ---------- */
 /* 網頁送來的通行證拿去 Cloudflare 驗。沒設密鑰（還沒啟用）就放行。
-   通行證只能用一次、5 分鐘過期；action 要是網頁那邊指定的 update，別的地方拿到的不算。 */
+   通行證只能用一次、5 分鐘過期；action 要是網頁那邊指定的 update，別的地方拿到的不算。
+   回傳 { ok, why }：why 是沒過的原因（不含任何金鑰），會顯示在網頁上，方便查是哪一段出問題 —— 
+   「網頁沒拿到通行證」跟「通行證被 Cloudflare 退回（例如密鑰貼錯）」要分得出來。 */
 async function human(req, env, token) {
-  if (!env.TURNSTILE_SECRET) return true;
-  if (!token || typeof token !== "string" || token.length > 2048) return false;
+  if (!env.TURNSTILE_SECRET) return { ok: true };
+  if (!token || typeof token !== "string") return { ok: false, why: "網頁沒有拿到通行證" };
+  if (token.length > 2048) return { ok: false, why: "通行證格式不對" };
   const form = new FormData();
   form.append("secret", env.TURNSTILE_SECRET);
   form.append("response", token);
@@ -140,9 +145,11 @@ async function human(req, env, token) {
   try {
     const r = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", { method: "POST", body: form });
     const j = await r.json();
-    return !!j.success && j.action === "update";
+    if (!j.success) return { ok: false, why: "Cloudflare 退回：" + ((j["error-codes"] || []).join(",") || "未知") };
+    if (j.action !== "update") return { ok: false, why: "action 不符：" + j.action };
+    return { ok: true };
   } catch (e) {
-    return false;
+    return { ok: false, why: "連不上 Cloudflare 驗證服務" };
   }
 }
 
