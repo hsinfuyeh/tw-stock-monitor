@@ -22,10 +22,21 @@
     raw/ 其餘部分（8,071 個檔案共 626 MB）不帶：CI 只負責產出當日網站，
     不需要重跑解析。真要改解析邏輯，在本機重建再種一次即可。
 
+    raw/tpex/          上櫃原始檔（約 40 MB）。tpex.update 用「原始檔在不在」判斷缺哪幾天，
+                       不帶的話冷啟動後補歷史會把 300 天全部重抓一遍。
+
+種子會自己更新 ——
+
+    種子太舊也會出事：CI 冷啟動後要從種子的最後一天一路補到今天。所以 workflow 每次存倉儲快取之後
+    跑 python seed.py --if-older 7，種子超過 7 天就用 CI 手上的倉儲重新上傳（約 1–2 分鐘），
+    一週最多一次。本機跑也可以，效果一樣。
+
 跑法：
-    python seed.py            上傳／更新種子
-    python seed.py --check    只看現在的狀態，不動任何東西
+    python seed.py                上傳／更新種子
+    python seed.py --if-older 7   種子超過 7 天才更新（CI 用）
+    python seed.py --check        只看現在的狀態，不動任何東西
 """
+import datetime as dt
 import subprocess
 import sys
 import tarfile
@@ -51,7 +62,24 @@ def repo():
     return r.stdout.strip()
 
 
-def main(check_only=False):
+def seed_age_days():
+    """種子上傳到現在幾天；還沒有種子回傳 None。"""
+    r = sh("gh", "release", "view", TAG, "--json", "assets",
+           "-q", '.assets[] | select(.name == "{}") | .updatedAt'.format(ASSET))
+    ts = r.stdout.strip()
+    if r.returncode or not ts:
+        return None
+    t = dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    return (dt.datetime.now(dt.timezone.utc) - t).total_seconds() / 86400
+
+
+def main(check_only=False, if_older=None):
+    if if_older is not None:
+        age = seed_age_days()
+        if age is not None and age < if_older:
+            print("種子是 {:.1f} 天前的，還不到 {} 天，不更新。".format(age, if_older))
+            return
+        print("種子{}，更新。".format("還沒建立" if age is None else "是 {:.1f} 天前的".format(age)))
     if not DB.exists():
         sys.exit("找不到倉儲 {} —— 先跑 python run.py daily".format(DB))
     mb = DB.stat().st_size / 1e6
@@ -98,6 +126,9 @@ def main(check_only=False):
             act = RAW / "active_etf"
             if act.exists():
                 t.add(str(act), arcname="raw/active_etf")
+            otc = RAW / "tpex"
+            if otc.exists():
+                t.add(str(otc), arcname="raw/tpex")
         size = tar.stat().st_size / 1e6
         print("上傳 {:.0f} MB（會覆蓋舊的）…".format(size))
         r = sh("gh", "release", "upload", TAG, str(tar), "--clobber")
@@ -107,4 +138,6 @@ def main(check_only=False):
 
 
 if __name__ == "__main__":
-    main(check_only="--check" in sys.argv)
+    a = sys.argv
+    main(check_only="--check" in a,
+         if_older=float(a[a.index("--if-older") + 1]) if "--if-older" in a else None)

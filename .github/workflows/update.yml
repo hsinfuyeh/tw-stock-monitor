@@ -184,6 +184,16 @@ jobs:
             raw
           key: warehouse2008-${{ github.run_id }}
 
+      # 種子（Release 上的倉儲備份）每週更新一次。快取 7 天沒用會被 GitHub 清掉，那時候只能從種子
+      # 冷啟動，再從種子的最後一天一路補到今天 —— 種子越舊，那一次就越久。
+      # 超過 7 天才上傳（約 1–2 分鐘），失敗不影響這次更新（網站已經發佈、快取也存了）。
+      - name: 更新倉儲種子（每週一次）
+        if: success() && steps.fetch.outputs.publish == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python seed.py --if-older 7
+
       - name: 摘要
         if: always()
         run: |

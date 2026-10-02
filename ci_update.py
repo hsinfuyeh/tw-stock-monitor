@@ -87,6 +87,14 @@ def extras():
     return n_otc
 
 
+def days_to_fetch(cal, cutoff):
+    """倉儲最後一天（cutoff，YYYYMMDD）之後的每一個交易日。
+
+    舊版只看日曆最後 LOOKBACK（20）天：平常沒差，但快取 7 天沒用被清掉、從種子冷啟動時，
+    種子如果停在 20 個交易日以前，中間那幾天就永遠不會補，而且沒有任何錯誤。"""
+    return [d for d in cal if d > cutoff]
+
+
 def automatic():
     """這次是自動觸發的嗎：網頁發現資料過期而觸發（trigger=cron），或舊的 GitHub 排程。
 
@@ -210,7 +218,8 @@ def main(ignore_gate=False):
 
     cal = ingest.trading_calendar()          # 當月一定重抓，否則日曆會停住
     cutoff = last_ok.strftime("%Y%m%d") if last_ok is not None else "00000000"
-    todo = [d for d in cal[-LOOKBACK:] if d > cutoff]
+    # 倉儲讀不到（理論上不會：沒有倉儲時 workflow 會先下載種子）就只看最近幾天，不要從 2008 抓起
+    todo = days_to_fetch(cal, cutoff) if last_ok is not None else cal[-LOOKBACK:]
 
     if not todo:
         # 晚上 21:30 之後的更新：當天的融資券公布了，就用完整資料重新發佈一次。
@@ -256,6 +265,9 @@ def main(ignore_gate=False):
         return 0
 
     log("要補的交易日: {}".format(", ".join(todo)))
+    if len(todo) > LOOKBACK:
+        log("::warning::要補 {} 個交易日（倉儲停在 {}），應該是從舊的種子冷啟動；"
+            "種子由 seed.py --if-older 每週更新。".format(len(todo), _d(last_ok)))
     ingest.backfill(list(ingest.DATASETS), todo)
 
     # 閘門：逐日檢查三個核心資料源是不是都拿到了

@@ -224,6 +224,11 @@ def test_revenue():
     check("過了 12 日上個月就該有", ci_update.revenue_stale("202607", pd.Timestamp("2026-09-15"))
           and not ci_update.revenue_stale("202608", pd.Timestamp("2026-09-15")))
     check("12 日之前有上上個月就算新", not ci_update.revenue_stale("202607", pd.Timestamp("2026-09-05")))
+    # 冷啟動：種子停在很久以前，倉儲最後一天之後的交易日都要補，不能只看最近 20 天（舊版會安靜地漏掉中間）
+    cal = ["2026{:04d}".format(x) for x in range(101, 131)]          # 30 個交易日
+    check("倉儲最後一天之後的交易日全部要補（不只最近 20 天）",
+          ci_update.days_to_fetch(cal, "20260105") == cal[5:])
+    check("倉儲已是最新 -> 沒有要補的", ci_update.days_to_fetch(cal, cal[-1]) == [])
 
     rv = revenue.load()
     if not len(rv):
