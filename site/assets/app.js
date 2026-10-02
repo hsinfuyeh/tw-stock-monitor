@@ -643,7 +643,7 @@
    * 右下角才會跳出一個勾選框。
    * TURNSTILE_SITEKEY 是公開的（本來就會出現在網頁裡），密鑰只在 Worker 的 Secret。
    * 空字串 = 還沒啟用：照舊直接送，Worker 沒設密鑰也不檢查。 */
-  var TURNSTILE_SITEKEY = '';
+  var TURNSTILE_SITEKEY = '0x4AAAAAAFMJ5IwEl2PczR-D';
   var _ts = null;
   function turnstileReady() {
     if (_ts) return _ts;
