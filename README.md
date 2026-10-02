@@ -282,7 +282,8 @@ M2 回檔從持平 → −0.228（t = −5.38）、我自己加的波動門檻�
 |---|---|---|
 | PTT 股票板 | 使用中 | 公開網頁，但整站在 Cloudflare 後面：**GitHub 雲端主機直接連、或從 GitHub 呼叫自己的 Worker 代讀，都是 HTTP 403**（PTT 的防護看的是最初發起請求的來源；2026-09-29、09-30 實測）。從一般使用者的瀏覽器透過 Worker 代讀則是通的，所以**網頁按 ⟳ 更新時**，瀏覽器透過 Worker 讀最近 3 天的文章、自己算出次數（`site/assets/social.js`），跟著更新要求一起送進來，`social.apply_payload` 檢查後併入 `snapshots/social/ptt.json`（約 100 KB，逐格取大的）。不靠任何電腦的排程；沒有人按更新的日子，頁面會寫「PTT 資料停在哪天」。文章（標題＋內文）與每一則推文都算一次，推文照自己的時間戳算日期 |
 | Threads | 有金鑰才啟用 | 只能走 Meta 官方 `keyword_search` API：要建 Meta App、`threads_keyword_search` 權限**通過審核**（沒過只搜得到自己的貼文），把金鑰放進 repo 的 Secret `THREADS_TOKEN`。額度 2,200 次 / 24 小時，所以只在晚上 21 點後那次排程、查 PTT 聲量前 400 檔 |
-| Dcard、Mobile01 | 不做 | Cloudflare 直接回 403，雲端排程不可能通過 |
+| Dcard | 不做 | 2026-10-03 不登入實測三條路都不通：家用網路直接讀 API 與網頁、經自己的 Worker 代讀（從腳本或瀏覽器呼叫都一樣）都是 Cloudflare 的 403「Attention Required」驗證頁；網頁裡的瀏覽器直接讀則被 CORS 擋（Dcard 不讓別的網站讀）。PTT 那條「瀏覽器經 Worker 代讀」的路對 Dcard 無效。剩下的只有登入或繞過驗證，前者有鎖帳號風險、後者不做 |
+| Mobile01 | 不做 | Cloudflare 直接回 403，雲端排程不可能通過 |
 | CMoney 爆料同學會 | 不做 | 公開網頁沒有個股文章；文章要帶登入憑證打私有 API，違反使用規範、也隨時會壞 |
 
 **統計期間**：上一個交易日之後到這個交易日的日曆日（連假的討論算進開市那天）。
