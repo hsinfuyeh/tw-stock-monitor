@@ -12,6 +12,9 @@
  *      - 有更新在跑或排隊，就不再觸發
  *      - 距離上一次觸發不到 COOLDOWN_SEC 秒，就不再觸發
  *      - 只能觸發這一個 workflow，參數只有 trigger 與 social
+ *      - 設了 TURNSTILE_SECRET 就要先過 Cloudflare Turnstile（真人驗證）：網頁在背景拿一張一次性
+ *        通行證跟著送來，這裡拿去 Cloudflare 驗過才觸發。擋的是用程式一直打、送假社群聲量的人；
+ *        一般瀏覽器什麼都不用做。沒設就不檢查（啟用前的過渡）。
  *    帶進來的社群聲量只限制大小，內容由 social.apply_payload 檢查。
  *
  * 2. 代讀 PTT 股票板（GET /ptt/bbs/Stock/…）
@@ -22,6 +25,7 @@
  *    不登入、不帶任何帳號，只帶「已滿 18 歲」的確認。
  *
  * Secret：GITHUB_TOKEN —— Fine-grained token，只給這個 repo 的 Actions: Read and write。
+ *         TURNSTILE_SECRET —— Turnstile 小工具的密鑰（選用，設了才檢查真人驗證）。
  * 部署與設定步驟見 cloudflare/README.md。
  */
 const COOLDOWN_SEC = 300;        // 兩次觸發至少隔 5 分鐘（一次更新本身就要 5–8 分鐘）
@@ -111,12 +115,35 @@ async function update(req, env) {
     const wait = COOLDOWN_SEC - (Date.now() - Date.parse(run.created_at)) / 1000;
     if (wait > 0) return json(req, { state: "cooldown", wait: Math.ceil(wait), run: run });
   }
+  if (!(await human(req, env, body && body.turnstile))) {
+    return json(req, { state: "error", message: "沒有通過 Cloudflare 的真人驗證，請重新整理頁面再試" }, 403);
+  }
   // auto：網頁自己發現資料過期而觸發的，比照舊的排程（資料沒齊就略過）；不帶社群聲量
   const inputs = { trigger: body && body.auto ? "cron" : "manual" };
   if (social && inputs.trigger === "manual") inputs.social = social;
   const r = await dispatch(env, inputs);
   if (!r.ok) return json(req, { state: "error", message: r.error }, 502);
   return json(req, { state: "started", social: !!social, since: new Date().toISOString() });
+}
+
+/* ---------- Turnstile ---------- */
+/* 網頁送來的通行證拿去 Cloudflare 驗。沒設密鑰（還沒啟用）就放行。
+   通行證只能用一次、5 分鐘過期；action 要是網頁那邊指定的 update，別的地方拿到的不算。 */
+async function human(req, env, token) {
+  if (!env.TURNSTILE_SECRET) return true;
+  if (!token || typeof token !== "string" || token.length > 2048) return false;
+  const form = new FormData();
+  form.append("secret", env.TURNSTILE_SECRET);
+  form.append("response", token);
+  const ip = req.headers.get("CF-Connecting-IP");
+  if (ip) form.append("remoteip", ip);
+  try {
+    const r = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", { method: "POST", body: form });
+    const j = await r.json();
+    return !!j.success && j.action === "update";
+  } catch (e) {
+    return false;
+  }
 }
 
 /* ---------- PTT ---------- */

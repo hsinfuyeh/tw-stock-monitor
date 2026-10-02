@@ -636,6 +636,55 @@
     });
   }
 
+  /* ---------- Cloudflare Turnstile（真人驗證）----------
+   * 更新入口是公開的、不用密碼（使用者的決定），任何人都能用程式一直打、或送假的社群聲量。
+   * Turnstile 是 Cloudflare 的免費真人驗證：觸發更新前在背景拿一張一次性的通行證（token），
+   * Worker 先拿去 Cloudflare 驗過才觸發。一般瀏覽器不用做任何事；只有被判定可疑時，
+   * 右下角才會跳出一個勾選框。
+   * TURNSTILE_SITEKEY 是公開的（本來就會出現在網頁裡），密鑰只在 Worker 的 Secret。
+   * 空字串 = 還沒啟用：照舊直接送，Worker 沒設密鑰也不檢查。 */
+  var TURNSTILE_SITEKEY = '';
+  var _ts = null;
+  function turnstileReady() {
+    if (_ts) return _ts;
+    _ts = new Promise(function (ok, fail) {
+      if (window.turnstile) return ok(window.turnstile);
+      window.__tsLoaded = function () { ok(window.turnstile); };
+      var s = document.createElement('script');
+      s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=__tsLoaded';
+      s.async = true;
+      s.onerror = function () { _ts = null; fail(new Error('載入 Cloudflare 驗證失敗')); };
+      document.head.appendChild(s);
+    });
+    return _ts;
+  }
+  /* 拿一張通行證（每次觸發都要新的一張，用過就失效、5 分鐘過期） */
+  function humanToken() {
+    if (!TURNSTILE_SITEKEY) return Promise.resolve('');
+    return turnstileReady().then(function (ts) {
+      return new Promise(function (ok, fail) {
+        var box = document.createElement('div');
+        box.style.cssText = 'position:fixed;right:12px;bottom:12px;z-index:9999';
+        document.body.appendChild(box);
+        var done = false, id = null;
+        var timer = setTimeout(function () { finish(fail, new Error('Cloudflare 驗證逾時')); }, 30000);
+        function finish(f, v) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          try { if (id !== null) ts.remove(id); } catch (e) {}
+          box.remove();
+          f(v);
+        }
+        id = ts.render(box, {
+          sitekey: TURNSTILE_SITEKEY, action: 'update', appearance: 'interaction-only',
+          callback: function (tok) { finish(ok, tok); },
+          'error-callback': function () { finish(fail, new Error('沒有通過 Cloudflare 的真人驗證')); return true; }
+        });
+      });
+    });
+  }
+
   function runLink(run) {
     return run && run.url ? '<a class="updbtn" href="' + esc(run.url) + '" target="_blank" rel="noopener">看進度</a>' : '';
   }
@@ -693,9 +742,12 @@
       return null;
     }).then(function (social) {
       msgbar('<span class="spin"></span><b>送出更新要求…</b>', 'busy');
-      return fetch(WORKER + '/update', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(social ? { social: { days: social.days, articles: social.articles } } : {})
+      return humanToken().then(function (tok) {
+        var body = social ? { social: { days: social.days, articles: social.articles } } : {};
+        if (tok) body.turnstile = tok;
+        return fetch(WORKER + '/update', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
       }).then(function (r) { return r.json(); });
     }).then(function (j) {
       updating = false;
@@ -712,7 +764,7 @@
       msgbar('<b>更新沒有送出</b><span>' + esc(j.message || '') + '</span>', 'bad');
     }).catch(function (e) {
       updating = false;
-      msgbar('<b>連不上更新服務</b><span>' + esc(e.message) + '</span>', 'bad');
+      msgbar('<b>更新沒有送出</b><span>' + esc(e.message) + '</span>', 'bad');
     });
   }
 
@@ -768,8 +820,11 @@
     var since = new Date(Date.now() - 60000), was = meta.built_at;
     msgbar('<span class="spin"></span><b>' + (behind ? '網站的資料是 ' + esc(meta.data_date) + '，正在自動更新到最新'
       : '今天的融資券應該公布了，正在自動更新名單') + '…</b><span>大約 5 分鐘，可以繼續瀏覽。</span>', 'busy');
-    fetch(WORKER + '/update', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ auto: true })
+    humanToken().then(function (tok) {
+      return fetch(WORKER + '/update', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(tok ? { auto: true, turnstile: tok } : { auto: true })
+      });
     }).then(function (r) { return r.json(); }).then(function (j) {
       if (j.state === 'started') return watchAuto(new Date(Date.parse(j.since) - 60000), was);
       if (j.state === 'busy') return watchAuto(new Date(Date.parse(j.run.created_at) - 1000), was);

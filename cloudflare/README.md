@@ -47,6 +47,22 @@ npx wrangler secret put GITHUB_TOKEN
 
 它會要你貼上第 1 步的金鑰（畫面上不會顯示），按 Enter。金鑰只存在 Cloudflare，不會進 repo。
 
+### 4. 真人驗證 Turnstile（選用，2026-10-03 加入）
+
+更新入口是公開的，Turnstile 擋掉用程式一直打、送假社群聲量的人；一般瀏覽器不用做任何事。
+
+1. Cloudflare 後台 → **Turnstile** → **Add widget**
+   - Widget name：`tw-stock-monitor`
+   - Hostname：`hsinfuyeh.github.io`
+   - Widget Mode：**Invisible**（完全不跳框；選 Managed 的話，可疑時右下角會出現勾選框）
+2. 建立後會看到兩把：
+   - **Site Key**（公開的）：填進 `site/assets/app.js` 的 `TURNSTILE_SITEKEY`，commit 推上去，等網站更新完。
+   - **Secret Key**（密鑰）：**網站換成新版之後**才在這個資料夾跑 `npx wrangler secret put TURNSTILE_SECRET`
+     貼上。順序反過來的話，舊網頁拿不到通行證，更新會被擋。
+3. 要停用：`npx wrangler secret delete TURNSTILE_SECRET`（Worker 沒有密鑰就不檢查）。
+
+本機預覽（`localhost:5500?cloud=1`）不在 Hostname 裡，啟用後從本機預覽按 ⟳ 會被擋；本機用 `python server.py` 的更新不經過 Worker，不受影響。
+
 ## 平常要看的
 
 - **更新紀錄**：GitHub → Actions → 更新資料並發佈。觸發者都是 `workflow_dispatch`；
