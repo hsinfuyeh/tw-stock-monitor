@@ -189,7 +189,7 @@ def test_backfill(check):
               and stable.backfill(d, lambda ds: {}) == [])
         many = pd.DataFrame({"date": pd.bdate_range("2026-09-23", periods=20)})
         check("最多補 10 天", len(stable.backfill(many, lambda ds: {}, max_days=10)) == 10)
-        # 中間的缺口也要補：9/25、9/26 夾在 9/24 和 9/29 兩份快照中間，舊版只看「最新一份之後」，永遠補不到
+        # 中間的缺口也要補：夾在兩份快照中間的日子，舊版只看「最新一份之後」，永遠補不到
         gap = Path(tempfile.mkdtemp())
         stable.SNAP = gap
         for ds in ("2026-09-22", "2026-09-29"):
