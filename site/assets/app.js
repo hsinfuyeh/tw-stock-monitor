@@ -658,9 +658,14 @@
     });
     return _ts;
   }
-  /* 拿一張通行證（每次觸發都要新的一張，用過就失效、5 分鐘過期） */
+  /* 拿一張通行證（每次觸發都要新的一張，用過就失效、5 分鐘過期）。
+     拿不到（被判定可疑、驗證程式被擋）就回空字串、照樣送出：要不要放行由 Worker 決定。
+     這樣停用時只要刪掉 Worker 的 TURNSTILE_SECRET 就完全回到原狀，不必改網頁。 */
   function humanToken() {
     if (!TURNSTILE_SITEKEY) return Promise.resolve('');
+    return turnstileToken().catch(function () { return ''; });
+  }
+  function turnstileToken() {
     return turnstileReady().then(function (ts) {
       return new Promise(function (ok, fail) {
         var box = document.createElement('div');
