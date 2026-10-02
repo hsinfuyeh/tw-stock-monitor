@@ -123,6 +123,7 @@ def fetch_exrights_month(ym, max_age_hours=12):
     j = _get("/www/zh-tw/bulletin/exDailyQ",
              {"startDate": "{}/{:02d}/01".format(y, m),
               "endDate": "{}/{:02d}/{:02d}".format(y, m, last)})
+    time.sleep(REQUEST_DELAY)        # 只有真的發出請求才等；快取裡的月份直接回傳
     if not j or str(j.get("stat", "")).lower() != "ok":
         return None
     p.write_bytes(gzip.compress(json.dumps(j, ensure_ascii=False).encode()))
@@ -339,18 +340,20 @@ def _months(days):
     return ms
 
 
-def update(n_days=DEFAULT_DAYS, budget=None, verbose=True):
+def update(n_days=DEFAULT_DAYS, budget=None, verbose=True, seconds=None):
     """抓最近 n_days 個交易日裡缺的資料，寫進上櫃的表。
 
-    budget 限制這次最多「抓」幾個交易日（CI 用，避免一次回補拖垮排程）；
-    已經在 raw/ 的日子不算。回傳寫入的交易日數。
+    budget 限制這次最多「抓」幾個交易日，seconds 限制抓資料最多花幾秒（CI 用，
+    避免一次回補拖垮更新）；已經在 raw/ 的日子不算。新的日子先抓，時間到就停，
+    已經抓到的照樣寫進表。回傳寫入的交易日數。
     不會丟例外給呼叫端 —— 上櫃是附加資訊，失敗不該擋住上市那條主線。"""
     try:
+        t0 = time.monotonic()
         days = ingest.trading_calendar()[-n_days:]
-        todo = [d for d in days if not all(have(ds, d) for ds in DATASETS)]
-        if budget is not None:
-            # 新的日子優先：個股頁最需要的是最近的資料
-            todo = sorted(todo, reverse=True)[:budget]
+        # 新的日子優先：個股頁最需要的是最近的資料
+        missing = sorted((d for d in days if not all(have(ds, d) for ds in DATASETS)),
+                         reverse=True)
+        todo = missing[:budget] if budget is not None else missing
         def flush(ds_days, exr_months=()):
             """把這幾天寫進資料庫（重跑冪等）。分批寫：下載中途斷掉時，
             已經抓到的日子也已經在表裡，不必等重跑完才看得到。"""
@@ -378,7 +381,9 @@ def update(n_days=DEFAULT_DAYS, budget=None, verbose=True):
         if early:
             flush(early)          # 先把已經下載好的寫進去，馬上可用
         fetched, pending = [], []
-        for i, d in enumerate(sorted(todo)):
+        for i, d in enumerate(todo):
+            if seconds is not None and time.monotonic() - t0 > seconds:
+                break
             ok = True
             for ds in DATASETS:
                 if not have(ds, d):
@@ -395,13 +400,12 @@ def update(n_days=DEFAULT_DAYS, budget=None, verbose=True):
         months = _months(days)
         for ym in months:
             fetch_exrights_month(ym)
-            time.sleep(REQUEST_DELAY)
         write = sorted(set(pending) | set(backlog()))
         n, nx = flush(write, months)
         total = len(set(early) | set(fetched) | set(write))
         if verbose:
             print("上櫃：缺 {} 天、這次抓到 {} 天、寫入 {} 天 {}；除權息 {} 筆".format(
-                len(todo), len(fetched), total,
+                len(missing), len(fetched), total,
                 ", ".join("{} {:,} 列".format(TABLES[k], v) for k, v in n.items()), nx),
                 flush=True)
         return total

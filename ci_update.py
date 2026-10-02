@@ -28,6 +28,15 @@ CORE = ("mi_index", "bwibbu", "t86")
 LOOKBACK = 20          # 只檢查最近幾個交易日，不必每次掃全部
 SUMMARY = "ci_summary.md"
 
+# 上櫃與主動式 ETF（只供查詢）的抓取量。平常的更新只顧新的日子：
+# 舊版每次都順便補 15 天上櫃歷史、40 個 ETF 歷史請求，當天第一次更新因此要 12–14 分鐘，
+# 而沒有定時排程之後，等的是第一個打開網頁的人。歷史改由「補歷史」模式（workflow 的
+# backfill 選項，BACKFILL=true）另外跑：時間用秒數限制，job 上限 60 分鐘、產出與存快取約 10 分鐘。
+DAILY_OTC_DAYS = 3     # 幾天沒人更新也補得回來；平常只會缺當天 1 天
+DAILY_ETF_REQ = 6
+BACKFILL_OTC_SEC = 28 * 60
+BACKFILL_ETF_SEC = 8 * 60
+
 
 def _d(v):
     """日期只顯示到日，不要拖著 00:00:00 的尾巴。"""
@@ -55,6 +64,27 @@ def set_output(key, value):
         with open(path, "a", encoding="utf-8") as f:
             f.write("{}={}\n".format(key, value))
     log("[output] {}={}".format(key, value))
+
+
+def backfill_mode():
+    """這次是「補歷史」嗎（workflow 的 backfill 選項）。"""
+    return os.environ.get("BACKFILL", "").lower() == "true"
+
+
+def extras():
+    """上櫃與主動式 ETF（只供查詢）。不在閘門裡：它們是附加資訊，缺了不該擋住發佈；
+    兩個 update 都不會丟例外。回傳上櫃寫入的交易日數。"""
+    import tpex
+    import activeetf
+    if backfill_mode():
+        # 上櫃要 60 天才產得出個股頁（算波動），目標 300 天；櫃買約 20 秒一天
+        n_otc = tpex.update(seconds=BACKFILL_OTC_SEC)
+        activeetf.update(budget=None, seconds=BACKFILL_ETF_SEC)
+    else:
+        n_otc = tpex.update(budget=DAILY_OTC_DAYS)
+        activeetf.update(budget=DAILY_ETF_REQ)
+    log("上櫃寫入 {} 個交易日".format(n_otc))
+    return n_otc
 
 
 def automatic():
@@ -194,6 +224,14 @@ def main(ignore_gate=False):
             set_output("publish", "true")
             set_output("changed", "true")
             return 0
+        if backfill_mode():
+            # 補歷史：沒有新的交易日也要抓上櫃與 ETF 的歷史，抓完完整產出（上櫃個股頁才會出現）
+            extras()
+            write_summary(["補歷史：倉儲已是最新（**{}**），這次補了上櫃與主動式 ETF 的歷史資料。"
+                           .format(_d(last_ok))])
+            set_output("publish", "true")
+            set_output("changed", "true")
+            return 0
         # 開網頁的自動觸發一天會來很多次；第一次發佈之後，後面都會走到這裡。
         # 自動觸發就直接略過，不要每次都重做一次產出。
         # 手動觸發則照樣重新產出 —— 那通常是改了程式碼、想讓網站跟上。
@@ -267,17 +305,7 @@ def main(ignore_gate=False):
     set_output("data_date", _d(now_ok))       # 寫進新的交易日了；同名的輸出以最後一次為準
     refresh_margin(cal, max(ready))           # 前幾天漏掉的融資券順便補
 
-    # 上櫃（只供個股頁查詢）。不在閘門裡：它是附加資訊，缺了不該擋住發佈。
-    # 每次最多抓 15 個交易日：櫃買回應慢，實測約 1 分鐘一天，job 上限 60 分鐘、
-    # 主線本身就要 15 分鐘。新的日子優先，約 5 個交易日後就夠產上櫃個股頁
-    # （要 60 天算波動），300 天大約一個月補齊，不必重新上傳倉儲種子。
-    # tpex.update 不會丟例外。
-    import tpex
-    n_otc = tpex.update(budget=15)
-    log("上櫃寫入 {} 個交易日".format(n_otc))
-    # 主動式 ETF 持股（只顯示）。每檔抓最新一份，另外最多 40 個請求補歷史（約 3 分鐘）。
-    import activeetf
-    activeetf.update(budget=40)
+    extras()      # 上櫃與主動式 ETF：平常只抓新的日子，歷史由補歷史模式負責
     # 社群聲量（只顯示）：這裡只查 Threads（有金鑰才查）。PTT 由網頁按「更新」時送進來（見 main 開頭）。不丟例外。
     import social
     social.update()

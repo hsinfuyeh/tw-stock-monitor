@@ -402,12 +402,14 @@ def save(etf, rec):
     return ymd
 
 
-def update(n_days=DEFAULT_DAYS, budget=None, verbose=True):
+def update(n_days=DEFAULT_DAYS, budget=None, verbose=True, seconds=None):
     """每檔抓最新一份；支援歷史的投信另補最近 n_days 個交易日裡缺的日子。
 
-    budget 限制「補歷史」這次最多發幾個請求（CI 用）。回傳寫入的檔案數。
+    budget 限制「補歷史」這次最多發幾個請求，seconds 限制補歷史最多花到第幾秒（CI 用）；
+    最新一份不受這兩個限制。回傳寫入的檔案數。
     不會丟例外給呼叫端 —— 這是附加資訊，失敗不該擋住網站主線。"""
     try:
+        t0 = time.monotonic()
         reg = registry()
         cal = [dt.date(int(d[:4]), int(d[4:6]), int(d[6:]))
                for d in ingest.trading_calendar()[-n_days:]]
@@ -435,6 +437,8 @@ def update(n_days=DEFAULT_DAYS, budget=None, verbose=True):
                 else:
                     q = day
                 if budget is not None and spent >= budget:
+                    break
+                if seconds is not None and time.monotonic() - t0 > seconds:
                     break
                 spent += 1
                 try:

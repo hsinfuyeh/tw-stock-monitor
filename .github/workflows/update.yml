@@ -9,6 +9,7 @@ name: 更新資料並發佈
 #           比照舊的排程：證交所還沒發完就安靜略過（綠燈），當天發佈過就不重做。
 #
 # 也可以在 Actions 分頁按 Run workflow（或 gh workflow run），等同按 ⟳（不含社群聲量）。
+# 勾 backfill 是「補歷史」：補上櫃與主動式 ETF 的舊資料（平常的更新只抓新的日子），手動跑。
 on:
   workflow_dispatch:
     inputs:
@@ -22,6 +23,12 @@ on:
         description: "觸發來源（cron = 網頁發現資料過期而自動觸發，比照排程；手動請留 manual）"
         type: string
         default: manual
+      backfill:
+        # 補上櫃（目標 300 個交易日）與主動式 ETF（60 天）的歷史。平常的更新只抓新的日子，
+        # 歷史由這個選項另外補：每次約 40 分鐘，補不完就再跑一次（已經抓過的會跳過）。
+        description: "補歷史（上櫃與主動式 ETF，約 40 分鐘，期間其他更新會排隊）"
+        type: boolean
+        default: false
       social:
         # 網頁按「更新」時，瀏覽器算好的 PTT 聲量（JSON）。由 Cloudflare Worker 的 /update 帶進來，
         # social.apply_payload 檢查後併進 snapshots/social/ptt.json。手動跑請留空。
@@ -96,6 +103,7 @@ jobs:
           THREADS_TOKEN: ${{ secrets.THREADS_TOKEN }}
           TRIGGER: ${{ inputs.trigger || github.event_name }}
           SOCIAL_PAYLOAD: ${{ inputs.social }}
+          BACKFILL: ${{ inputs.backfill }}
         run: python ci_update.py ${{ inputs.ignore_gate && '--ignore-gate' || '' }}
 
       # publish=false 時下面全部跳過（綠燈而不是紅燈）：

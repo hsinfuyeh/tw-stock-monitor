@@ -41,3 +41,8 @@ data/study_panel.pkl
 
 # wrangler 的本機快取與暫存（含帳號名稱、網路位置等，不進版控）
 cloudflare/.wrangler/
+
+# 第 8 輪研究腳本的中間產物（round8/build_feat.py、run_sim.py 會重新產生）
+round8/revenue_load.pkl
+round8/round8_sim.csv
+round8/round8_sim.pkl

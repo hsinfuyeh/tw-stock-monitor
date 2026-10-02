@@ -650,8 +650,9 @@ def backfill(d, risk_for, max_days=10):
 
     網站沒有定時排程（2026-10-01 起），資料只在有人打開網頁或按更新時才更新。
     某個交易日一整天都沒人看，那天的名單就沒被記下來，「名單成績」會少一天 ——
-    而前瞻實測最怕的就是安靜地漏掉日子。所以每次發佈時，把「上一份快照之後、今天之前」
-    缺的交易日補算回來（最多 max_days 天）：
+    而前瞻實測最怕的就是安靜地漏掉日子。所以每次發佈時，把「第一份快照之後、今天之前」
+    缺的交易日補算回來（一次最多 max_days 天，新的先補，剩下的下次再補）。
+    舊版只看最新一份快照之後，夾在兩份快照中間的缺口（9/25、9/26）就永遠補不到：
 
       - 名單用當天的資料重算（特徵的滾動視窗都不含未來，跟當天算的一樣）
       - 處置／注意／全額交割股用 risk_for(日期) 查當天的；處置股的查詢只給「現在」的名單，
@@ -664,9 +665,9 @@ def backfill(d, risk_for, max_days=10):
     snaps = load_snaps()
     if not snaps:
         return []
-    last = max(snaps)
+    first = min(snaps)
     cal = sorted({str(x)[:10] for x in d["date"].unique()})
-    missing = [x for x in cal[:-1] if x > last][-max_days:]      # 最新一天由 compute 照常寫
+    missing = [x for x in cal[:-1] if x > first and x not in snaps][-max_days:]   # 最新一天由 compute 照常寫
     SNAP.mkdir(parents=True, exist_ok=True)
     import shortterm
     for ds in missing:
