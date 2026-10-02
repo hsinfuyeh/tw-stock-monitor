@@ -312,15 +312,19 @@
 
   /* ---------- 精簡版面：說明文字收進 ⓘ ----------
    * 各頁的說明、警示、備註原本整段攤在畫面上，太佔篇幅。這裡在渲染後統一處理：
-   *   .lead（卡片開頭的說明）      整段收進標題旁的 ⓘ
-   *   .statusbar / .note / 檢查項   只留第一句（重點或數字），其餘收進 ⓘ
+   *   .lead（卡片開頭的說明）      收進標題旁的 ⓘ
+   *   .statusbar / .note / 檢查項   第一句（重點或數字）留著，其餘收進 ⓘ
    *   .tiphint（「虛線底線可以查」） 拿掉 —— 虛線本身就是提示
+   * <b>但書一律留在畫面上</b>：含「但」「不代表有效」「不是買賣建議」「運氣」「未驗證」「風險」這類字的句子
+   * 不收。舊版只留第一句，結果「通過淘汰關卡」看得到、後面那句「不代表有效」被收起來；
+   * 個股頁「十字線 +14.39%，略高於成本」看得到、「只出現 7 次，很可能是運氣」看不到 —— 只看畫面會被誤導。
+   * 收進去的只有「怎麼算的」這類方法說明。
    * 不動的：含按鈕／連結／輸入框的區塊（浮層滑鼠一離開就關，裡面的東西點不到）、
    * 有 id 的區塊（程式會回頭寫入）、標了 .keep 的，以及本來就很短的。
-   * 警示的第一句一定留在畫面上：「未驗證」「觸發緊急停止」這種字不能只藏在浮層裡。
    * 用 DOM 切句而不是改各頁的文字 —— 各頁字串有一大半是 Python 端產的，
    * 兩邊各改一份遲早會不一致。 */
-  var CUT_MIN = 10;     // 剩下的字少於這個就不收，收起來反而多一步
+  var CUT_MIN = 10;     // 收起來的字少於這個就不收，收起來反而多一步
+  var CAVEAT = /但|不過|然而|不代表(有效|會漲|有用)|不是(買|建議|預測|保證)|買賣建議|買進建議|運氣|不大|還沒|判不出|未驗證|僅供參考|風險|賺不回/;
   function infoIcon(html) {
     var s = document.createElement('span');
     s.className = 'tip infoi';
@@ -343,53 +347,56 @@
     });
     return c.innerHTML.replace(/^[\s　]+/, '');
   }
-  /* 在第一個句號後切開：回傳 [前半的節點們, 後半的 HTML]；切不開回傳 null。
-     只在最上層切：句號在 <b>…。</b> 裡面時，整個 <b> 算前半。 */
-  function splitFirst(el) {
-    var nodes = [].slice.call(el.childNodes);
-    for (var i = 0; i < nodes.length; i++) {
-      var n = nodes[i];
-      if (n.nodeType === 3) {
-        var k = n.nodeValue.search(/[。！？]/);
-        if (k >= 0 && k < n.nodeValue.length - 1) {
-          var rest = n.nodeValue.slice(k + 1);
-          n.nodeValue = n.nodeValue.slice(0, k + 1);
-          var tail = document.createElement('span');
-          tail.appendChild(document.createTextNode(rest));
-          for (var j = i + 1; j < nodes.length; j++) tail.appendChild(nodes[j]);
-          return tail;
-        }
-        if (k === n.nodeValue.length - 1 && i < nodes.length - 1) {
-          var t2 = document.createElement('span');
-          for (var j2 = i + 1; j2 < nodes.length; j2++) t2.appendChild(nodes[j2]);
-          return t2;
-        }
-      } else if (n.nodeType === 1 && n.tagName !== 'BR' &&
-                 /[。！？]\s*$/.test(n.textContent) && i < nodes.length - 1) {
-        var t3 = document.createElement('span');
-        for (var j3 = i + 1; j3 < nodes.length; j3++) t3.appendChild(nodes[j3]);
-        return t3;
-      } else if (n.nodeType === 1 && n.tagName === 'BR' && i > 0) {
-        var t4 = document.createElement('span');
-        for (var j4 = i + 1; j4 < nodes.length; j4++) t4.appendChild(nodes[j4]);
-        el.removeChild(n);
-        return t4;
+  /* 把一個元素的內容切成句子：回傳 [[節點…], …]。只在最上層的文字切（句號在 <b>…。</b>
+     裡面時，整個 <b> 算同一句）；<br> 也算斷句（本身丟掉）。會把元素清空，呼叫端負責放回去。 */
+  function sentences(el) {
+    var out = [], cur = [];
+    function end() { if (cur.length) out.push(cur); cur = []; }
+    [].slice.call(el.childNodes).forEach(function (n) {
+      el.removeChild(n);
+      if (n.nodeType === 1 && n.tagName === 'BR') return end();
+      if (n.nodeType !== 3) {
+        cur.push(n);
+        if (/[。！？]\s*$/.test(n.textContent)) end();
+        return;
       }
-    }
-    return null;
+      var t = n.nodeValue, k;
+      while ((k = t.search(/[。！？]/)) >= 0) {
+        cur.push(document.createTextNode(t.slice(0, k + 1)));
+        end();
+        t = t.slice(k + 1);
+      }
+      if (t) cur.push(document.createTextNode(t));
+    });
+    end();
+    return out;
+  }
+  function textOf(part) {
+    return part.map(function (n) { return n.textContent; }).join('');
+  }
+  function put(el, parts) {
+    parts.forEach(function (p) { p.forEach(function (n) { el.appendChild(n); }); });
+  }
+  /* 分成「留在畫面上」與「收進 ⓘ」：但書一定留；first=true 時第一句也留 */
+  function sortOut(parts, first) {
+    var keep = [], hide = [];
+    parts.forEach(function (p, i) {
+      ((first && i === 0) || CAVEAT.test(textOf(p)) ? keep : hide).push(p);
+    });
+    var span = document.createElement('span');
+    put(span, hide);
+    var short = span.textContent.replace(/^[\s　]+|[\s　]+$/g, '').length < CUT_MIN;
+    return { keep: keep, hide: hide, span: span, short: short };
   }
   function trimTo(el) {
     if (el.getAttribute('data-compact') || el.id || el.classList.contains('keep') ||
         interactive(el)) return;
     el.setAttribute('data-compact', '1');
-    var tail = splitFirst(el);
-    if (!tail) return;
-    var rest = tail.textContent.replace(/^[\s　]+|[\s　]+$/g, '');
-    if (rest.length < CUT_MIN) {           // 太短：放回去
-      while (tail.firstChild) el.appendChild(tail.firstChild);
-      return;
-    }
-    el.appendChild(infoIcon(tipHTML(tail)));
+    var parts = sentences(el);
+    var r = sortOut(parts, true);
+    if (r.short) return put(el, parts);       // 收起來的太少：照原樣放回去
+    put(el, r.keep);
+    el.appendChild(infoIcon(tipHTML(r.span)));
   }
   function compact(root) {
     root = root || document;
@@ -399,9 +406,13 @@
       if (p.id || interactive(p)) return;
       var card = p.closest('.card');
       var h = card && card.querySelector('h2');
-      if (!h) return trimTo(p);
-      h.appendChild(infoIcon(tipHTML(p)));
-      p.remove();
+      if (!h) { p.removeAttribute('data-compact'); return trimTo(p); }
+      var parts = sentences(p);
+      var r = sortOut(parts, false);
+      if (r.short) return put(p, parts);
+      h.appendChild(infoIcon(tipHTML(r.span)));
+      if (r.keep.length) put(p, r.keep);        // 但書（例如「名單不是買賣建議」）留在標題下
+      else p.remove();
     });
     root.querySelectorAll('.statusbar .txt, .note, .chk .s, .stale .in > span, ' +
                           '.card > p:not([class])').forEach(trimTo);
