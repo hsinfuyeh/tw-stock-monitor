@@ -46,6 +46,14 @@ import stock_report
 import webui
 from config import COST_ROUND_TRIP
 
+# 網頁上的「產出時間」用台灣時間。CI 的主機是 UTC，直接 now() 會差 8 小時（凌晨 01:32 顯示成 17:32）。
+# 不帶時區字尾：網頁直接把它當文字顯示，也拿來當快取的版本參數。
+TW = dt.timezone(dt.timedelta(hours=8))
+
+
+def now_tw():
+    return dt.datetime.now(TW).replace(tzinfo=None).isoformat(timespec="seconds")
+
 ROOT = Path(__file__).parent
 SITE = ROOT / "site"
 DATA = SITE / "data"
@@ -115,7 +123,7 @@ def emit_meta(p, day_date):
     return dict(
         data_date=str(day_date)[:10],
         holidays=_holidays(),
-        built_at=dt.datetime.now().isoformat(timespec="seconds"),
+        built_at=now_tw(),
         cost_round_trip=COST_ROUND_TRIP,
         evidence_labels=funnel.EV_LABEL,
         layers=[dict(key=k, name=n, rule=r, evidence=e, detail=d)
@@ -700,7 +708,7 @@ def social_only(out=SITE):
     import social
     write(data / "social_rules.json", social.rules())
     # 產出時間要換：前端用它當版本參數，不換的話瀏覽器會繼續拿快取裡的舊社群榜
-    meta["built_at"] = dt.datetime.now().isoformat(timespec="seconds")
+    meta["built_at"] = now_tw()
     write(data / "meta.json", meta)
     print("快速通道：只更新社群聲量（資料日期 {}，{}）  耗時 {:.0f} 秒".format(
         day_date, "、".join("{} {} 筆".format(k, len(v["rows"])) for k, v in sc.items()),

@@ -229,6 +229,19 @@ def test_revenue():
     check("倉儲最後一天之後的交易日全部要補（不只最近 20 天）",
           ci_update.days_to_fetch(cal, "20260105") == cal[5:])
     check("倉儲已是最新 -> 沒有要補的", ci_update.days_to_fetch(cal, cal[-1]) == [])
+    # 中間某一天沒抓齊：只寫到那天之前，後面齊了的也先不寫（舊版照寫，usable_last_date 跳過缺的那天，它就永遠不會再補）
+    have = {("t86", "20260102")}                                   # 1/2 的三大法人沒拿到
+    ok = lambda ds, d: (ds, d) not in have
+    r, m = ci_update.ready_prefix(["20260101", "20260102", "20260105"], ok)
+    check("中間缺一天：只寫缺的那天之前", r == ["20260101"], str(r))
+    check("缺的那天記原因、後面齊了的標「等前面」", m == {"20260102": ["t86"], "20260105": []}, str(m))
+    r, m = ci_update.ready_prefix(["20260101", "20260105"], ok)
+    check("都齊 -> 全寫", r == ["20260101", "20260105"] and m == {})
+    # 倉儲裡的洞：最近幾十天每張核心表都要每天都有
+    want = ["20260101", "20260102", "20260105"]
+    tbl = {"quotes": set(want), "inst": {"20260101", "20260105"}, "valuation": set(want)}
+    check("找得到某張表缺的那一天", ci_update.holes_in(want, tbl) == ["20260102"])
+    check("都有 -> 沒有洞", ci_update.holes_in(want, {k: set(want) for k in tbl}) == [])
 
     rv = revenue.load()
     if not len(rv):

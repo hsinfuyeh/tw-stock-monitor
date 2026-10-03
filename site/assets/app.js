@@ -694,23 +694,32 @@
     return run && run.url ? '<a class="updbtn" href="' + esc(run.url) + '" target="_blank" rel="noopener">看進度</a>' : '';
   }
 
-  /* 問 Worker 目前的進度。since：這次觸發的時間，比它舊的執行不是我們這一次。 */
-  function watchCloud(since, note) {
+  /* 問 Worker 目前的進度。since：這次觸發的時間，比它舊的執行不是我們這一次。
+     was：按下去時網站的產出時間（meta.built_at），跑完拿來確認網站真的換了。 */
+  function watchCloud(since, note, was) {
     fetch(WORKER + '/status', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
       var run = j && j.run;
       if (!run || new Date(run.created_at) < since) {
-        return setTimeout(function () { watchCloud(since, note); }, 5000);
+        return setTimeout(function () { watchCloud(since, note, was); }, 5000);
       }
       if (run.status !== 'completed') {
         msgbar('<span class="spin"></span><b>正在更新資料…</b>' +
           '<span>大約 5–8 分鐘。可以關掉頁面，更新完再回來。' + (note || '') + '</span>' + runLink(run), 'busy');
-        return setTimeout(function () { watchCloud(since, note); }, 10000);
+        return setTimeout(function () { watchCloud(since, note, was); }, 10000);
       }
       if (run.conclusion === 'success') {
-        msgbar('<b>更新完成</b><span>重新載入頁面看最新資料。' + (note || '') + '</span>' +
-          '<button class="updbtn" id="reloadbtn" type="button">重新載入</button>', 'ok');
-        var rb = document.getElementById('reloadbtn');
-        if (rb) rb.addEventListener('click', hardReload);
+        // 跑成功不代表網站變了（例如這次被略過）：跟自動更新一樣，看 meta 的產出時間有沒有換
+        return fetch(DATA + 'meta.json', { cache: 'no-cache' }).then(function (r) { return r.json(); }).then(function (m) {
+          if (was && m.built_at === was) {
+            msgbar('<b>這次沒有發佈新版</b><span>證交所的資料可能還沒發布完，晚一點再按一次。' + (note || '') + '</span>' +
+              runLink(run), '');
+            return;
+          }
+          msgbar('<b>更新完成</b><span>重新載入頁面看最新資料。' + (note || '') + '</span>' +
+            '<button class="updbtn" id="reloadbtn" type="button">重新載入</button>', 'ok');
+          var rb = document.getElementById('reloadbtn');
+          if (rb) rb.addEventListener('click', hardReload);
+        });
       } else {
         msgbar('<b>更新沒有成功（' + esc(run.conclusion || '') + '）</b>' +
           '<span>多半是證交所當天的資料還沒發完，晚點再按一次即可。</span>' +
@@ -718,7 +727,7 @@
           'bad');
       }
     }).catch(function () {
-      setTimeout(function () { watchCloud(since, note); }, 10000);
+      setTimeout(function () { watchCloud(since, note, was); }, 10000);
     });
   }
 
@@ -731,7 +740,9 @@
     }
     if (updating) return;
     updating = true;
-    var note = '';
+    var note = '', was = null;
+    fetch(DATA + 'meta.json', { cache: 'no-cache' }).then(function (r) { return r.json(); })
+      .then(function (m) { was = m.built_at; }).catch(function () {});
     msgbar('<span class="spin"></span><b>讀取社群聲量…</b><span>準備中</span>', 'busy');
     loadScript('assets/social.js').then(function () {
       return window.Social.collect(WORKER, DATA + 'social_rules.json', function (txt) {
@@ -756,11 +767,11 @@
       }).then(function (r) { return r.json(); });
     }).then(function (j) {
       updating = false;
-      if (j.state === 'started') return watchCloud(new Date(Date.parse(j.since) - 60000), note);
+      if (j.state === 'started') return watchCloud(new Date(Date.parse(j.since) - 60000), note, was);
       if (j.state === 'busy') {
         // 已經有一次更新在跑（排程或別的裝置按的）：接著看它的進度
         return watchCloud(new Date(Date.parse(j.run.created_at) - 1000),
-          '（已經有一次更新在進行，這次沒有另外觸發）');
+          '（已經有一次更新在進行，這次沒有另外觸發）', was);
       }
       if (j.state === 'cooldown') {
         return msgbar('<b>剛剛才更新過</b><span>兩次更新至少隔 5 分鐘，請在 ' +
