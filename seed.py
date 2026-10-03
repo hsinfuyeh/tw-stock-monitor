@@ -31,9 +31,19 @@
     跑 python seed.py --if-older 7，種子超過 7 天就用 CI 手上的倉儲重新上傳（約 1–2 分鐘），
     一週最多一次。本機跑也可以，效果一樣。
 
+主動式 ETF 持股另外備份 ——
+
+    群益、國泰只能抓當天的持股、無法回補，raw/active_etf/ 是唯一來源。種子一週才更新一次，
+    快取被清掉（7 天沒人打開網站）時會掉最多一週的持股快照，而且補不回來。
+    所以每次有寫進新資料的更新都跑 python seed.py --etf，把 raw/active_etf/（約 2 MB）
+    另外存成同一個 Release 的 active_etf.tar.gz；冷啟動時解完種子再解這一份（比種子新）。
+    上傳前先看 Release 上那一份有幾個檔：這次的比較少就不蓋（冷啟動沒還原成功時，
+    手上的是種子裡的舊版，蓋上去等於把新的備份換成舊的）。
+
 跑法：
     python seed.py                上傳／更新種子
     python seed.py --if-older 7   種子超過 7 天才更新（CI 用）
+    python seed.py --etf          只備份主動式 ETF 持股（CI 每次有新資料時用）
     python seed.py --check        只看現在的狀態，不動任何東西
 """
 import datetime as dt
@@ -47,6 +57,7 @@ from config import DB, RAW
 
 TAG = "warehouse-seed"
 ASSET = "seed.tar.gz"
+ETF_ASSET = "active_etf.tar.gz"
 ROOT = Path(__file__).resolve().parent
 
 
@@ -71,6 +82,38 @@ def seed_age_days():
         return None
     t = dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))
     return (dt.datetime.now(dt.timezone.utc) - t).total_seconds() / 86400
+
+
+def etf_backup():
+    """把 raw/active_etf/ 備份成 Release 上的 active_etf.tar.gz（見檔頭）。失敗只印訊息、回 False。"""
+    act = RAW / "active_etf"
+    files = [p for p in act.rglob("*") if p.is_file()] if act.exists() else []
+    if not files:
+        print("沒有 raw/active_etf/，不備份。")
+        return False
+    with tempfile.TemporaryDirectory() as tmp:
+        old = Path(tmp) / "old"
+        old.mkdir()
+        r = sh("gh", "release", "download", TAG, "--pattern", ETF_ASSET, "--dir", str(old))
+        if r.returncode == 0:
+            with tarfile.open(old / ETF_ASSET) as t:
+                n_old = sum(1 for m in t.getmembers() if m.isfile())
+            if len(files) < n_old:
+                print("::warning::手上的主動式 ETF 持股（{} 個檔）比 Release 上的備份（{} 個）少，不蓋掉備份。"
+                      .format(len(files), n_old))
+                return False
+        else:
+            n_old = 0
+        tar = Path(tmp) / ETF_ASSET
+        with tarfile.open(tar, "w:gz") as t:
+            t.add(str(act), arcname="raw/active_etf")
+        r = sh("gh", "release", "upload", TAG, str(tar), "--clobber")
+        if r.returncode:
+            print("::warning::主動式 ETF 持股備份上傳失敗：" + r.stderr.strip()[:200])
+            return False
+        print("主動式 ETF 持股備份：{} 個檔（原本 {} 個），{:.1f} MB".format(
+            len(files), n_old, tar.stat().st_size / 1e6))
+        return True
 
 
 def main(check_only=False, if_older=None):
@@ -139,5 +182,8 @@ def main(check_only=False, if_older=None):
 
 if __name__ == "__main__":
     a = sys.argv
+    if "--etf" in a:
+        etf_backup()          # 失敗只印警告，不讓 workflow 變紅燈
+        sys.exit(0)
     main(check_only="--check" in a,
          if_older=float(a[a.index("--if-older") + 1]) if "--if-older" in a else None)

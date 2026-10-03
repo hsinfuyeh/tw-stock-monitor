@@ -88,6 +88,13 @@ jobs:
           if gh release download warehouse-seed --pattern 'seed.tar.gz' --dir . --clobber 2>/dev/null; then
             tar xzf seed.tar.gz && rm seed.tar.gz
             echo "已從 Release 取得種子（倉儲 + 月營收）"
+            # 主動式 ETF 持股的備份比種子新（每次有新資料就更新，見 seed.py --etf），解在種子之後蓋過去
+            if gh release download warehouse-seed --pattern 'active_etf.tar.gz' --dir . --clobber 2>/dev/null; then
+              tar xzf active_etf.tar.gz && rm active_etf.tar.gz
+              echo "主動式 ETF 持股：還原 $(find raw/active_etf -type f | wc -l) 個檔（比種子新的備份）"
+            else
+              echo "::warning::沒有主動式 ETF 持股的備份，只有種子裡的（最多晚一週，群益、國泰那幾天補不回來）"
+            fi
             ls -lh data/
             echo "月營收 $(ls raw/revenue_mops 2>/dev/null | wc -l) 個月（沒有的話 ci_update 會自己補）"
           else
@@ -183,6 +190,15 @@ jobs:
             data
             raw
           key: warehouse2008-${{ github.run_id }}
+
+      # 主動式 ETF 持股（約 2 MB）每次有新資料就另外備份：群益、國泰只能抓當天，
+      # 種子一週才更新一次，快取被清掉時最多會掉一週、而且補不回來。失敗不影響這次更新。
+      - name: 備份主動式 ETF 持股
+        if: success() && steps.fetch.outputs.changed == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python seed.py --etf
 
       # 種子（Release 上的倉儲備份）每週更新一次。快取 7 天沒用會被 GitHub 清掉，那時候只能從種子
       # 冷啟動，再從種子的最後一天一路補到今天 —— 種子越舊，那一次就越久。
