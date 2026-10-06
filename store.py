@@ -10,6 +10,9 @@ import ingest, parse
 from config import DB, DATASETS
 
 TABLES = dict(mi_index="quotes", t86="inst", bwibbu="valuation", margin="margin")
+# 從同一份原始檔衍生的表：表名 -> (來源資料集, 解析函式)。不另外抓，跟著來源一起寫。
+# market_index：MI_INDEX 裡的加權指數與各類股指數（大盤頁、產業輪動用；2009-01-05 起）。
+DERIVED = dict(market_index=("mi_index", parse.parse_index))
 
 
 def build(datasets=None, verbose=True):
@@ -54,6 +57,23 @@ def build(datasets=None, verbose=True):
         if verbose:
             print(f"  {ds} -> {tbl}: {len(df):,} 列, {df.date.nunique()} 天, "
                   f"缺 {miss} 天, {time.time()-t0:.0f}s", flush=True)
+    for tbl, (src, fn) in DERIVED.items():
+        if src not in datasets:
+            continue
+        rows = []
+        for d in days:
+            j = ingest.load_raw(src, d)
+            if j is not None:
+                rows.extend(fn(j, f"{d[:4]}-{d[4:6]}-{d[6:]}"))
+        if rows:
+            df = pd.DataFrame(rows)
+            df["date"] = pd.to_datetime(df["date"])
+            con.execute(f"DROP TABLE IF EXISTS {tbl}")
+            con.register("_tmp", df)
+            con.execute(f"CREATE TABLE {tbl} AS SELECT * FROM _tmp")
+            con.unregister("_tmp")
+            if verbose:
+                print(f"  {src} -> {tbl}: {len(df):,} 列, {df.date.nunique()} 天", flush=True)
     # 刻意不建索引。實測這四個 (date, code) 索引佔掉 407 MB —— 整個檔案的 74% ——
     # 而且沒有任何好處：全表掃描 1.53s（有索引時反而是 1.98s），單檔查詢
     # 0.093s vs 0.083s 在誤差內。
@@ -65,7 +85,7 @@ def build(datasets=None, verbose=True):
     # 就會安靜地被丟掉 —— 個股頁的除權息檢查項會整個消失，而且只有在
     # 有人打開個股頁時才會發現。
     if full and DB.exists():
-        keep = set(TABLES.values())
+        keep = set(TABLES.values()) | set(DERIVED)
         old = duckdb.connect(str(DB), read_only=True)
         try:
             others = [r[0] for r in old.execute("SHOW TABLES").fetchall()
@@ -151,10 +171,62 @@ def append(days, verbose=True, datasets=None):
             total += len(rows)
             if verbose:
                 print(f"  {ds} -> {tbl}: 寫入 {len(rows):,} 列", flush=True)
+        for tbl, (src, fn) in DERIVED.items():
+            if datasets and src not in datasets:
+                continue
+            rows = []
+            for d in days:
+                j = ingest.load_raw(src, d)
+                if j is not None:
+                    rows.extend(fn(j, f"{d[:4]}-{d[4:6]}-{d[6:]}"))
+            write_derived(con, tbl, days, rows)
+            if verbose:
+                print(f"  {src} -> {tbl}: 寫入 {len(rows):,} 列", flush=True)
         con.execute("CHECKPOINT")
     finally:
         con.close()
     return total
+
+
+def write_derived(con, tbl, days, rows):
+    """衍生表的增量寫入：先刪這幾天、再插入（重跑冪等）；表還不存在就建（舊倉儲第一次遇到）。"""
+    exists = con.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?",
+                         [tbl]).fetchone()[0]
+    if exists:
+        isos = ", ".join("DATE '{}-{}-{}'".format(d[:4], d[4:6], d[6:]) for d in days)
+        con.execute(f"DELETE FROM {tbl} WHERE date IN ({isos})")
+    if not rows:
+        return
+    df = pd.DataFrame(rows)
+    df["date"] = pd.to_datetime(df["date"])
+    con.register("_tmp", df)
+    if exists:
+        cols = [r[0] for r in con.execute(f"DESCRIBE {tbl}").fetchall()]
+        con.execute(f"INSERT INTO {tbl} SELECT {', '.join(cols)} FROM _tmp")
+    else:
+        con.execute(f"CREATE TABLE {tbl} AS SELECT * FROM _tmp")
+    con.unregister("_tmp")
+
+
+def backfill_derived(verbose=True):
+    """既有倉儲補上衍生表的全部歷史（只在本機、原始檔齊全的地方跑；CI 沒有歷史原始檔）。"""
+    days = ingest.trading_calendar()
+    con = duckdb.connect(str(DB))
+    try:
+        for tbl, (src, fn) in DERIVED.items():
+            rows = []
+            for d in days:
+                j = ingest.load_raw(src, d)
+                if j is not None:
+                    rows.extend(fn(j, f"{d[:4]}-{d[4:6]}-{d[6:]}"))
+            con.execute(f"DROP TABLE IF EXISTS {tbl}")
+            write_derived(con, tbl, days, rows)
+            if verbose:
+                n = con.execute(f"SELECT COUNT(*), COUNT(DISTINCT date), MIN(date), MAX(date) FROM {tbl}").fetchone()
+                print(f"  {tbl}: {n[0]:,} 列、{n[1]} 天（{n[2]} ~ {n[3]}）", flush=True)
+        con.execute("CHECKPOINT")
+    finally:
+        con.close()
 
 
 def q(sql, params=None):

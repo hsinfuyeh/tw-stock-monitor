@@ -55,6 +55,21 @@ def test_parse():
           all(parse.classify(c, "")[0] == "etf"
               for c in ("0050", "0056", "00878", "006208", "00400A")))
 
+    # 大盤指數（MI_INDEX 裡「指數」開頭的表）：正負號在另一欄，跟個股一樣要另外讀
+    j = {"tables": [
+        {"title": "價格指數(臺灣證券交易所)", "fields": ["指數", "收盤指數", "漲跌(+/-)", "漲跌點數", "漲跌百分比(%)", "特殊處理註記"],
+         "data": [["發行量加權股價指數", "9,625.69", "<p style ='color:green'>-</p>", "75.38", "-0.78", ""],
+                  ["電子類指數", "500.00", "<p style ='color:red'>+</p>", "5.00", "1.01", ""],
+                  ["某停算指數", "--", "", "", "", ""]]},
+        {"title": "x", "fields": ["證券代號", "證券名稱"], "data": [["2330", "台積電"]]}]}
+    ix = parse.parse_index(j, "2015-06-01")
+    taiex = [r for r in ix if r["name"] == "發行量加權股價指數"]
+    check("加權指數：收盤、跌點帶負號", taiex and taiex[0]["close"] == 9625.69 and taiex[0]["change"] == -75.38,
+          str(taiex))
+    check("指數：漲的帶正號、沒有收盤值的跳過、不混進個股表",
+          len(ix) == 2 and [r for r in ix if r["name"] == "電子類指數"][0]["change"] == 5.0)
+    check("指數：沒有指數表 -> 空的（2008 年的原始檔就是這樣）", parse.parse_index({"tables": [{}]}, "2008-01-02") == [])
+
 
 def test_aux_datasets():
     """t86 / bwibbu / margin 的解析器。

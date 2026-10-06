@@ -133,6 +133,30 @@ def parse_mi_index(j, date):
     return out
 
 
+# ---------------------------------------------------------------- 大盤指數
+def parse_index(j, date):
+    """MI_INDEX 裡的價格指數表（加權指數、各類股指數…）-> list of dict。
+
+    跟個股同一個原始檔，不另外抓。所有「第一欄是『指數』」的表都收（證交所、跨市場、指數公司），
+    之後的大盤頁、產業輪動都從這裡拿。正負號跟個股一樣放在另一欄的 HTML 裡。
+    2008 年的原始檔沒有這些表（實測 2009-01-05 起才有），回傳空的。"""
+    out = []
+    for t in (j or {}).get("tables") or []:
+        f = t.get("fields") or []
+        if not f or f[0].strip() != "指數":
+            continue
+        ix = _by_name(f)
+        for r in t.get("data") or []:
+            close = num(r[ix["收盤指數"]]) if "收盤指數" in ix else None
+            if close is None or close <= 0:
+                continue
+            sign, _ = parse_sign(r[ix["漲跌(+/-)"]]) if "漲跌(+/-)" in ix else (0, False)
+            pts = num(r[ix["漲跌點數"]]) if "漲跌點數" in ix else None
+            out.append(dict(date=date, name=r[ix["指數"]].strip(), close=close,
+                            change=(pts * sign) if pts is not None else None))
+    return out
+
+
 # ---------------------------------------------------------------- T86 法人
 def parse_t86(j, date):
     if not j or j.get("stat") != "OK": return []
