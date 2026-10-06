@@ -55,6 +55,51 @@ function bfTag(h) {
   return h.backfilled ? ' <span class="nbadge run">' + App.tip('補算') + '</span>' : '';
 }
 
+/* 影子名單（shadow.py）：新的排除條件跟名單並行測試，不取代名單、不動名單的實測。
+   沒有登記任何影子名單時整區不出現。 */
+function pairRow(name, x) {
+  if (!x) return '';
+  return '<tr><td style="text-align:left">' + name + '</td><td>' + x.days + '</td>' +
+    '<td class="mut">' + pp(x.hit0) + '／' + pp(x.fail0) + '</td><td>' + pp(x.hit1) + '／' + pp(x.fail1) + '</td>' +
+    '<td class="mut">' + x.changed_days + '</td><td class="sorted">' + pt(x.diff) + '</td>' +
+    '<td>' + (x.t == null ? '—' : App.num(x.t, 2)) + '</td></tr>';
+}
+function shadowCard(v) {
+  var bt = v.backtest, f = v.vs_main || {}, T = v.track || {};
+  var since = v.demo ? '（示範版從名單的第一天起在本機算，不存檔）' : '登記日 ' + App.esc(v.registered);
+  var btHtml = !bt ? '<p class="note">這個條件的資料沒有歷史，只能看上線後的成績。</p>' :
+    '<h3 style="font-size:16px;margin:16px 0 6px">回測：同一天配對比較</h3>' +
+    '<div class="scroll"><table><thead><tr><th style="text-align:left">期間</th><th>天數</th><th>原名單 中／倒</th>' +
+    '<th>影子名單 中／倒</th><th>名單有變的天數</th><th class="sorted">影子多出的' + App.tip('中減倒') + '</th><th>' + App.tip('t 值') + '</th></tr></thead><tbody>' +
+    pairRow('2008–2025 合計', bt.all) +
+    [['2008–2018', '2008–2018'], ['2019–2025', '2019–2025'], ['2026', '2026']].map(function (k) { return pairRow(k[0], bt.periods[k[1]]); }).join('') +
+    '</tbody></table></div>' +
+    '<p class="note" style="font-size:13px">每一天用同一個穩定池，原名單跟影子名單各挑 10 檔，比兩邊的（中 − 倒）。' +
+    '大盤好壞兩邊一起受，互相抵銷。兩段期間都大於 0、合計 t 值 ≥ 3 才算通過回測。但通過也不代表有效，只代表跟歷史不矛盾，真正的成績看下面的前瞻。</p>';
+  var fw = '<h3 style="font-size:16px;margin:16px 0 6px">前瞻：上線後每天對答案</h3>' +
+    '<div class="stats"><div class="stat"><h3>影子名單</h3><div class="sub">' + since + '</div><dl>' +
+    '<dt>已對完的天數</dt><dd>' + (T.finished || 0) + ' / ' + (T.days || 0) + '</dd>' +
+    '<dt>中</dt><dd>' + pp(T.hit) + '</dd><dt>倒</dt><dd>' + pp(T.fail) + '</dd></dl></div>' +
+    '<div class="stat"><h3>跟原名單比</h3><div class="sub">兩份都對完答案的日子</div><dl>' +
+    '<dt>天數</dt><dd>' + (f.days || 0) + '</dd><dt>影子多出的中減倒</dt><dd>' + pt(f.diff) + '</dd>' +
+    '<dt>t 值</dt><dd>' + (f.t == null ? '還太少' : App.num(f.t, 2)) + '</dd></dl></div></div>';
+  var today = (v.today || []).map(function (r) {
+    return '<a href="stock?c=' + r.code + '">' + r.code + ' ' + App.esc(r.name) + '</a>';
+  }).join('、');
+  return '<div class="card"><h2>影子名單：' + App.esc(v.name) + (v.demo ? ' <span class="nbadge run">示範</span>' : '') + '</h2>' +
+    '<p class="lead">' + App.esc(v.desc) + '名單規則（排序、10 檔、同產業最多 3 檔）跟原名單一樣，差別只有多刷掉的股票。' +
+    '原名單和它的成績完全不受影響。</p>' + btHtml + fw +
+    (today ? '<p style="font-size:13.5px;margin-top:12px"><b>今天的影子名單：</b>' + today + '</p>' : '') + '</div>';
+}
+function renderShadow(S) {
+  var vs = (S && S.variants) || [];
+  if (!vs.length) return;
+  var box = document.createElement('div');
+  box.innerHTML = '<h2 style="font-size:22px;font-weight:500;margin:34px 0 4px">影子名單</h2>' +
+    '<div class="meta">新的排除條件跟名單並行測試，不取代名單</div>' + vs.map(shadowCard).join('');
+  document.getElementById('app').appendChild(box);
+}
+
 App.boot('history', function (meta) {
   return App.get('stable/track.json').then(function (K) {
     var S = K.summary, D = K.days;
@@ -107,6 +152,8 @@ App.boot('history', function (meta) {
       show(0);
     }
     App.pager(document.getElementById('app'));
+    // 影子名單：檔案不存在（舊版網站）或沒有登記任何影子名單就什麼都不顯示
+    return App.get('stable/shadow.json').then(renderShadow, function () {});
   });
 });
 </script>

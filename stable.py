@@ -572,11 +572,14 @@ def _risk_codes(risk):
     return flags
 
 
-def today_list(d, date=None, risk=None, cfg=CFG):
-    """某一天的名單（含上線才有的處置／注意／全額交割排除）。"""
+def today_list(d, date=None, risk=None, cfg=CFG, extra=None):
+    """某一天的名單（含上線才有的處置／注意／全額交割排除）。
+    extra：影子名單的額外排除條件（shadow.py），函式吃當天的列、回傳布林（True = 刷掉）。"""
     date = pd.Timestamp(date or d["date"].max())
     day = d[d["date"] == date]
     pool = pool_mask(day, cfg)
+    if extra is not None:
+        pool &= ~extra(day).reindex(day.index).fillna(False).astype(bool)
     flags = _risk_codes(risk)
     flagged = day["code"].astype(str).map(lambda c: c in flags)
     pool_live = pool & ~flagged
@@ -632,10 +635,11 @@ def streaks(lists, today_codes, today):
 
 
 # --------------------------------------------------------------------- 前瞻實測（名單成績）
-def load_snaps():
+def load_snaps(snap_dir=None):
+    snap_dir = snap_dir or SNAP
     out = {}
-    if SNAP.exists():
-        for f in SNAP.glob("*.json"):
+    if snap_dir.exists():
+        for f in snap_dir.glob("*.json"):
             out[f.stem] = json.loads(f.read_text(encoding="utf-8"))
     return out
 

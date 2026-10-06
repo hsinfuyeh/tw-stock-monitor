@@ -205,8 +205,63 @@ def test_backfill(check):
                 os.environ[k] = v
 
 
+def test_shadow(check):
+    """影子名單（shadow.py）：新條件並行測試，不動原名單。"""
+    print("\n影子名單")
+    import json, os, tempfile
+    from pathlib import Path
+    import shadow, stable
+
+    # 前瞻配對：兩份都對完答案的日子才比，影子的（中 − 倒）減原名單的
+    main = [{"date": "2026-01-02", "diff": 1.0, "hit": 3, "fail": 2, "done": 10},
+            {"date": "2026-01-05", "diff": None, "hit": 1, "fail": 0, "done": 4}]
+    sh = [{"date": "2026-01-02", "diff": 2.0, "hit": 4, "fail": 1, "done": 9},
+          {"date": "2026-01-05", "diff": None, "hit": 2, "fail": 0, "done": 4}]
+    r = shadow.pair_forward(main, sh)
+    check("前瞻配對：只比兩份都對完的那天", r["days"] == 1, str(r))
+    check("前瞻配對：差 = 影子 (4−1)/9 − 原 (3−2)/10", abs(r["diff"] - round(((4 - 1) / 9 - (3 - 2) / 10) * 100, 1)) < 1e-9, str(r))
+
+    # 快照：從登記日起算，之前不補；登記日之後缺的補算；今天的照常
+    days = ["2026-01-01", "2026-01-02", "2026-01-05", "2026-01-06", "2026-01-07"]
+    d = pd.DataFrame({"date": pd.to_datetime(days)})
+    saved = (shadow.SHADOW, stable.today_list, os.environ.get("SHADOW_DEMO"))
+    tmp = Path(tempfile.mkdtemp())
+    shadow.SHADOW = tmp
+    asked = []
+    stable.today_list = lambda d_, ds, risk, extra=None: (asked.append((ds, extra is not None)) or
+                                                         [{"rank": 1, "code": "2330", "name": "台積電", "ind": "半導體",
+                                                           "score": 90.0, "close": 1.0, "why": ["x"]}], {})
+    try:
+        v = dict(key="t1", name="測試", desc="", registered="2026-01-05", history_from=None,
+                 mask=lambda x: pd.Series(False, index=x.index))
+        (tmp / "t1").mkdir()
+        (tmp / "t1" / "2026-01-05.json").write_text(json.dumps({"date": "2026-01-05", "rows": []}), encoding="utf-8")
+        snaps, new = shadow.forward_snaps(d, {}, v)
+        check("影子快照：登記日之前不補（那是回測，不是前瞻）", "2026-01-02" not in snaps and "2026-01-01" not in snaps)
+        check("影子快照：登記日之後缺的補算、今天照常算", sorted(s["date"] for s in new) == ["2026-01-06", "2026-01-07"]
+              and [s for s in new if s["date"] == "2026-01-06"][0]["backfilled"] is True, str([s["date"] for s in new]))
+        check("影子快照：一定帶著額外的排除條件", all(e for _, e in asked))
+        check("沒有登記影子名單 -> 什麼都不算", shadow.compute(d, {}, [])[0] == {"variants": []}
+              if not os.environ.get("SHADOW_DEMO") else True)
+        dm = dict(shadow.DEMO)
+        snaps, new = shadow.forward_snaps(d, {}, dm, main_snaps={"2026-01-02": {}})
+        check("示範版：在記憶體裡從原名單第一份快照算起、不存檔", new == [] and min(snaps) == "2026-01-02")
+        os.environ["SHADOW_DEMO"] = "1"; os.environ["GITHUB_ACTIONS"] = "true"
+        check("示範版不會出現在雲端（CI）", shadow.DEMO not in shadow.variants())
+        os.environ.pop("GITHUB_ACTIONS")
+        check("本機設 SHADOW_DEMO=1 才有示範版", shadow.DEMO in shadow.variants())
+    finally:
+        shadow.SHADOW, stable.today_list = saved[0], saved[1]
+        os.environ.pop("GITHUB_ACTIONS", None)
+        if saved[2] is None:
+            os.environ.pop("SHADOW_DEMO", None)
+        else:
+            os.environ["SHADOW_DEMO"] = saved[2]
+
+
 def run(check):
     test_backfill(check)
+    test_shadow(check)
     test_labels(check)
     test_features(check)
     test_pick(check)

@@ -41,6 +41,7 @@ import funnel
 import screens
 import risk_lists
 import server
+import shadow
 import stable
 import stock_report
 import webui
@@ -610,6 +611,13 @@ def build(limit=None, out=SITE):
         print("::warning::補算名單快照失敗（名單成績會少這幾天）：{}".format(e), flush=True)
     st = stable.compute(feat, risk)
     stable_hist = st[4] or {}
+    # 影子名單（shadow.py）：新的排除條件跟名單並行測試。沒有登記任何影子名單時幾乎不花時間。
+    # 出錯不擋發佈：影子名單是研究用的，正式名單不能因為它停擺。
+    try:
+        sh = shadow.compute(feat, risk, st[2]["days"], stable.load_snaps(), _risk_for)
+    except Exception as e:
+        print("::warning::影子名單算不出來（正式名單不受影響）：{}".format(e), flush=True)
+        sh = ({"variants": [], "error": str(e)}, [])
     del feat
     import barrier
     bench = barrier.market()["m_px"]           # 0050 總報酬指數，個股頁「近期表現 vs 大盤」用
@@ -630,6 +638,7 @@ def build(limit=None, out=SITE):
     sizes["universe"] = write(data / "universe.json", emit_universe(p_otc is not None))
     sizes["funnel"] = write(data / "funnel.json", fn)
     stable.write(data, *st)
+    shadow.write(data, *sh)
     # 社群聲量的比對規則：網頁按「更新」時在瀏覽器裡讀 PTT、自己算聲量，用的是這份
     try:
         import social
