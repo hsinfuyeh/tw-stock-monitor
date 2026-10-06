@@ -356,6 +356,21 @@ def test_tpex():
         print("  [SKIP] 本機還沒有上櫃的表，跳過隔離檢查")
 
 
+def test_tdcc():
+    print("\n集保股權分散表")
+    import tdcc
+    csv = ("﻿資料日期,證券代號,持股分級,人數,股數,占集保庫存數比例%\n"
+           "20261002,2330,15,1234,\"21,000,000,000\",81.05\n"
+           "20261002,2330,17,2000000,\"25,900,000,000\",100.00\n"
+           "20261002,00878,1,500,10000,0.01\n"
+           "20261002,030001,1,3,3000,0.10\n")
+    df = tdcc.parse(csv)
+    check("集保：千分位、日期、分級都解析對", len(df) == 3 and df.iloc[0]["shares"] == 21_000_000_000
+          and str(df.iloc[0]["date"])[:10] == "2026-10-02" and int(df.iloc[0]["level"]) == 15, str(df))
+    check("集保：權證（6 碼非 00 開頭）不收、ETF 收", set(df["code"]) == {"2330", "00878"})
+    check("集保：表頭對不上 -> 空的（不猜欄位）", tdcc.parse(csv.replace("持股分級", "某欄")).empty)
+
+
 def test_activeetf():
     """主動 ETF：申購帶來的張數增加不能被當成加碼。"""
     print("\n主動式 ETF（只顯示）")
@@ -495,6 +510,7 @@ if __name__ == "__main__":
     test_revenue()
     test_tpex()
     test_activeetf()
+    test_tdcc()
     test_social()
     test_framework(nd)
     import tests_short

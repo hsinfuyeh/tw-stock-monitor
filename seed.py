@@ -43,7 +43,7 @@
 跑法：
     python seed.py                上傳／更新種子
     python seed.py --if-older 7   種子超過 7 天才更新（CI 用）
-    python seed.py --etf          只備份主動式 ETF 持股（CI 每次有新資料時用）
+    python seed.py --etf          只備份「錯過就補不回來」的原始檔：主動式 ETF 持股、集保（CI 每次有新資料時用）
     python seed.py --check        只看現在的狀態，不動任何東西
 """
 import datetime as dt
@@ -84,36 +84,53 @@ def seed_age_days():
     return (dt.datetime.now(dt.timezone.utc) - t).total_seconds() / 86400
 
 
-def etf_backup():
-    """把 raw/active_etf/ 備份成 Release 上的 active_etf.tar.gz（見檔頭）。失敗只印訊息、回 False。"""
-    act = RAW / "active_etf"
-    files = [p for p in act.rglob("*") if p.is_file()] if act.exists() else []
+# 「錯過就補不回來」的原始檔：Release 上的資產名 -> (raw/ 底下的資料夾, 說明)
+BACKUPS = {
+    ETF_ASSET: ("active_etf", "主動式 ETF 持股"),
+    "tdcc.tar.gz": ("tdcc", "集保股權分散表"),      # 開放資料只給最新一週
+}
+
+
+def backup_one(asset, folder, label):
+    """把 raw/<folder>/ 備份成 Release 上的 <asset>（見檔頭）。失敗只印訊息、回 False。
+    手上的檔比備份少就不蓋（冷啟動沒還原成功時，避免把新的備份換成舊的）；一樣多就不重傳
+    （這兩種資料都是一天或一週一個檔，檔數沒變就是沒有新東西）。"""
+    src = RAW / folder
+    files = [p for p in src.rglob("*") if p.is_file()] if src.exists() else []
     if not files:
-        print("沒有 raw/active_etf/，不備份。")
+        print("沒有 raw/{}/，不備份。".format(folder))
         return False
     with tempfile.TemporaryDirectory() as tmp:
         old = Path(tmp) / "old"
         old.mkdir()
-        r = sh("gh", "release", "download", TAG, "--pattern", ETF_ASSET, "--dir", str(old))
+        r = sh("gh", "release", "download", TAG, "--pattern", asset, "--dir", str(old))
         if r.returncode == 0:
-            with tarfile.open(old / ETF_ASSET) as t:
+            with tarfile.open(old / asset) as t:
                 n_old = sum(1 for m in t.getmembers() if m.isfile())
             if len(files) < n_old:
-                print("::warning::手上的主動式 ETF 持股（{} 個檔）比 Release 上的備份（{} 個）少，不蓋掉備份。"
-                      .format(len(files), n_old))
+                print("::warning::手上的{}（{} 個檔）比 Release 上的備份（{} 個）少，不蓋掉備份。"
+                      .format(label, len(files), n_old))
                 return False
+            if len(files) == n_old:
+                print("{}：{} 個檔，跟備份一樣，不重傳。".format(label, len(files)))
+                return True
         else:
             n_old = 0
-        tar = Path(tmp) / ETF_ASSET
+        tar = Path(tmp) / asset
         with tarfile.open(tar, "w:gz") as t:
-            t.add(str(act), arcname="raw/active_etf")
+            t.add(str(src), arcname="raw/" + folder)
         r = sh("gh", "release", "upload", TAG, str(tar), "--clobber")
         if r.returncode:
-            print("::warning::主動式 ETF 持股備份上傳失敗：" + r.stderr.strip()[:200])
+            print("::warning::{}備份上傳失敗：{}".format(label, r.stderr.strip()[:200]))
             return False
-        print("主動式 ETF 持股備份：{} 個檔（原本 {} 個），{:.1f} MB".format(
-            len(files), n_old, tar.stat().st_size / 1e6))
+        print("{}備份：{} 個檔（原本 {} 個），{:.1f} MB".format(
+            label, len(files), n_old, tar.stat().st_size / 1e6))
         return True
+
+
+def backup_all():
+    for asset, (folder, label) in BACKUPS.items():
+        backup_one(asset, folder, label)
 
 
 def main(check_only=False, if_older=None):
@@ -172,6 +189,9 @@ def main(check_only=False, if_older=None):
             otc = RAW / "tpex"
             if otc.exists():
                 t.add(str(otc), arcname="raw/tpex")
+            hold = RAW / "tdcc"
+            if hold.exists():
+                t.add(str(hold), arcname="raw/tdcc")
         size = tar.stat().st_size / 1e6
         print("上傳 {:.0f} MB（會覆蓋舊的）…".format(size))
         r = sh("gh", "release", "upload", TAG, str(tar), "--clobber")
@@ -183,7 +203,7 @@ def main(check_only=False, if_older=None):
 if __name__ == "__main__":
     a = sys.argv
     if "--etf" in a:
-        etf_backup()          # 失敗只印警告，不讓 workflow 變紅燈
+        backup_all()          # 失敗只印警告，不讓 workflow 變紅燈
         sys.exit(0)
     main(check_only="--check" in a,
          if_older=float(a[a.index("--if-older") + 1]) if "--if-older" in a else None)

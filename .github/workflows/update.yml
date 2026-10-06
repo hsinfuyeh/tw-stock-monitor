@@ -88,13 +88,18 @@ jobs:
           if gh release download warehouse-seed --pattern 'seed.tar.gz' --dir . --clobber 2>/dev/null; then
             tar xzf seed.tar.gz && rm seed.tar.gz
             echo "已從 Release 取得種子（倉儲 + 月營收）"
-            # 主動式 ETF 持股的備份比種子新（每次有新資料就更新，見 seed.py --etf），解在種子之後蓋過去
-            if gh release download warehouse-seed --pattern 'active_etf.tar.gz' --dir . --clobber 2>/dev/null; then
-              tar xzf active_etf.tar.gz && rm active_etf.tar.gz
-              echo "主動式 ETF 持股：還原 $(find raw/active_etf -type f | wc -l) 個檔（比種子新的備份）"
-            else
-              echo "::warning::沒有主動式 ETF 持股的備份，只有種子裡的（最多晚一週，群益、國泰那幾天補不回來）"
-            fi
+            # 「錯過就補不回來」的原始檔另有備份，比種子新（每次有新資料就更新，見 seed.py --etf），
+            # 解在種子之後蓋過去：主動式 ETF 持股（群益、國泰只能抓當天）、集保（開放資料只給最新一週）
+            for a in active_etf tdcc; do
+              if gh release download warehouse-seed --pattern "$a.tar.gz" --dir . --clobber 2>/dev/null; then
+                tar xzf "$a.tar.gz" && rm "$a.tar.gz"
+                echo "$a：還原 $(find raw/$a -type f | wc -l) 個檔（比種子新的備份）"
+              else
+                echo "::warning::沒有 $a 的備份，只有種子裡的（最多晚一週，那幾天補不回來）"
+              fi
+            done
+            # 集保的表從原始檔重建（種子裡的倉儲可能比備份舊）
+            python -c "import tdcc; tdcc.rebuild()" || echo "::warning::集保的表重建失敗"
             ls -lh data/
             echo "月營收 $(ls raw/revenue_mops 2>/dev/null | wc -l) 個月（沒有的話 ci_update 會自己補）"
           else
@@ -193,7 +198,7 @@ jobs:
 
       # 主動式 ETF 持股（約 2 MB）每次有新資料就另外備份：群益、國泰只能抓當天，
       # 種子一週才更新一次，快取被清掉時最多會掉一週、而且補不回來。失敗不影響這次更新。
-      - name: 備份主動式 ETF 持股
+      - name: 備份錯過就補不回來的原始檔（主動式 ETF 持股、集保）
         if: success() && steps.fetch.outputs.changed == 'true'
         continue-on-error: true
         env:
