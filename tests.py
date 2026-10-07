@@ -377,6 +377,37 @@ def test_inst_context():
     check("不到 60 天歷史不給位置", screens.inst_streaks([1, 2, 3])["rank1y"] is None)
 
 
+def test_events():
+    print("\n公司事件（重大訊息分類，第 12 輪）")
+    import events
+    C = events.classify
+    check("司法調查：檢調搜索算、不起訴不算", C("本公司配合檢調單位執行搜索調查") == ["legal"]
+          and "legal" not in C("本公司接獲檢察官不起訴處分書"))
+    check("資安：遭駭客攻擊算、設置資安長不算", C("本公司資訊系統遭受駭客網路攻擊") == ["cyber"]
+          and C("公告本公司設置資安長") == [])
+    check("財務危機：退票、累積虧損過半", C("公告本公司之關係人退票事宜") == ["distress"]
+          and C("公告本公司累積虧損達實收資本額二分之一") == ["distress"])
+    check("會計異常：重編財報算、事務所內部調整換會計師不算", C("本公司重編九十七年度合併財務報表") == ["audit"]
+          and C("公告本公司因會計師事務所內部職務調整更換會計師") == [])
+    check("災害：火災算、「未受影響」「非本公司」不算", C("本公司竹南廠發生火災說明") == ["disaster"]
+          and C("公告營運未受淹水影響") == [] and C("鄰近建築物火災事件(非本公司)，對本公司均無影響") == [])
+    check("只顯示的類別（澄清、治理異動）不算負面", C("澄清媒體報導") == ["clarify"]
+          and C("公告本公司總經理辭任") == ["gov"] and not set(C("澄清媒體報導")) & set(events.NEG_KEYS))
+    check("例行公告不算任何一類", C("公告本公司處分有價證券") == [] and C("公告本公司代理發言人異動") == [])
+    cal = pd.to_datetime(["2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08"])
+    eff = events.effective_dates(pd.to_datetime(["2026-10-06 09:00", "2026-10-06 14:30", "2026-10-06 14:31",
+                                                 "2026-10-04 20:00", "2026-10-08 18:00"]), cal)
+    check("生效日：14:30 以前算當天、之後算下一個交易日、週末算下一個交易日、超過日曆的不算",
+          [str(x)[:10] for x in eff] == ["2026-10-06", "2026-10-06", "2026-10-07", "2026-10-05", "NaT"], str(list(eff)))
+    days = pd.bdate_range("2026-09-01", periods=30)
+    d = pd.DataFrame({"date": list(days) * 2, "code": ["1111"] * 30 + ["2222"] * 30})
+    ev = pd.DataFrame({"code": ["1111"], "eff": [days[10]], "neg": [True]})
+    f = events.recent_flag(d, ev, window=5)
+    hit = list(d.loc[f, "date"])
+    check("排除窗口：事件那天起算 5 個交易日（含當天），之前與之後都不算、別家不受影響",
+          hit == list(days[10:15]), str([str(x)[:10] for x in hit]))
+
+
 def test_tdcc():
     print("\n集保股權分散表")
     import tdcc
@@ -541,6 +572,7 @@ if __name__ == "__main__":
     test_tpex()
     test_activeetf()
     test_tdcc()
+    test_events()
     test_inst_context()
     test_social()
     test_framework(nd)
