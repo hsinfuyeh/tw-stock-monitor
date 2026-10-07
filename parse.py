@@ -157,6 +157,32 @@ def parse_index(j, date):
     return out
 
 
+def parse_margin_total(j, date):
+    """MI_MARGN 的「信用交易統計」總表 -> 一列：融資金額（仟元）、融資與融券餘額（張）。
+
+    證交所官方的全市場融資餘額。不能用「個股融資張數 × 收盤價」自己加：那是融資部位的市值，
+    不是借的錢（實測 2026-10-07 前者約 1.2 兆、官方融資金額 6,400 億，差將近一倍）。"""
+    vals = {}
+    for t in (j or {}).get("tables") or []:
+        f = t.get("fields") or []
+        if not f or f[0].strip() != "項目" or "今日餘額" not in [x.strip() for x in f]:
+            continue
+        k = [x.strip() for x in f].index("今日餘額")
+        for r in t.get("data") or []:
+            name = str(r[0]).strip()
+            if name.startswith("融資金額"):
+                vals["margin_amt"] = num(r[k])
+            elif name.startswith("融資("):
+                vals["margin_lots"] = num(r[k])
+            elif name.startswith("融券("):
+                vals["short_lots"] = num(r[k])
+        break
+    if vals.get("margin_amt") is None:
+        return []
+    return [dict(date=date, margin_amt=vals.get("margin_amt"), margin_lots=vals.get("margin_lots"),
+                 short_lots=vals.get("short_lots"))]
+
+
 # ---------------------------------------------------------------- T86 法人
 def parse_t86(j, date):
     if not j or j.get("stat") != "OK": return []

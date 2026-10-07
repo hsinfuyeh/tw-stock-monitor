@@ -20,13 +20,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 function rowsTable(d, rows) {
   /* 每個榜單同一組欄位、同一組欄寬：代號、名稱、產業、收盤、今日、這個榜的指標、法人買超、日均成交額。
      法人買的榜單，指標本身就是法人買超，那一欄留「—」而不是整欄拿掉，欄位才對得齊。 */
-  var instList = d.extra === '法人買超';
+  var instList = d.extra === '法人買超' || d.extra === '同步買超';
   return '<div class="scroll"><table class="ltable stk"><colgroup><col style="width:64px"><col>' +
     '<col style="width:92px"><col style="width:84px"><col style="width:78px"><col style="width:112px">' +
     '<col style="width:86px"><col style="width:92px"></colgroup><thead><tr><th>代號</th><th style="text-align:left">名稱</th>' +
     '<th>產業</th><th>' + App.tip('收盤') + '</th><th>' + App.tip('今日') + '</th>' +
     '<th class="sorted">' + App.tip(d.extra_title || '') + '</th>' +
-    '<th>' + App.tip('法人買超') + '</th><th>' + App.tip('日均成交額') + '</th></tr></thead><tbody>' +
+    '<th>' + (instList ? '近 20 天' : App.tip('法人買超')) + '</th><th>' + App.tip('日均成交額') + '</th></tr></thead><tbody>' +
     rows.map(function (r) {
       var ex = r.extra;
       var exTxt = ex == null ? '—' :
@@ -36,15 +36,29 @@ function rowsTable(d, rows) {
          d.extra === 'posv' ? App.num(ex, 0) + '%' :
          d.extra === 'sue' ? App.num(ex, 1) + ' 倍' :
          d.extra === '_s' ? App.num(ex, 2, true) :
-         d.extra === '法人買超' ? App.pct(ex * 100, 1) :
+         d.extra === '法人買超' || d.extra === '同步買超' ? App.pct(ex * 100, 1) :
          App.pct(ex, d.extra === 'yoy' ? 1 : 2));
       return '<tr><td><a href="stock?c=' + r.code + '"><strong>' + r.code +
         '</strong></a></td><td style="text-align:left"><a href="stock?c=' + r.code + '">' +
         App.esc(r.name) + '</a></td><td class="mut ind">' + App.esc(r.ind || '—') + '</td><td>' +
-        App.num(r.close) + '</td><td>' + App.pct(r.chg_pct) + '</td><td class="sorted">' + exTxt + '</td>' +
-        '<td>' + (instList || r['法人買超'] == null ? '—' : App.pct(r['法人買超'] * 100, 1)) + '</td>' +
+        App.num(r.close) + '</td><td>' + App.pct(r.chg_pct) + '</td><td class="sorted">' + exTxt + rankTxt(r.ctx) + '</td>' +
+        '<td>' + (instList ? ctxTxt(r.ctx) : r['法人買超'] == null ? '—' : App.pct(r['法人買超'] * 100, 1)) + '</td>' +
         '<td class="mut">' + App.yi(r.amt20) + '</td></tr>';
     }).join('') + '</tbody></table></div>';
+}
+
+/* 法人脈絡（screens.inst_streaks）：單日買超金額配上前後文 —— 連續幾天、近 20 天買賣各幾天、20 日累計，
+   以及今天的量在這檔股票自己一年裡排第幾。全部是事實，不是預測。 */
+function ctxTxt(c) {
+  if (!c) return '<span class="mut">—</span>';
+  var st = c.streak > 0 ? '連買 ' + c.streak + ' 天' : c.streak < 0 ? '連賣 ' + (-c.streak) + ' 天' : '今天持平';
+  return st + '<div class="mut" style="font-size:12px;white-space:nowrap">買 ' + c.buy + '／賣 ' + c.sell +
+    '，累計 ' + (c.net20 > 0 ? '+' : '') + App.num(c.net20, 0) + ' 張</div>';
+}
+function rankTxt(c) {
+  if (!c || c.rank1y == null) return '';
+  return '<div class="mut" style="font-size:12px;white-space:nowrap">' +
+    (c.rank1y >= 90 ? '一年來前 ' + Math.max(1, 100 - c.rank1y) + '% 大' : '一年中第 ' + c.rank1y + ' 百分位') + '</div>';
 }
 
 /* 除權息的配發：現金股利、無償配股（每股 0.05 = 每千股配 50 股）、現金增資。

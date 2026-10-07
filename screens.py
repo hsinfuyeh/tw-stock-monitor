@@ -26,7 +26,7 @@ LIST_N = 10
 TAB_LABEL = {
     "amount": "成交金額", "gain": "漲最多", "loss": "跌最多", "volume": "量暴增",
     "high": "創 20 日新高", "low": "創 20 日新低", "calm": "波動小", "exdiv": "除權息",
-    "inst": "法人買", "instout": "法人賣", "score": "綜合評分",
+    "inst": "法人買", "instout": "法人賣", "inst_both": "外資投信一起買", "score": "綜合評分",
     "screen": "體質篩選", "pos": "接近一年高點", "rev": "營收成長",
     "sue": "營收優於預期",
     "social_hot": "社群聲量最高", "social_surge": "社群聲量暴增",
@@ -57,6 +57,9 @@ SCREENS = [
      "外資、投信、自營商今天買最多的（換算成平常成交量的比例，大小股票才能比）。"
      "過去統計方向是對的，但幅度小於手續費和稅。", "fact"),
     ("instout", "法人賣最多", "外資、投信、自營商今天賣最多的。", "fact"),
+    ("inst_both", "外資、投信今天一起買",
+     "外資和投信今天都是買超的股票，依兩者合計買超（換算成平常成交量的比例）排序。"
+     "兩種法人看法一致是事實，但這份名單還沒有檢驗過「之後會不會比較好」。", "fact"),
     ("screen", "體質篩選",
      "用兩條有回測支持的排除規則刷掉一部分股票後，剩下的名單。這是排除，不是推薦。", "fact"),
     ("pos", "股價接近一年高點",
@@ -146,6 +149,11 @@ def run_screen(panel, key, limit=LIST_N):
         r = liq.dropna(subset=["法人買超"])
         return (r.sort_values("法人買超", ascending=(key == "instout")).head(limit),
                 "法人買超", "法人買超")
+    if key == "inst_both":
+        r = liq[(liq["foreign_net"] > 0) & (liq["trust_net"] > 0)].copy()
+        r["同步買超"] = (r["foreign_net"] + r["trust_net"]) / r["vol20"]
+        r = r.replace([np.inf, -np.inf], np.nan).dropna(subset=["同步買超"])
+        return r.sort_values("同步買超", ascending=False).head(limit), "同步買超", "外資＋投信買超"
     if key == "sue":
         # 事件驅動：漂移會隨時間衰減，所以只留最近公布的。
         # 45 天約等於一個公布週期 —— 超過就代表下一期數字快出來了。
@@ -325,3 +333,49 @@ for _k in ["social_hot", "social_surge"]:
         "比對方式是看文章與推文裡有沒有出現股票代號或名稱；名稱是日常用語的"
         "（例如世界、中華、全家）只認代號，還是可能有少數誤判。")
 
+
+
+def inst_streaks(nets, year=250, n=20):
+    """一檔股票的法人買賣超脈絡（nets：依日期排好的每日買賣超股數，最後一筆是今天）。
+
+    單日的買超金額沒有脈絡：連買第幾天、最近 20 天是買多還是賣多、這次的量在一年裡算不算大，
+    比單一個數字有用得多（ToAlpha 法人頁的做法）。全部是事實，不是預測。"""
+    x = np.asarray(nets, float)
+    x = x[np.isfinite(x)]
+    if not len(x):
+        return None
+    today = x[-1]
+    sgn = np.sign(today)
+    streak = 0
+    if sgn != 0:
+        for v in x[::-1]:
+            if np.sign(v) != sgn:
+                break
+            streak += 1
+    last = x[-n:]
+    yr = np.abs(x[-year:])
+    return {"streak": int(streak) * int(sgn),                  # 正 = 連買幾天、負 = 連賣幾天
+            "buy": int((last > 0).sum()), "sell": int((last < 0).sum()), "days": int(len(last)),
+            "net20": round(float(last.sum()) / 1000),         # 張
+            "rank1y": round(float((yr < abs(today)).mean()) * 100) if len(yr) >= 60 else None}
+
+
+def inst_context(codes, date, col="total_net", table="inst"):
+    """一批股票到 date 為止的法人脈絡 {代號: inst_streaks(...)}。表不存在或沒資料回傳空的。"""
+    import store
+    codes = [str(c) for c in codes]
+    if not codes:
+        return {}
+    try:
+        q = store.q("""SELECT date, code, {c} AS v FROM {t}
+                       WHERE code IN ({ids}) AND date <= DATE '{d}' AND date > DATE '{d}' - INTERVAL 400 DAY
+                       ORDER BY code, date""".format(c=col, t=table, d=str(date)[:10],
+                                                      ids=", ".join("'{}'".format(c) for c in codes)))
+    except Exception:
+        return {}
+    out = {}
+    for code, g in q.groupby("code"):
+        if str(g["date"].iloc[-1])[:10] != str(date)[:10]:
+            continue                                  # 今天沒有法人資料，就不給脈絡
+        out[str(code)] = inst_streaks(g["v"].to_numpy())
+    return out

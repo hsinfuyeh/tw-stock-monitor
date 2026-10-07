@@ -18,7 +18,9 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
  * 回測只能當「淘汰關卡」—— 過不了就不該信，過了也不代表有效。 */
 function pp(v) { return v == null ? '—' : App.num(v, 1) + '%'; }
 function pt(v) { return v == null ? '—' : '<span class="' + App.cls(v) + '">' + App.num(v, 1, true) + '</span>'; }
-function tt(v) { return v == null ? '' : '<br><span class="mut" style="font-size:12px">t ' + App.num(v, 2) + '</span>'; }
+function tt(v) {
+  return v == null ? '' : '<br><span class="mut" style="font-size:12px">運氣機率 ' + App.luck(v) + '（t ' + App.num(v, 2) + '）</span>';
+}
 
 /* 依名次分組：分數越前面，中得越多、倒得越少，排序才算有用。不是單調的也照實畫。 */
 function tierChart(B) {
@@ -106,7 +108,7 @@ App.boot('backtest', function (meta) {
   return App.get('stable/backtest.json').then(function (B) {
     var a = B.all || {};
     var verdict = B.passed
-      ? '<b>通過淘汰關卡</b>：兩段期間名單都比穩定池隨便挑好、也比「波動相同的隨機」好，合計 t ' + App.num(a.t, 1) + '（門檻 3）。' +
+      ? '<b>通過淘汰關卡</b>：兩段期間名單都比穩定池隨便挑好、也比「波動相同的隨機」好，合計 t ' + App.num(a.t, 1) + '（門檻 3）；純靠' + App.tip('運氣機率', '運氣機率').replace('運氣機率', '運氣') + '做到的機率' + App.luck(a.t) + '。' +
         '但這些年份的資料之前已經被研究過很多次，通過只代表「跟歷史不矛盾」，不代表有效 —— 真正的成績看<a href="history">名單成績</a>。'
       : '<b>沒有通過淘汰關卡</b>（事前寫好的標準：兩段期間都要比穩定池好、合計 t ≥ 3、也要比波動相同的隨機好）。名單照常列出，但請當成參考。';
     document.getElementById('app').innerHTML =

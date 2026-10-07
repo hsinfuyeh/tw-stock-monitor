@@ -97,7 +97,8 @@ App.boot('short', function (meta) {
     if (mn) notes.push(bar('', 'warn', mn));
     var verdict = T.passed
       ? '回測（2008–2025）通過淘汰關卡：名單的「' + App.tip('中減倒') + '」比穩定池隨便挑多 ' +
-        (B && B.all ? App.num(B.all.diff, 1) + ' 個百分點（' + App.tip('t 值') + ' ' + App.num(B.all.t, 1) + '）' : '一點') +
+        (B && B.all ? App.num(B.all.diff, 1) + ' 個百分點（' + App.tip('t 值') + ' ' + App.num(B.all.t, 1) +
+          '，純靠運氣做到的機率' + App.luck(B.all.t) + '）' : '一點') +
         '。優勢不大' + (B && B.periods && B.periods['2026'] && B.periods['2026'].diff <= 0 ? '，而且 2026 年沒有比隨便挑好' : '') +
         '；真正的成績看<a href="history">名單成績</a>。'
       : '回測（2008–2025）<b>沒有</b>通過淘汰關卡，名單照常列出，但請當成參考。';

@@ -60,6 +60,22 @@
     if (v == null || isNaN(v)) return '—';
     return '<span class="' + cls(v) + '">' + num(v, nd, true) + '%</span>';
   }
+  /* 運氣機率：t 值換成「隨便挑也做得到這個成績的機率」（單尾，常態近似）。t 值一般人看不懂，
+     機率比較好懂（反詐投資王「判斷是實力還是運氣」的講法）。計算還是原本那個 t，只是換句話說。 */
+  function normCdf(x) {
+    var t = 1 / (1 + 0.2316419 * Math.abs(x));
+    var d = 0.3989422804 * Math.exp(-x * x / 2);
+    var p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+    return x > 0 ? 1 - p : p;
+  }
+  function luck(t) {
+    if (t == null || isNaN(t)) return '';
+    var p = 1 - normCdf(t);
+    if (p < 0.0001) return '不到萬分之一';
+    if (p < 0.001) return '不到千分之一';
+    if (p < 0.01) return '約千分之 ' + Math.round(p * 1000);
+    return '約 ' + Math.round(p * 100) + '%';
+  }
   function yi(v) { return v == null || isNaN(v) ? '—' : (v / 1e8).toFixed(2) + '億'; }
   function qs(k) { return new URLSearchParams(location.search).get(k); }
 
@@ -929,7 +945,7 @@
   }
 
   window.App = {
-    get: get, esc: esc, num: num, pct: pct, cls: cls, yi: yi, qs: qs,
+    get: get, esc: esc, num: num, pct: pct, cls: cls, yi: yi, qs: qs, luck: luck,
     tip: tip, pager: pager, boot: boot, searchbox: searchbox,
     otherTabs: otherTabs, listBadge: listBadge, local: LOCAL, initSearch: initSearch,
     glossary: function () { return GLOSSARY; }

@@ -12,7 +12,9 @@ from config import DB, DATASETS
 TABLES = dict(mi_index="quotes", t86="inst", bwibbu="valuation", margin="margin")
 # 從同一份原始檔衍生的表：表名 -> (來源資料集, 解析函式)。不另外抓，跟著來源一起寫。
 # market_index：MI_INDEX 裡的加權指數與各類股指數（大盤頁、產業輪動用；2009-01-05 起）。
-DERIVED = dict(market_index=("mi_index", parse.parse_index))
+# margin_total：MI_MARGN 的信用交易統計總表（官方全市場融資金額，大盤頁用；2008 起）。
+DERIVED = dict(market_index=("mi_index", parse.parse_index),
+               margin_total=("margin", parse.parse_margin_total))
 
 
 def build(datasets=None, verbose=True):

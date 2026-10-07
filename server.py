@@ -577,7 +577,7 @@ SIGNAL_KEYS = ("sue", "pos", "rev")
 TAB_GROUPS_SPEC = [
     ("過去表現較好", ["sue", "pos", "rev"]),
     ("今日行情", ["amount", "gain", "loss", "volume", "high"]),
-    ("法人動向", ["inst", "instout"]),
+    ("法人動向", ["inst", "instout", "inst_both"]),
     ("其他", ["calm", "exdiv"]),
     ("社群聲量", ["social_hot", "social_surge"]),
     ("過去表現較差", ["low", "score"]),

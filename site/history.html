@@ -62,7 +62,7 @@ function pairRow(name, x) {
   return '<tr><td style="text-align:left">' + name + '</td><td>' + x.days + '</td>' +
     '<td class="mut">' + pp(x.hit0) + '／' + pp(x.fail0) + '</td><td>' + pp(x.hit1) + '／' + pp(x.fail1) + '</td>' +
     '<td class="mut">' + x.changed_days + '</td><td class="sorted">' + pt(x.diff) + '</td>' +
-    '<td>' + (x.t == null ? '—' : App.num(x.t, 2)) + '</td></tr>';
+    '<td>' + (x.t == null ? '—' : App.num(x.t, 2) + '<br><span class="mut" style="font-size:12px">運氣機率 ' + App.luck(x.t) + '</span>') + '</td></tr>';
 }
 function shadowCard(v) {
   var bt = v.backtest, f = v.vs_main || {}, T = v.track || {};
@@ -82,7 +82,8 @@ function shadowCard(v) {
     '<dt>中</dt><dd>' + pp(T.hit) + '</dd><dt>倒</dt><dd>' + pp(T.fail) + '</dd></dl></div>' +
     '<div class="stat"><h3>跟原名單比</h3><div class="sub">兩份都對完答案的日子</div><dl>' +
     '<dt>天數</dt><dd>' + (f.days || 0) + '</dd><dt>影子多出的中減倒</dt><dd>' + pt(f.diff) + '</dd>' +
-    '<dt>t 值</dt><dd>' + (f.t == null ? '還太少' : App.num(f.t, 2)) + '</dd></dl></div></div>';
+    '<dt>t 值</dt><dd>' + (f.t == null ? '還太少' : App.num(f.t, 2)) + '</dd>' +
+    '<dt>運氣機率</dt><dd>' + (f.t == null ? '還太少' : App.luck(f.t)) + '</dd></dl></div></div>';
   var today = (v.today || []).map(function (r) {
     return '<a href="stock?c=' + r.code + '">' + r.code + ' ' + App.esc(r.name) + '</a>';
   }).join('、');
@@ -121,6 +122,7 @@ App.boot('history', function (meta) {
       '<div class="stat"><h3>判定</h3><div class="sub">滿 ' + S.target_days + ' 天、' + App.tip('t 值') + ' ≥ ' + S.target_t + ' 才算有效</div><dl>' +
       '<dt>多出的' + App.tip('中減倒') + '</dt><dd>' + pt(S.diff) + '</dd>' +
       '<dt>t 值</dt><dd>' + (S.t == null ? '還太少' : App.num(S.t, 2)) + '</dd>' +
+      '<dt>' + App.tip('運氣機率') + '</dt><dd>' + (S.t == null ? '還太少' : App.luck(S.t)) + '</dd>' +
       '<dt>進度</dt><dd>' + prog + ' 天</dd></dl></div></div>' +
       '<div class="prog" title="已對完答案的天數"><i style="width:' + Math.min(100, S.finished / S.target_days * 100).toFixed(1) + '%"></i></div>' +
       '<div class="mut" style="font-size:12.5px">還要約 ' + Math.max(0, S.target_days - S.finished) + ' 個交易日才滿 ' + S.target_days + ' 天（約 ' +

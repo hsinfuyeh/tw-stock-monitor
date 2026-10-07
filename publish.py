@@ -224,6 +224,11 @@ def emit_screens(p):
                 if ek and ek in r:
                     d["extra"] = r[ek]
                 rows.append(d)
+            if key in ("inst", "instout", "inst_both"):
+                # 法人脈絡：連買幾天、近 20 天買賣天數、20 日累計、今天的量在一年裡的位置
+                ctx = screens.inst_context([r["code"] for r in rows], p["date"].max())
+                for r in rows:
+                    r["ctx"] = ctx.get(r["code"])
             out[key] = dict(key=key, title=title, desc=desc, cat=cat,
                             extra=ek, extra_title=et,
                             note=screens.NOTES.get(key), rows=rows)

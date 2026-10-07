@@ -69,6 +69,13 @@ def test_parse():
     check("指數：漲的帶正號、沒有收盤值的跳過、不混進個股表",
           len(ix) == 2 and [r for r in ix if r["name"] == "電子類指數"][0]["change"] == 5.0)
     check("指數：沒有指數表 -> 空的（2008 年的原始檔就是這樣）", parse.parse_index({"tables": [{}]}, "2008-01-02") == [])
+    mj = {"tables": [{"title": "信用交易統計", "fields": ["項目", "買進", "賣出", "現金(券)償還", "前日餘額", "今日餘額"],
+                      "data": [["融資(交易單位)", "1", "1", "1", "9,356,795", "9,358,246"],
+                               ["融券(交易單位)", "1", "1", "1", "214,529", "215,104"],
+                               ["融資金額(仟元)", "1", "1", "1", "637,657,044", "640,000,774"]]}]}
+    mt = parse.parse_margin_total(mj, "2026-10-07")
+    check("融資總表：用「今日餘額」那欄、金額單位仟元", mt == [dict(date="2026-10-07", margin_amt=640000774.0,
+          margin_lots=9358246.0, short_lots=215104.0)], str(mt))
 
 
 def test_aux_datasets():
@@ -356,6 +363,20 @@ def test_tpex():
         print("  [SKIP] 本機還沒有上櫃的表，跳過隔離檢查")
 
 
+def test_inst_context():
+    print("\n法人脈絡")
+    import screens
+    c = screens.inst_streaks([5, -3, 2, 4, 1])
+    check("連買天數：從今天往回數同方向的天數", c["streak"] == 3, str(c))
+    check("近 20 天買賣天數與累計（張）", c["buy"] == 4 and c["sell"] == 1 and c["net20"] == 0, str(c))
+    c = screens.inst_streaks([1, -2, -3])
+    check("連賣用負數表示", c["streak"] == -2)
+    check("今天沒買沒賣 -> 連續 0 天", screens.inst_streaks([3, 0])["streak"] == 0)
+    x = list(range(1, 101)) + [50]
+    check("今天的量在一年裡的位置（百分位）", screens.inst_streaks(x)["rank1y"] == 49, str(screens.inst_streaks(x)))
+    check("不到 60 天歷史不給位置", screens.inst_streaks([1, 2, 3])["rank1y"] is None)
+
+
 def test_tdcc():
     print("\n集保股權分散表")
     import tdcc
@@ -511,6 +532,7 @@ if __name__ == "__main__":
     test_tpex()
     test_activeetf()
     test_tdcc()
+    test_inst_context()
     test_social()
     test_framework(nd)
     import tests_short
