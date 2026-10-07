@@ -3,6 +3,8 @@
 規則是看主旨文字訂的（2026-10-08，看了約 2.7 萬則的主旨、每類抽 12 則人工檢查，**沒有看任何之後的股價**）。
 抽查後修過一次（同一天、仍然沒看股價）：會計異常拿掉「更換會計師」（多半是事務所輪調）、排除 iXBRL 申報欄位更正；
 災害停工排除「非本公司」「無影響」「未受」。之後凍結，不再改。
+登記後、看到任何結果之前（2026-10-08 01:10）修了兩個字面錯誤，見 RESEARCH_LOG 第 12 輪「登記後的修正」：
+「無保留意見」（好消息）被「保留意見」比對到；「有重大訊息待公佈」的「佈」異體字沒排除到。
 每一類 = 包含其中一個字眼、而且不包含排除字眼。訂好就不改；要改得記進 RESEARCH_LOG 並重新登記。
 
 分兩層：
@@ -29,9 +31,9 @@ NEGATIVE = [
      r"資安長|資安專責|資安主管|資安.{0,4}委員會|設置|任命"),
     ("distress", "財務危機",
      r"退票|跳票|存款不足|違約|重整|破產|紓困|無法償還|無法如期|債務協商|累積虧損達實收資本額|淨值為負|繼續經營.{0,4}疑慮|暫停交易",
-     r"有重大訊息待公布|解除|撤回重整"),
+     r"有重大訊息待公[布佈]|解除|撤回重整"),
     ("audit", "會計異常",
-     r"重編|無法表示意見|否定意見|保留意見|會計師.{0,6}辭任|延後.{0,8}財務報告|財務報告.{0,8}延後",
+     r"重編|無法表示意見|否定意見|(?<!無)保留意見|會計師.{0,6}辭任|延後.{0,8}財務報告|財務報告.{0,8}延後",
      r"內部.{0,4}調整|輪調|獨立董事|iXBRL|申報資訊"),
     ("disaster", "災害停工",
      r"火災|爆炸|氣爆|停工|停產|工安|災害損失|淹水",
@@ -111,3 +113,42 @@ def recent_flag(d, tagged, window=10, only_negative=True):
         hi = np.searchsorted(arr, rows, side="right")
         flag[np.where(m)[0]] = hi > lo
     return pd.Series(flag, index=d.index)
+
+
+# --------------------------------------------------------------------- 網頁用（只顯示，不影響名單）
+def load_tagged(cal):
+    """倉儲的 mops_news -> tag()。表還不存在（舊倉儲）回傳 None。"""
+    import store
+    try:
+        news = store.q("SELECT ts, date, code, name, subject FROM mops_news")
+    except Exception:
+        return None
+    return tag(news, cal)
+
+
+def by_code(tagged, asof, days=365, keep=12):
+    """個股頁的「公司事件」：每檔近 days 天有分類的公告，新的在前，最多 keep 則。"""
+    if tagged is None or not len(tagged):
+        return {}
+    x = tagged[tagged["eff"] >= pd.Timestamp(asof) - pd.Timedelta(days=days)]
+    x = x[x["eff"] <= pd.Timestamp(asof)].sort_values("ts", ascending=False)
+    out = {}
+    for code, g in x.groupby(x["code"].astype(str), sort=False):
+        out[code] = [dict(date=str(r.eff)[:10], ts=str(r.ts)[:16], subject=r.subject,
+                          cats=[NAME[k] for k in r.cats], neg=bool(r.neg)) for r in g.head(keep).itertuples()]
+    return out
+
+
+def lamp(code, tagged, cal, asof, window=10):
+    """今日名單卡片的「公司事件」燈號：近 window 個交易日內有沒有重大負面公告。"""
+    if tagged is None:
+        return {"name": "公司事件", "val": "資料還沒有", "ok": None}
+    cal = pd.DatetimeIndex(sorted(cal))
+    i = cal.searchsorted(pd.Timestamp(asof), side="right") - 1
+    lo = cal[max(0, i - window + 1)]
+    x = tagged[(tagged["code"].astype(str) == str(code)) & tagged["neg"]
+               & (tagged["eff"] >= lo) & (tagged["eff"] <= pd.Timestamp(asof))]
+    if not len(x):
+        return {"name": "公司事件", "val": "近 {} 天沒有".format(window), "ok": True}
+    names = sorted({NAME[k] for c in x["cats"] for k in c if k in NEG_KEYS})
+    return {"name": "公司事件", "val": "近 {} 天 {} 則（{}）".format(window, len(x), "、".join(names)), "ok": False}

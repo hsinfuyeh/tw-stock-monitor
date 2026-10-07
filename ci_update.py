@@ -86,6 +86,8 @@ def extras():
     log("上櫃寫入 {} 個交易日".format(n_otc))
     import tdcc                   # 集保股權分散表：只有最新一週、沒有歷史，每次有機會就收
     tdcc.update()
+    import mops_news              # 重大訊息（公司事件、第 12 輪）：抓最近幾天
+    mops_news.update()
     return n_otc
 
 

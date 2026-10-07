@@ -192,6 +192,9 @@ def main(check_only=False, if_older=None):
             hold = RAW / "tdcc"
             if hold.exists():
                 t.add(str(hold), arcname="raw/tdcc")
+            news = RAW / "mops_news"         # 重大訊息原始檔（倉儲的 mops_news 表從這裡重建）
+            if news.exists():
+                t.add(str(news), arcname="raw/mops_news")
         size = tar.stat().st_size / 1e6
         print("上傳 {:.0f} MB（會覆蓋舊的）…".format(size))
         r = sh("gh", "release", "upload", TAG, str(tar), "--clobber")

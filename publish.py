@@ -462,7 +462,7 @@ def perf_vs_bench(s, bench):
     return out or None
 
 
-def emit_stock(code, name, cat, pan, act=None, bench=None, stable_hist=None):
+def emit_stock(code, name, cat, pan, act=None, bench=None, stable_hist=None, events=None):
     """單檔的完整內容。回傳 None 代表這檔不在可分析範圍。"""
     sub = factors.ETF_SUBCATS if cat == "etf" else None
     s, _ = stock_report.prepare(code, cat=cat, subcats=sub, panel=pan)
@@ -493,6 +493,7 @@ def emit_stock(code, name, cat, pan, act=None, bench=None, stable_hist=None):
         active=(act or {}).get(code),
         perf=perf_vs_bench(s, bench),
         stable_hist=stable_hist,
+        events=events,
     )
 
 
@@ -509,7 +510,8 @@ def _stock_text(code, name, cat):
     if pan is None:
         return None
     try:
-        d = emit_stock(code, name, cat, pan, _W["act"], _W["bench"], _W["hist"].get(code))
+        d = emit_stock(code, name, cat, pan, _W["act"], _W["bench"], _W["hist"].get(code),
+                       _W.get("events", {}).get(code))
     except Exception:
         return None
     return None if d is None else _dumps(d)
@@ -624,6 +626,14 @@ def build(limit=None, out=SITE):
         print("::warning::補算名單快照失敗（名單成績會少這幾天）：{}".format(e), flush=True)
     st = stable.compute(feat, risk)
     stable_hist = st[4] or {}
+    # 公司事件（第 12 輪的重大訊息分類，只顯示）：今日名單卡片多一個燈號、個股頁多一張卡。
+    # 不影響名單的排序與成績 —— 要拿來排除得先通過第 12 輪的研究（shadow.py）。
+    import events
+    cal_all = pd.DatetimeIndex(sorted(feat["date"].unique()))
+    tagged = events.load_tagged(cal_all)
+    for r in st[0]["rows"]:
+        r["checks"].append(events.lamp(r["code"], tagged, cal_all, st[0]["date"]))
+    ev_by_code = events.by_code(tagged, st[0]["date"])
     # 影子名單（shadow.py）：新的排除條件跟名單並行測試。沒有登記任何影子名單時幾乎不花時間。
     # 出錯不擋發佈：影子名單是研究用的，正式名單不能因為它停擺。
     try:
@@ -690,7 +700,7 @@ def build(limit=None, out=SITE):
         u = u.head(limit)
     jobs = [(str(r["code"]), str(r["name"]), r["cat"]) for _, r in u.iterrows()]
     _W.update(pans={"common": p_common, "etf": p_etf, "otc": p_otc}, act=act, bench=bench,
-              hist=stable_hist, dir=data / "stocks")
+              hist=stable_hist, events=ev_by_code, dir=data / "stocks")
     (data / "stocks").mkdir(parents=True, exist_ok=True)
     ok, skip, stot = _emit_stocks(jobs)
     sizes["stocks"] = stot

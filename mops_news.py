@@ -9,6 +9,8 @@
 原始檔：raw/mops_news/YYYYMMDD.json.gz（查詢日命名，存解析好的列；查無資料存空陣列，不必重查）
 倉儲：mops_news 表（ts, date, code, name, subject），去重後的全部公告。
 
+每天的更新（ci_update.extras）呼叫 update()：只抓最近幾天。
+
 跑法：
     python mops_news.py              回補 2008-01-01 到今天（冪等，已經抓過的跳過；最近 3 天會重抓）
     python mops_news.py build        只從原始檔重建倉儲的表
@@ -111,6 +113,20 @@ def backfill(start=START, end=None, verbose=True):
     return ok, fail
 
 
+def update(verbose=True):
+    """每天的更新用：從手上最新一天的前幾天抓到今天（通常 3–4 次請求），再重建表。不會丟例外。"""
+    try:
+        have = sorted(p.name[:8] for p in DIR.glob("*.json.gz"))
+        last = dt.datetime.strptime(have[-1], "%Y%m%d").date() if have else dt.date.today() - dt.timedelta(days=REFRESH)
+        start = max(START, last - dt.timedelta(days=REFRESH))
+        ok, fail = backfill(start=start, verbose=False)
+        n = append([start + dt.timedelta(days=i) for i in range((dt.date.today() - start).days + 1)])
+        if verbose:
+            print("重大訊息：更新 {} 天（失敗 {}），表裡共 {:,} 則".format(ok, fail, n), flush=True)
+    except Exception as e:
+        print("::warning::重大訊息更新失敗（不影響網站主線）：{}".format(e), flush=True)
+
+
 def load():
     """全部原始檔 -> 去重後的 DataFrame（ts, date, code, name, subject）。"""
     rows = []
@@ -128,10 +144,58 @@ def load():
     return df.dropna(subset=["ts"]).sort_values("ts").reset_index(drop=True)[["ts", "date", "code", "name", "subject"]]
 
 
+def _rows(files):
+    rows = []
+    for p in files:
+        try:
+            rows.extend(json.loads(gzip.decompress(p.read_bytes()).decode("utf-8")))
+        except Exception:
+            continue
+    df = pd.DataFrame(rows, columns=["date", "time", "code", "name", "subject"]).drop_duplicates(
+        ["date", "time", "code", "subject"])
+    df["ts"] = pd.to_datetime(df["date"] + " " + df["time"], errors="coerce")
+    df["date"] = pd.to_datetime(df["date"])
+    return df.dropna(subset=["ts"])[["ts", "date", "code", "name", "subject"]]
+
+
+def append(days):
+    """只把這幾個查詢日的公告加進表（已經在表裡的跳過）。每天的更新用，不必每次讀全部 6,800 個檔。
+    表還不存在就整個重建。回傳表裡的總筆數。"""
+    con = duckdb.connect(str(DB))
+    try:
+        exists = con.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?",
+                             [TABLE]).fetchone()[0]
+    finally:
+        con.close()
+    if not exists:
+        return build(verbose=False)
+    df = _rows([path(d) for d in days if path(d).exists()])
+    con = duckdb.connect(str(DB))
+    try:
+        if len(df):
+            con.register("_tmp", df)
+            con.execute(f"""INSERT INTO {TABLE} SELECT * FROM _tmp WHERE NOT EXISTS (
+                SELECT 1 FROM {TABLE} t WHERE t.ts = _tmp.ts AND t.code = _tmp.code AND t.subject = _tmp.subject)""")
+            con.unregister("_tmp")
+            con.execute("CHECKPOINT")
+        return con.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchone()[0]
+    finally:
+        con.close()
+
+
 def build(verbose=True):
+    """從原始檔整個重建表。原始檔不完整時（例如冷啟動只帶了倉儲、沒帶原始檔）不准把表變小很多。"""
     df = load()
     con = duckdb.connect(str(DB))
     try:
+        try:
+            old = con.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchone()[0]
+        except Exception:
+            old = 0
+        if old and len(df) < old * 0.9:
+            print("::warning::重大訊息原始檔只有 {:,} 則、表裡有 {:,} 則，原始檔不完整，表不動".format(len(df), old),
+                  flush=True)
+            return old
         con.execute(f"DROP TABLE IF EXISTS {TABLE}")
         con.register("_tmp", df)
         con.execute(f"CREATE TABLE {TABLE} AS SELECT * FROM _tmp")

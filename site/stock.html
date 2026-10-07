@@ -100,6 +100,22 @@ App.boot(null, function (meta) {
         '其他投信尚未接上。</p></div>';
     }
 
+    /* 公司事件（觀測站重大訊息，events.py 分類）：近一年有分類的公告。只是事實，不影響任何名單 */
+    var evBlock = '';
+    if (d.events && d.events.length) {
+      evBlock = '<div class="card"><h2>公司事件</h2>' +
+        '<p class="lead">公開資訊觀測站的重大訊息裡，跟風險有關的公告（近一年、最近 12 則）。' +
+        '「重大負面」是司法調查、資安事件、財務危機、會計異常、災害停工五類；澄清報導、主管機關裁罰、治理異動只列出來給你參考。' +
+        '分類是用主旨的字眼判斷的，會有誤判，點進觀測站看原文為準。</p>' +
+        '<div class="scroll"><table class="stk"><thead><tr><th>日期</th><th>類別</th><th style="text-align:left">主旨</th></tr></thead><tbody>' +
+        d.events.map(function (e) {
+          return '<tr><td style="white-space:nowrap">' + App.esc(e.ts) + '</td>' +
+            '<td style="white-space:nowrap" class="' + (e.neg ? 'st-fail' : 'mut') + '">' + App.esc(e.cats.join('、')) +
+            (e.neg ? '（重大負面）' : '') + '</td><td style="text-align:left">' + App.esc(e.subject) + '</td></tr>';
+        }).join('') + '</tbody></table></div>' +
+        '<p class="note" style="font-size:13px">這些公告不代表股價會跌：排雷條件有沒有用，要看第 12 輪研究（回測與名單成績頁的影子名單）。</p></div>';
+    }
+
     /* 近期表現 vs 大盤（0050，含配息的還原報酬）：只是事實，不是預測 */
     var perfBlock = '';
     if (d.perf && d.perf.length) {
@@ -157,7 +173,7 @@ App.boot(null, function (meta) {
       '不預測未來、不給買賣建議。</span></div>' + tierBlock +
       '<div class="card"><h2>進場前先確認這幾件事</h2>' +
       '<p class="lead">這些是會實際影響你能否順利買賣、以及該放多大部位的事實。</p>' +
-      chk + '</div>' + perfBlock + histBlock + actBlock +
+      chk + '</div>' + evBlock + perfBlock + histBlock + actBlock +
       '<div class="card"><h2>最近 30 個交易日</h2>' +
       '<p class="lead">K 線：紅漲綠跌。黃點代表當天出現了至少一種常見型態。</p>' +
       d.chart_svg + '</div>' +
