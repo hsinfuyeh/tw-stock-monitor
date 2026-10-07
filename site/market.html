@@ -1,0 +1,102 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script>/* 在 body 渲染前就套用主題，避免切換時閃一下白底 */
+(function(){try{var t=localStorage.getItem('theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:wght@400;500&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<title>大盤</title>
+<style>
+.mgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px;margin-top:6px}
+.mbox{border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.mbox h3{font-size:14px;font-weight:500;margin:0 0 6px;color:var(--mut)}
+.mbox .v{font-size:26px;font-weight:500;letter-spacing:-.02em}
+.mbox .v small{font-size:13px;color:var(--mut);font-weight:400;margin-left:3px}
+.pbar{position:relative;height:6px;border-radius:3px;background:var(--sunk);margin:10px 0 4px}
+.pbar i{position:absolute;top:-3px;width:3px;height:12px;border-radius:2px;background:var(--fg)}
+.pcap{display:flex;justify-content:space-between;font-size:11.5px;color:var(--mut)}
+.mbox svg.spark{width:100%;height:34px;margin-top:8px}
+.vschart{width:100%;height:220px;display:block}
+.vschart .t{fill:none;stroke:var(--fg);stroke-width:1.6}
+.vschart .e{fill:none;stroke:var(--up);stroke-width:1.6}
+.vschart .g{stroke:var(--line);stroke-width:1}
+.vschart text{font-size:11px;fill:var(--mut)}
+.legend{display:flex;gap:16px;font-size:13px;color:var(--mut);margin:6px 0 0}
+.legend i{display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:6px;vertical-align:middle}
+</style>
+</head><body>
+<div class="wrap" id="app"></div>
+<script src="assets/app.js"></script>
+<script src="assets/stable.js"></script>
+<script>
+/* 大盤：整個市場的狀態（market.py → data/market.json）。仿照 ToAlpha 大盤頁：
+ * 每個數字都附「在近 10 年排第幾」和近一年走勢，不讓數字單獨出現。只是事實，不是預測。 */
+function pctBar(p) {
+  if (p == null) return '';
+  return '<div class="pbar" title="近 10 年第 ' + p + ' 百分位"><i style="left:calc(' + p + '% - 1px)"></i></div>' +
+    '<div class="pcap"><span>10 年最低</span><span>第 ' + p + ' 百分位</span><span>最高</span></div>';
+}
+function unitTxt(m) {
+  if (m.value == null) return '—';
+  var v = m.unit === '億元' ? App.num(m.value, 0) : App.num(m.value, m.unit === '家' ? 0 : 1);
+  return v + '<small>' + (m.unit === '%' ? '%' : m.unit) + '</small>';
+}
+/* 加權 vs 等權：近一年，兩條都從 100 開始 */
+function vsChart(V) {
+  var t = V.taiex, e = V.equal, n = t.length;
+  if (n < 2) return '';
+  var all = t.concat(e).filter(function (x) { return x != null; });
+  var lo = Math.min.apply(null, all), hi = Math.max.apply(null, all), W = 600, H = 220, P = 26;
+  function x(i) { return (P + i / (n - 1) * (W - 2 * P)).toFixed(1); }
+  function y(v) { return (10 + (hi - v) / ((hi - lo) || 1) * (H - 40)).toFixed(1); }
+  function line(a) {
+    return a.map(function (v, i) { return v == null ? null : x(i) + ',' + y(v); }).filter(Boolean).join(' ');
+  }
+  var base = y(100);
+  return '<svg class="vschart" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" role="img" aria-label="加權指數與等權平均近一年走勢">' +
+    '<line class="g" x1="' + P + '" x2="' + (W - P) + '" y1="' + base + '" y2="' + base + '"/>' +
+    '<text x="' + P + '" y="' + (Number(base) - 4) + '">起點 100</text>' +
+    '<polyline class="t" points="' + line(t) + '"/><polyline class="e" points="' + line(e) + '"/>' +
+    '<text x="' + P + '" y="' + (H - 6) + '">' + App.esc(V.dates[0]) + '</text>' +
+    '<text x="' + (W - P) + '" y="' + (H - 6) + '" text-anchor="end">' + App.esc(V.dates[n - 1]) + '</text></svg>';
+}
+
+App.boot('market', function (meta) {
+  return App.get('market.json').then(function (M) {
+    var T = M.taiex || {}, V = M.vs || {};
+    var tv = V.taiex ? V.taiex[V.taiex.length - 1] : null, ev = V.equal ? V.equal[V.equal.length - 1] : null;
+    var gap = V.gap;
+    var read = gap == null ? '' :
+      Math.abs(gap) < 5 ? '兩條差不多：漲跌是多數股票一起的，不是少數權值股在撐。' :
+      gap > 0 ? '加權指數比等權平均多漲 ' + App.num(gap, 1) + ' 個百分點：漲勢集中在權值股（大型股），多數股票沒有漲那麼多。' :
+      '等權平均比加權指數多漲 ' + App.num(-gap, 1) + ' 個百分點：中小型股比權值股強。';
+    document.getElementById('app').innerHTML =
+      '<h1 style="font-size:30px;letter-spacing:-.03em;font-weight:500;margin:0 0 4px">大盤</h1>' +
+      '<div class="meta">資料到 ' + App.esc(M.date) + ' ｜ 百分位用 ' + App.esc(M.since) + ' 起的近 ' + M.years + ' 年</div>' +
+      '<div class="card"><h2>加權指數 vs 每檔一樣重</h2>' +
+      '<p class="lead">加權指數是照市值加權，台積電一檔就佔很大一塊。等權平均是每檔上市普通股一樣重，' +
+      '代表「一般股票」的表現。兩條拉開，就知道是少數大型股在撐，還是多數股票都在漲。</p>' +
+      '<div class="stats"><div class="stat"><h3>加權指數</h3><div class="sub">' + App.esc(M.date) + '</div><dl>' +
+      '<dt>收盤</dt><dd>' + App.num(T.close, 2) + '</dd><dt>漲跌</dt><dd>' +
+      '<span class="' + App.cls(T.change) + '">' + App.num(T.change, 2, true) + '</span></dd>' +
+      '<dt>近 10 年位置</dt><dd>第 ' + (T.pct10y == null ? '—' : T.pct10y) + ' 百分位</dd></dl></div>' +
+      '<div class="stat"><h3>近一年（起點 100）</h3><div class="sub">含當天收盤</div><dl>' +
+      '<dt>加權指數</dt><dd>' + App.num(tv, 1) + '</dd><dt>等權平均</dt><dd>' + App.num(ev, 1) + '</dd></dl></div></div>' +
+      vsChart(V) +
+      '<div class="legend"><span><i style="background:var(--fg)"></i>加權指數</span><span><i style="background:var(--up)"></i>等權平均</span></div>' +
+      (read ? '<p class="note" style="font-size:13.5px">' + read + '</p>' : '') + '</div>' +
+      '<div class="card"><h2>市場溫度</h2>' +
+      '<p class="lead">每個數字下面的橫條，是它在近 ' + M.years + ' 年裡的位置（最左是 10 年最低、最右是最高），小圖是近一年的走勢。' +
+      '偏高或偏低是事實，但不代表接下來會漲或會跌。</p>' +
+      '<div class="mgrid">' + (M.metrics || []).map(function (m) {
+        return '<div class="mbox"><h3>' + App.esc(m.name) + ' <span class="tip infoi" tabindex="0" data-tip="' + App.esc(m.desc) + '">i</span></h3>' +
+          '<div class="v">' + unitTxt(m) + '</div>' + pctBar(m.pct10y) + Stable.spark(m.spark) + '</div>';
+      }).join('') + '</div>' +
+      '<p class="note" style="font-size:13px">這頁只是事實，不是預測：「偏高」不代表會跌，「偏低」也不代表會漲。' +
+      '等權平均用的是每天收盤漲跌（除權息當天不算），所以跟含配息的報酬會有一點差距。</p></div>';
+  });
+});
+</script>
+</body></html>
