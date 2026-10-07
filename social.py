@@ -84,6 +84,26 @@ ALIASES = {
 # 東南亞 ⊃ 南亞、海力士（SK 海力士）⊃ 力士、聯合報 ⊃ 聯合。
 STRIP = ["東南亞", "海力士", "聯合報"]
 
+# 招攬話術（仿照反詐投資王的話術特徵庫，自己整理的一份）：文章的標題或內文出現這些字眼，
+# 就記成「帶招攬話術」。只看文章、不看推文 —— 鄉民常在推文裡引用這些字眼嘲諷詐騙，
+# 文章本身被拿來推銷的才算。這是很粗的訊號：PTT 也有人整篇在反詐、引用了這些字，
+# 所以網頁上只顯示「N 篇裡有幾篇」，不拿來排序、不進選股。
+PITCH = ["帶單", "跟單", "保證獲利", "穩賺", "包賺", "穩穩賺", "飆股群", "投資群", "股票群", "加LINE", "加line",
+         "加賴", "私訊我", "老師帶", "VIP", "內線消息", "保證翻倍", "免費體驗", "入群", "加群"]
+PITCH_CASES = [("老師帶單 保證獲利 快加LINE", True), ("台積電法說會心得", False), ("[標的] 2330 台積電 多", False),
+               ("免費體驗三天 飆股群", True), ("這種帶單的都是詐騙", True), ("VIP 會員專屬明牌", True)]
+
+
+def pitchy(text):
+    """這段文字有沒有招攬話術（見 PITCH）。"""
+    return any(w in text for w in PITCH)
+
+
+def _cell(v):
+    """匯總檔一格：[文章數, 推文數] 或 [文章數, 推文數, 帶話術的文章數]（2026-10 起）-> 三個數字。"""
+    v = list(v) + [0] * (3 - len(v))
+    return [int(v[0]), int(v[1]), int(v[2])]
+
 
 def log(msg):
     print(msg, flush=True)
@@ -363,11 +383,15 @@ def export_ptt(names=None, prev=None, to_repo=False):
         except Exception:
             continue
         arts[a["date"]] = arts.get(a["date"], 0) + 1
-        for c in m.find(a["title"] + "\n" + a["body"]):
-            days.setdefault(a["date"], {}).setdefault(c, [0, 0])[0] += 1
+        text = a["title"] + "\n" + a["body"]
+        pitch = pitchy(text)
+        for c in m.find(text):
+            cell = days.setdefault(a["date"], {}).setdefault(c, [0, 0, 0])
+            cell[0] += 1
+            cell[2] += int(pitch)
         for day, txt in a["pushes"]:
             for c in m.find(txt):
-                days.setdefault(day, {}).setdefault(c, [0, 0])[1] += 1
+                days.setdefault(day, {}).setdefault(c, [0, 0, 0])[1] += 1
     # 手上的原文不一定涵蓋全部歷史（只回補了幾天、或舊的原文已經刪掉），
     # 更早的日子沿用上一份匯總。「最舊那篇文章的日期」之後的日子原文是完整的，以這次重算為準；
     # 那一天（只抓到半天）與更早的，跟上一份逐格取大的 —— 提及次數只會隨推文增加，不會變少。
@@ -378,9 +402,10 @@ def export_ptt(names=None, prev=None, to_repo=False):
             if d > oldest or d < keep_from:
                 continue
             cur = days.setdefault(d, {})
-            for c, (n_post, n_push) in v.items():
-                a = cur.setdefault(c, [0, 0])
-                a[0], a[1] = max(a[0], n_post), max(a[1], n_push)
+            for c, old in v.items():
+                a = cur.setdefault(c, [0, 0, 0])
+                o = _cell(old)
+                a[:] = [max(x, y) for x, y in zip(_cell(a), o)]
         for d, n in (prev.get("articles") or {}).items():
             if keep_from <= d <= oldest:
                 arts[d] = max(arts.get(d, 0), n)
@@ -428,13 +453,15 @@ def apply_payload(text, names=None):
         if d not in ok_days or not isinstance(v, dict):
             continue
         for c, pair in v.items():
-            if c not in names or not (isinstance(pair, list) and len(pair) == 2):
+            # 兩格是舊版網頁送的（文章、推文），三格多了「帶招攬話術的文章數」，不能比文章數多
+            if c not in names or not (isinstance(pair, list) and len(pair) in (2, 3)):
                 continue
             a, b = num(pair[0]), num(pair[1])
-            if a is None or b is None or a + b == 0:
+            p = num(pair[2]) if len(pair) == 3 else 0
+            if a is None or b is None or p is None or a + b == 0 or p > a:
                 continue
-            old = days.setdefault(d, {}).get(c, [0, 0])
-            days[d][c] = [max(old[0], a), max(old[1], b)]
+            old = _cell(days.setdefault(d, {}).get(c, [0, 0, 0]))
+            days[d][c] = [max(old[0], a), max(old[1], b), max(old[2], p)]
             n += 1
     for d, v in arts_in.items():
         if d in ok_days and num(v) is not None and v <= 500:        # 股票板一天 35–50 篇
@@ -467,7 +494,8 @@ def rules(names=None):
     names = names or _names()
     m = Matcher(names)
     return dict(names=names, ambiguous=sorted(AMBIGUOUS), aliases=ALIASES, strip=STRIP,
-                cases=[dict(text=t, codes=sorted(m.find(t))) for t in RULE_CASES])
+                cases=[dict(text=t, codes=sorted(m.find(t))) for t in RULE_CASES],
+                pitch=PITCH, pitch_cases=[dict(text=t, hit=pitchy(t)) for t, _ in PITCH_CASES])
 
 
 def load_ptt():
@@ -487,14 +515,15 @@ def daily_counts(ptt=None):
     """每檔股票每個日曆日的提及次數：DataFrame(date, code, src, posts, pushes)。"""
     rows = []
     for day, v in ((ptt or {}).get("days") or {}).items():
-        for c, (n_post, n_push) in v.items():
-            rows.append((day, c, "ptt", n_post, n_push))
+        for c, cell in v.items():
+            n_post, n_push, n_pitch = _cell(cell)
+            rows.append((day, c, "ptt", n_post, n_push, n_pitch))
     for p in (TH_DIR.glob("*.json.gz") if TH_DIR.exists() else []):
         day = p.name[:10]
         for c, v in _read(p).items():
             if v.get("n"):
-                rows.append((day, c, "threads", v["n"], 0))
-    df = pd.DataFrame(rows, columns=["date", "code", "src", "posts", "pushes"])
+                rows.append((day, c, "threads", v["n"], 0, 0))
+    df = pd.DataFrame(rows, columns=["date", "code", "src", "posts", "pushes", "pitch"])
     return df.groupby(["date", "code", "src"], as_index=False).sum()
 
 
@@ -530,13 +559,14 @@ def ranking(data_date, cal):
 
     def agg(days):
         x = dc[dc["date"].isin(days)]
-        p = x[x["src"] == "ptt"].groupby("code")[["posts", "pushes"]].sum()
+        p = x[x["src"] == "ptt"].groupby("code")[["posts", "pushes", "pitch"]].sum()
         t = x[x["src"] == "threads"].groupby("code")["posts"].sum()
         out = pd.DataFrame(index=sorted(set(p.index) | set(t.index)))
         out["ptt_posts"] = p["posts"].reindex(out.index).fillna(0).astype(int)
         out["ptt_pushes"] = p["pushes"].reindex(out.index).fillna(0).astype(int)
         out["threads"] = t.reindex(out.index).fillna(0).astype(int)
-        out["total"] = out.sum(axis=1)
+        out["total"] = out[["ptt_posts", "ptt_pushes", "threads"]].sum(axis=1)
+        out["ptt_pitch"] = p["pitch"].reindex(out.index).fillna(0).astype(int)
         return out
 
     cur = agg(today_days)

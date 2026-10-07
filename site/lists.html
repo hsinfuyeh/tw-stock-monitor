@@ -83,7 +83,8 @@ function socialTable(d) {
     '<th' + (surge ? '' : ' class="sorted"') + '>聲量</th><th>來源</th>' +
     '<th' + (surge ? ' class="sorted"' : '') + '>平常 → 倍數</th></tr></thead><tbody>' +
     d.rows.map(function (r) {
-      var src = ['PTT 文章 ' + r.ptt_posts, '推文 ' + r.ptt_pushes];
+      var src = ['PTT 文章 ' + r.ptt_posts + (r.ptt_pitch ? '（<span style="color:var(--dn)">' + r.ptt_pitch +
+                 ' 篇帶招攬話術</span>）' : ''), '推文 ' + r.ptt_pushes];
       if (r.threads) src.push('Threads ' + r.threads);
       return '<tr><td><a href="stock?c=' + r.code + '"><strong>' + r.code + '</strong></a></td>' +
         '<td style="text-align:left"><a href="stock?c=' + r.code + '">' + App.esc(r.name) + '</a>' +

@@ -304,6 +304,7 @@ def emit_social(day_date):
             rr.append(dict(code=code, name=names.get(code, code), close=close, chg_pct=chg, otc=otc,
                            extra=int(r["total"]), ptt_posts=int(r["ptt_posts"]),
                            ptt_pushes=int(r["ptt_pushes"]), threads=int(r["threads"]),
+                           ptt_pitch=int(r.get("ptt_pitch", 0)),
                            base=None if pd.isna(r["base"]) else round(float(r["base"]), 1),
                            ratio=None if pd.isna(r["ratio"]) else round(float(r["ratio"]), 2)))
         _add_ind(rr)

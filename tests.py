@@ -482,11 +482,11 @@ def test_social():
             mg = social.export_ptt(names, prev=prev)
         finally:
             social.dt.datetime = real_now
-        check("合併：原文沒涵蓋的舊日子沿用上一份", mg["days"].get("2026-07-31") == {"2330": [5, 50]}
+        check("合併：原文沒涵蓋的舊日子沿用上一份", mg["days"].get("2026-07-31") == {"2330": [5, 50, 0]}
               and mg["articles"].get("2026-07-31") == 7, str(mg["days"].get("2026-07-31")))
-        check("合併：邊界那天逐格取大的", mg["days"][first]["2330"] == [3, 40] and mg["days"][first]["8299"] == [9, 0]
+        check("合併：邊界那天逐格取大的", mg["days"][first]["2330"] == [3, 40, 0] and mg["days"][first]["8299"] == [9, 0, 0]
               and mg["articles"][first] == 99, str(mg["days"][first]))
-        check("合併：原文完整的日子以重算為準，不被舊匯總蓋掉", mg["days"][cal[-1]]["2330"] == [3, 0],
+        check("合併：原文完整的日子以重算為準，不被舊匯總蓋掉", mg["days"][cal[-1]]["2330"] == [3, 0, 0],
               str(mg["days"][cal[-1]]["2330"]))
         # 網頁按「更新」送來的聲量（公開入口、不可信）：只收最近幾天、真的代號、合理的整數
         today = social.dt.datetime.now(social.TW).date()
@@ -498,7 +498,7 @@ def test_social():
                   old_day: {"2330": [50, 50]}, "not-a-date": {"2330": [1, 1]}},
             articles={d0: 40, old_day: 9, "x": 1})), names)
         after = json.loads(social.SNAP_FILE.read_text(encoding="utf-8"))
-        check("網頁送來的聲量：只收下合格的那一格", got == 1 and after["days"][d0] == {"2330": [2, 30]},
+        check("網頁送來的聲量：只收下合格的那一格", got == 1 and after["days"][d0] == {"2330": [2, 30, 0]},
               "{} {}".format(got, after["days"].get(d0)))
         check("網頁送來的聲量：太舊的日子、亂寫的日期不收",
               old_day not in after["days"] and "not-a-date" not in after["days"] and after["articles"].get(d0) == 40
@@ -507,10 +507,19 @@ def test_social():
         check("網頁送來的聲量：原有的歷史不動", not diff, str(diff))
         social.apply_payload(json.dumps(dict(days={d0: {"2330": [1, 45]}})), names)
         check("網頁送來的聲量：跟現有的逐格取大的",
-              json.loads(social.SNAP_FILE.read_text(encoding="utf-8"))["days"][d0]["2330"] == [2, 45])
+              json.loads(social.SNAP_FILE.read_text(encoding="utf-8"))["days"][d0]["2330"] == [2, 45, 0])
         check("網頁送來的聲量：格式不對回 0、不丟例外",
               social.apply_payload("not json", names) == 0 and social.apply_payload("[1,2]", names) == 0
               and social.apply_payload(json.dumps(dict(days="x")), names) == 0)
+        # 招攬話術（第三格）：新版網頁送三格，舊版兩格照收；話術篇數不能比文章數多
+        got = social.apply_payload(json.dumps(dict(days={d0: {"2330": [3, 45, 1], "2317": [2, 1, 5]}})), names)
+        cells = json.loads(social.SNAP_FILE.read_text(encoding="utf-8"))["days"][d0]
+        check("話術：三格照收、話術比文章多的不收", got == 1 and cells["2330"] == [3, 45, 1] and "2317" not in cells,
+              str(cells))
+        check("話術：判斷句子（只看文章、粗略）", all(social.pitchy(t) == h for t, h in social.PITCH_CASES))
+        check("話術：網頁端的自我檢查句子跟 Python 一致",
+              all(k["hit"] == social.pitchy(k["text"]) for k in social.rules(names)["pitch_cases"]))
+        check("話術：舊的兩格匯總讀得進來（第三格當 0）", social._cell([4, 9]) == [4, 9, 0])
         r2 = social.ranking(cal[-1], cal)[0].set_index("code")
         check("版控與本機的匯總檔取比較新的", "8299" not in r2.index or int(r2.loc["8299", "total"]) == 0)
     finally:

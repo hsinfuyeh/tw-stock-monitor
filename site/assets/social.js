@@ -36,7 +36,13 @@
     // 代號都是 4 位數字。前後不能是數字、「/」「-」「.」「:」「$」，後面不能接年、點、元、張這類單位
     this.codeRe = /(?<![\d\/\-.:$])(\d{4})(?![\d\/\-.:年月日點元塊張萬億%])/g;
     this.strip = rules.strip || [];
+    this.pitch = rules.pitch || [];
   }
+  /* 招攬話術（對應 social.pitchy）：文章的標題或內文有沒有出現這些字眼 */
+  Matcher.prototype.pitchy = function (text) {
+    for (var i = 0; i < this.pitch.length; i++) if (text.indexOf(this.pitch[i]) >= 0) return true;
+    return false;
+  };
   Matcher.prototype.find = function (text) {
     var self = this, out = {}, named = {}, m;
     this.strip.forEach(function (w) { text = text.split(w).join(' '); });
@@ -58,6 +64,9 @@
     (rules.cases || []).forEach(function (k) {
       var got = matcher.find(k.text).sort().join(','), want = (k.codes || []).slice().sort().join(',');
       if (got !== want) bad.push(k.text + '：網頁算出 [' + got + ']，應該是 [' + want + ']');
+    });
+    (rules.pitch_cases || []).forEach(function (k) {
+      if (matcher.pitchy(k.text) !== k.hit) bad.push(k.text + '：話術判斷跟伺服器不一致');
     });
     return bad;
   }
@@ -172,14 +181,15 @@
         var days = {}, count = {}, got = 0;
         function add(day, code, slot) {
           var d = days[day] || (days[day] = {});
-          var v = d[code] || (d[code] = [0, 0]);
+          var v = d[code] || (d[code] = [0, 0, 0]);   // 文章、推文、帶招攬話術的文章
           v[slot]++;
         }
         arts.forEach(function (a) {
           if (!a) return;
           got++;
           count[a.date] = (count[a.date] || 0) + 1;
-          matcher.find(a.title + '\n' + a.body).forEach(function (c) { add(a.date, c, 0); });
+          var text = a.title + '\n' + a.body, pitch = matcher.pitchy(text);
+          matcher.find(text).forEach(function (c) { add(a.date, c, 0); if (pitch) add(a.date, c, 2); });
           a.pushes.forEach(function (p) { matcher.find(p[1]).forEach(function (c) { add(p[0], c, 1); }); });
         });
         // 抓不到的文章太多（PTT 開始擋、網路不穩）就整批不送：半套的數字會讓「暴增」失真
