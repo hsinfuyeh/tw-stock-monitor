@@ -153,4 +153,6 @@ def lamp(code, tagged, cal, asof, window=10):
     if not len(x):
         return {"name": "公司事件", "val": "近 {} 天沒有".format(window), "ok": True}
     names = sorted({NAME[k] for c in x["cats"] for k in c if k in NEG_KEYS})
-    return {"name": "公司事件", "val": "近 {} 天 {} 則（{}）".format(window, len(x), "、".join(names)), "ok": False}
+    # 第 12 輪回測（2026-10-14）：有這類公告的穩定池股票，之後先跌 5% 的比例沒有比較高，所以不是「沒通過的檢查」，
+    # 燈號用「參考」（None，灰色），不用紅燈。
+    return {"name": "公司事件", "val": "近 {} 天 {} 則（{}）".format(window, len(x), "、".join(names)), "ok": None}

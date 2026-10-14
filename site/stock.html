@@ -113,7 +113,8 @@ App.boot(null, function (meta) {
             '<td style="white-space:nowrap" class="' + (e.neg ? 'st-fail' : 'mut') + '">' + App.esc(e.cats.join('、')) +
             (e.neg ? '（重大負面）' : '') + '</td><td style="text-align:left">' + App.esc(e.subject) + '</td></tr>';
         }).join('') + '</tbody></table></div>' +
-        '<p class="note" style="font-size:13px">這些公告不代表股價會跌：排雷條件有沒有用，要看第 12 輪研究（回測與名單成績頁的影子名單）。</p></div>';
+        '<p class="note" style="font-size:13px">這些公告不代表股價會跌。第 12 輪研究（2008–2025 回測）：穩定池裡近 10 天有重大負面公告的股票，' +
+        '之後 10 天先跌 5% 的比例沒有比較高（20.7%，沒有公告的是 22.2%），所以名單不拿它來排除，只列出來給你參考。</p></div>';
     }
 
     /* 近期表現 vs 大盤（0050，含配息的還原報酬）：只是事實，不是預測 */
