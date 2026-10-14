@@ -380,6 +380,10 @@ def test_inst_context():
 def test_events():
     print("\n公司事件（重大訊息分類，第 12 輪）")
     import events
+    import mops_news
+    check("重大訊息：「查無某日之重大訊息資料」是沒有公告的一天（空的），不是失敗",
+          mops_news.parse("<html>查無97/01/13之重大訊息資料</html>") == [] and mops_news.parse("查無資料") == []
+          and mops_news.parse("<html>看不懂的頁面</html>") is None)
     C = events.classify
     check("司法調查：檢調搜索算、不起訴不算", C("本公司配合檢調單位執行搜索調查") == ["legal"]
           and "legal" not in C("本公司接獲檢察官不起訴處分書"))

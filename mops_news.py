@@ -47,7 +47,9 @@ def _clean(s):
 
 def parse(html):
     """查詢結果的 HTML -> [{date, time, code, name, subject}]。「查無資料」回傳 []；看不懂回傳 None。"""
-    if "查無資料" in html:
+    # 沒有公告的日子（多半是星期日、連假）回的是「查無資料」或「查無97/01/13之重大訊息資料」，兩種都是空的一天，
+    # 不是抓取失敗。舊版只認前一種，111 天被當成失敗一直重試（2026-10-14 修正）。
+    if "查無" in html:
         return []
     rows = _ROW.findall(html)
     if not rows and "發言日期" not in html:
