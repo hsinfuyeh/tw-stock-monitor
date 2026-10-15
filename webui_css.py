@@ -256,6 +256,58 @@ border:1px solid currentColor;vertical-align:4px;margin-left:10px;font-weight:40
    原本是固定欄寬＋省略號，四位數股價（2475.00）、「電腦及週邊設備業」、「57.4 → 2.4 倍」都會被切掉。 */
 table.ltable{table-layout:auto;width:100%;min-width:760px}
 table.ltable td,table.ltable th{white-space:nowrap}
+/* 手機（2026-10-16）：排行表改成「一檔一小塊」，不用左右滑。原本 760px 寬的表在手機上只看得到
+   代號、名稱、產業，最重要的指標、收盤、今日都在畫面外。
+     第 1 行：代號　名稱　　　　　指標（右邊，可以有好幾行小字）
+     第 2 行：產業　收盤　今日
+   一般排行（lmob）把法人買超、日均成交額收起來；社群榜（lmob-s）第 3 行放來源與倍數。 */
+@media(max-width:640px){
+  table.lmob,table.lmob-s{min-width:0}
+  table.lmob thead,table.lmob-s thead,table.lmob colgroup,table.lmob-s colgroup{display:none}
+  table.lmob,table.lmob tbody,table.lmob-s,table.lmob-s tbody{display:block}
+  table.lmob tr,table.lmob-s tr{display:grid;grid-template-columns:max-content max-content 1fr auto;
+    column-gap:10px;row-gap:3px;padding:11px 2px;border-bottom:1px solid var(--hair);align-items:baseline}
+  table.lmob td,table.lmob-s td{display:block;padding:0!important;border:0!important;white-space:normal;
+    text-align:left;background:none!important}
+  table.lmob td:nth-child(1),table.lmob-s td:nth-child(1){grid-column:1;grid-row:1}
+  table.lmob td:nth-child(2),table.lmob-s td:nth-child(2){grid-column:2/4;grid-row:1}
+  table.lmob td:nth-child(3),table.lmob-s td:nth-child(3){grid-column:1;grid-row:2;font-size:12px;white-space:nowrap}
+  table.lmob td:nth-child(4),table.lmob-s td:nth-child(4){grid-column:2;grid-row:2;font-size:13px}
+  table.lmob td:nth-child(5),table.lmob-s td:nth-child(5){grid-column:3;grid-row:2;font-size:13px}
+  table.lmob td:nth-child(6),table.lmob-s td:nth-child(6){grid-column:4;grid-row:1/4;text-align:right}
+  table.lmob td:nth-child(n+7){display:none}
+  table.lmob-s td:nth-child(7){grid-column:1/4;grid-row:3;font-size:12px}
+  table.lmob-s td:nth-child(7) br{display:none}
+  table.lmob-s td:nth-child(7) br+*,table.lmob-s td:nth-child(7){word-break:keep-all}
+  table.lmob-s td:nth-child(8){grid-column:4;grid-row:3;text-align:right;font-size:12.5px}
+  table.lmob-s td:nth-child(6){grid-row:1/3}
+  /* 法人榜（lmob-i）：買超 % 在右上、一年中的位置在右邊第 2 行，「連買幾天…」放第 3 行整行 */
+  table.lmob-i td:nth-child(6){display:contents}
+  table.lmob-i td:nth-child(6)>span:first-child{grid-column:4;grid-row:1;text-align:right;font-weight:500}
+  table.lmob-i td:nth-child(6)>.rk{grid-column:4;grid-row:2;text-align:right}
+  table.lmob-i td:nth-child(6)>.cx{grid-column:1/5;grid-row:3;white-space:normal!important}
+}
+/* 今日名單卡片的檢查燈號：桌機直接攤開；手機收成一行摘要，點一下展開（stable.js 的 lamps） */
+/* 全站的 details 預設有上框線、24px 間距、字距與「+」（給「為什麼？」那種展開說明用），這兩種不要 */
+details.lampd,details.mfold{border-top:0;margin-top:0;padding-top:0}
+details.lampd>summary,details.mfold>summary{letter-spacing:0;text-transform:none;font-weight:400}
+details.lampd>summary::before{content:none}
+.lampd>summary{list-style:none;cursor:pointer;font-size:12px;color:var(--mut);padding:2px 0}
+.lampd>summary::-webkit-details-marker{display:none}
+.lampd>summary::after{content:" ▾";color:var(--faint)}
+.lampd[open]>summary::after{content:" ▴"}
+@media(min-width:641px){.lampd>summary{display:none}}
+/* 手機上收起來的明細表（今日名單的名單明細、分數怎麼來的） */
+.mfold>summary{list-style:none;cursor:pointer;font-size:13.5px;color:var(--mut);padding:6px 0}
+.mfold>summary::-webkit-details-marker{display:none}
+.mfold>summary::before{content:"▸ ";color:var(--faint)}
+.mfold[open]>summary::before{content:"▾ "}
+@media(min-width:641px){.mfold:not(.mfold-all)>summary{display:none}}
+/* 個股頁的公司事件：清單，不用表格（主旨很長，表格在手機上會被擠成一條） */
+.evlist{list-style:none;margin:8px 0 0;padding:0}
+.evlist li{padding:9px 0;border-bottom:1px solid var(--hair)}
+.evlist .when{font-size:12px;color:var(--mut)}
+.evlist .neg{color:var(--warn);font-weight:500}
 /* 產業名稱最長 5 個字（電子零組件、電腦及週邊），一行放得下，不換行 */
 @media(max-width:760px){
   .lgrid{grid-template-columns:minmax(0,1fr);gap:0}

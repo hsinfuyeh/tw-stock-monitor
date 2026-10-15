@@ -22,12 +22,13 @@ function rowsTable(d, rows) {
      法人買的榜單，指標本身就是法人買超，那一欄留「—」而不是整欄拿掉，欄位才對得齊。 */
   var INST = ['法人買超', '同步買超', '外資買超', '投信買超', '自營商買超'];
   var instList = INST.indexOf(d.extra) >= 0;
-  return '<div class="scroll"><table class="ltable stk"><colgroup><col style="width:64px"><col>' +
-    '<col style="width:92px"><col style="width:84px"><col style="width:78px"><col style="width:112px">' +
-    '<col style="width:86px"><col style="width:92px"></colgroup><thead><tr><th>代號</th><th style="text-align:left">名稱</th>' +
+  /* 法人榜：「近 20 天」的脈絡併進指標欄（小字），不另開一欄 —— 多一欄在手機和窄視窗會被切掉 */
+  return '<div class="scroll"><table class="ltable stk lmob' + (instList ? ' lmob-i' : '') + '"><colgroup><col style="width:64px"><col>' +
+    '<col style="width:92px"><col style="width:84px"><col style="width:78px"><col style="width:' + (instList ? 170 : 112) + 'px">' +
+    (instList ? '' : '<col style="width:86px">') + '<col style="width:92px"></colgroup><thead><tr><th>代號</th><th style="text-align:left">名稱</th>' +
     '<th>產業</th><th>' + App.tip('收盤') + '</th><th>' + App.tip('今日') + '</th>' +
-    '<th class="sorted">' + App.tip(d.extra_title || '') + '</th>' +
-    '<th>' + (instList ? '近 20 天' : App.tip('法人買超')) + '</th><th>' + App.tip('日均成交額') + '</th></tr></thead><tbody>' +
+    '<th class="sorted">' + App.tip(d.extra_title || '') + (instList ? '<span class="mut" style="font-weight:400">・近 20 天</span>' : '') + '</th>' +
+    (instList ? '' : '<th>' + App.tip('法人買超') + '</th>') + '<th>' + App.tip('日均成交額') + '</th></tr></thead><tbody>' +
     rows.map(function (r) {
       var ex = r.extra;
       var exTxt = ex == null ? '—' :
@@ -42,23 +43,25 @@ function rowsTable(d, rows) {
       return '<tr><td><a href="stock?c=' + r.code + '"><strong>' + r.code +
         '</strong></a></td><td style="text-align:left"><a href="stock?c=' + r.code + '">' +
         App.esc(r.name) + '</a></td><td class="mut ind">' + App.esc(r.ind || '—') + '</td><td>' +
-        App.num(r.close) + '</td><td>' + App.pct(r.chg_pct) + '</td><td class="sorted">' + exTxt + rankTxt(r.ctx) + '</td>' +
-        '<td>' + (instList ? ctxTxt(r.ctx) : r['法人買超'] == null ? '—' : App.pct(r['法人買超'] * 100, 1)) + '</td>' +
+        App.num(r.close) + '</td><td>' + App.pct(r.chg_pct) + '</td><td class="sorted">' + exTxt + rankTxt(r.ctx) +
+        (instList ? ctxTxt(r.ctx, true) : '') + '</td>' +
+        (instList ? '' : '<td>' + (r['法人買超'] == null ? '—' : App.pct(r['法人買超'] * 100, 1)) + '</td>') +
         '<td class="mut">' + App.yi(r.amt20) + '</td></tr>';
     }).join('') + '</tbody></table></div>';
 }
 
 /* 法人脈絡（screens.inst_streaks）：單日買超金額配上前後文 —— 連續幾天、近 20 天買賣各幾天、20 日累計，
    以及今天的量在這檔股票自己一年裡排第幾。全部是事實，不是預測。 */
-function ctxTxt(c) {
-  if (!c) return '<span class="mut">—</span>';
+function ctxTxt(c, small) {
+  if (!c) return small ? '' : '<span class="mut">—</span>';
   var st = c.streak > 0 ? '連買 ' + c.streak + ' 天' : c.streak < 0 ? '連賣 ' + (-c.streak) + ' 天' : '今天持平';
-  return st + '<div class="mut" style="font-size:12px;white-space:nowrap">買 ' + c.buy + '／賣 ' + c.sell +
-    '，累計 ' + (c.net20 > 0 ? '+' : '') + App.num(c.net20, 0) + ' 張</div>';
+  var rest = '買 ' + c.buy + '／賣 ' + c.sell + '，累計 ' + (c.net20 > 0 ? '+' : '') + App.num(c.net20, 0) + ' 張';
+  if (small) return '<div class="mut cx" style="font-size:12px;white-space:nowrap">' + st + '・' + rest + '</div>';
+  return st + '<div class="mut" style="font-size:12px;white-space:nowrap">' + rest + '</div>';
 }
 function rankTxt(c) {
   if (!c || c.rank1y == null) return '';
-  return '<div class="mut" style="font-size:12px;white-space:nowrap">' +
+  return '<div class="mut rk" style="font-size:12px;white-space:nowrap">' +
     (c.rank1y >= 90 ? '一年來前 ' + Math.max(1, 100 - c.rank1y) + '% 大' : '一年中第 ' + c.rank1y + ' 百分位') + '</div>';
 }
 
@@ -77,7 +80,7 @@ function exPay(r) {
 /* 社群聲量兩張榜（social.py）。欄位：聲量、來源拆解、平常（前 20 個交易日平均）與倍數。 */
 function socialTable(d) {
   var surge = d.key === 'social_surge';
-  return '<div class="scroll"><table class="ltable stk"><colgroup><col style="width:64px"><col>' +
+  return '<div class="scroll"><table class="ltable stk lmob-s"><colgroup><col style="width:64px"><col>' +
     '<col style="width:92px"><col style="width:78px"><col style="width:78px"><col style="width:84px">' +
     '<col style="width:150px"><col style="width:110px"></colgroup><thead><tr><th>代號</th>' +
     '<th style="text-align:left">名稱</th><th>產業</th><th>' + App.tip('收盤') + '</th><th>' + App.tip('今日') + '</th>' +

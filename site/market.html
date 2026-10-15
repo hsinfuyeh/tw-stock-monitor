@@ -57,7 +57,7 @@ function vsChart(V) {
   var base = y(100);
   return '<svg class="vschart" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" role="img" aria-label="加權指數與等權平均近一年走勢">' +
     '<line class="g" x1="' + P + '" x2="' + (W - P) + '" y1="' + base + '" y2="' + base + '"/>' +
-    '<text x="' + P + '" y="' + (Number(base) - 4) + '">起點 100</text>' +
+    '<text x="' + (W - P) + '" y="' + (Number(base) + 14) + '" text-anchor="end">起點 100</text>' +
     '<polyline class="t" points="' + line(t) + '"/><polyline class="e" points="' + line(e) + '"/>' +
     '<text x="' + P + '" y="' + (H - 6) + '">' + App.esc(V.dates[0]) + '</text>' +
     '<text x="' + (W - P) + '" y="' + (H - 6) + '" text-anchor="end">' + App.esc(V.dates[n - 1]) + '</text></svg>';

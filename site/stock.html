@@ -100,6 +100,14 @@ App.boot(null, function (meta) {
         '其他投信尚未接上。</p></div>';
     }
 
+    /* 公司事件清單：日期與類別一行、主旨一行（手機上表格會把主旨擠成一條） */
+    function evList(E) {
+      return '<ul class="evlist">' + E.map(function (e) {
+        return '<li><div class="when">' + App.esc(e.ts) + '　<span class="' + (e.neg ? 'neg' : '') + '">' +
+          App.esc(e.cats.join('、')) + (e.neg ? '（重大負面）' : '') + '</span></div>' +
+          '<div>' + App.esc(e.subject) + '</div></li>';
+      }).join('') + '</ul>';
+    }
     /* 公司事件（觀測站重大訊息，events.py 分類）：近一年有分類的公告。只是事實，不影響任何名單 */
     var evBlock = '';
     if (d.events && d.events.length) {
@@ -107,12 +115,9 @@ App.boot(null, function (meta) {
         '<p class="lead">公開資訊觀測站的重大訊息裡，跟風險有關的公告（近一年、最近 12 則）。' +
         '「重大負面」是司法調查、資安事件、財務危機、會計異常、災害停工五類；澄清報導、主管機關裁罰、治理異動只列出來給你參考。' +
         '分類是用主旨的字眼判斷的，會有誤判，點進觀測站看原文為準。</p>' +
-        '<div class="scroll"><table class="stk"><thead><tr><th>日期</th><th>類別</th><th style="text-align:left">主旨</th></tr></thead><tbody>' +
-        d.events.map(function (e) {
-          return '<tr><td style="white-space:nowrap">' + App.esc(e.ts) + '</td>' +
-            '<td style="white-space:nowrap" class="' + (e.neg ? 'st-fail' : 'mut') + '">' + App.esc(e.cats.join('、')) +
-            (e.neg ? '（重大負面）' : '') + '</td><td style="text-align:left">' + App.esc(e.subject) + '</td></tr>';
-        }).join('') + '</tbody></table></div>' +
+        evList(d.events.slice(0, 5)) +
+        (d.events.length > 5 ? '<details class="mfold mfold-all"><summary>再顯示 ' + (d.events.length - 5) + ' 則</summary>' +
+          evList(d.events.slice(5)) + '</details>' : '') +
         '<p class="note keep" style="font-size:13px">這些公告不代表股價會跌。第 12 輪研究（2008–2025 回測）：穩定池裡近 10 天有重大負面公告的股票，' +
         '之後 10 天先跌 5% 的比例沒有比較高（20.7%，沒有公告的是 22.2%），所以名單不拿它來排除，只列出來給你參考。</p></div>';
     }

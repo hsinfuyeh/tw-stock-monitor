@@ -55,10 +55,17 @@ function groups(r) {
 
 /* 排除檢查燈號：綠 = 通過、黃 = 名單抓不到（沒辦法確認）、紅 = 被點名 */
 function lamps(r) {
-  return '<div class="lamps" title="名單上的股票都通過了這些檢查">' + (r.checks || []).map(function (c) {
+  var C = r.checks || [];
+  var body = '<div class="lamps" title="名單上的股票都通過了這些檢查">' + C.map(function (c) {
     var cls = c.ok === true ? '' : c.ok === null ? ' class="q"' : ' class="x"';
     return '<span' + cls + '>' + App.esc(c.name) + ' ' + App.esc(c.val) + '</span>';
   }).join('') + '</div>';
+  /* 手機：8 個燈號會折成 4 行、佔掉卡片四分之一，收成一行摘要（點一下展開）；桌機照舊攤開 */
+  var odd = C.filter(function (c) { return c.ok !== true; });
+  var sum = '檢查 ' + C.length + ' 項：' + (odd.length ? (C.length - odd.length) + ' 項通過、' +
+    odd.map(function (c) { return c.name + ' ' + c.val; }).join('、') : '全部通過');
+  var open = !(window.matchMedia && window.matchMedia('(max-width:640px)').matches);
+  return '<details class="lampd"' + (open ? ' open' : '') + '><summary>' + App.esc(sum) + '</summary>' + body + '</details>';
 }
 
 function card(r) {

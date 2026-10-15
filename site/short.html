@@ -86,6 +86,12 @@ function funnel(T) {
     '<p class="note" style="font-size:13px;margin-top:8px">被刷掉的原因（一檔可能同時符合好幾條）：' + parts.join('、') + '</p>';
 }
 
+/* 手機上很寬的明細表預設收起來（卡片已經有同樣的資訊），桌機照舊攤開 */
+function fold(label, html) {
+  var open = !(window.matchMedia && window.matchMedia('(max-width:640px)').matches);
+  return '<details class="mfold"' + (open ? ' open' : '') + '><summary>' + label + '</summary>' + html + '</details>';
+}
+
 App.boot('short', function (meta) {
   return Promise.all([App.get('stable/today.json'), App.get('stable/backtest.json').catch(function () { return null; })])
   .then(function (res) {
@@ -116,10 +122,11 @@ App.boot('short', function (meta) {
       (T.rows.length ? '<div class="hcards">' + T.rows.map(Stable.card).join('') + '</div>'
         : '<div class="empty"><div class="note">今天穩定池裡沒有股票。</div></div>') + '</div>' +
       '<div class="card"><h2>跟前一天比</h2>' + changes(T) + '</div>' +
-      '<div class="card"><h2>名單明細</h2>' + detailTable(T) + '</div>' +
+      '<div class="card"><h2>名單明細</h2>' + fold('展開名單明細表（可以左右滑）', detailTable(T)) + '</div>' +
       '<div class="card"><h2>分數怎麼來的</h2>' +
       '<p class="note" style="margin-top:0">分數 85 ＝ 這一項贏過今天穩定池裡 85% 的股票。總分是 9 項的平均，權重一律相同；' +
-      '卡片上的「動能／穩定／籌碼與營收」是各 3 項的平均。滑到指標名稱上看說明。</p>' + scoreTable(T) + '</div>' +
+      '卡片上的「動能／穩定／籌碼與營收」是各 3 項的平均。滑到指標名稱上看說明。</p>' +
+      fold('展開 9 項分數表（可以左右滑）', scoreTable(T)) + '</div>' +
       '<div class="card"><h2>今天刷掉了誰</h2>' + funnel(T) + '</div>';
     App.pager(document.getElementById('app'));
   });
