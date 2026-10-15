@@ -630,7 +630,7 @@
    *   3. GET /status：每 10 秒問一次進度，跑完提示重新載入。
    * 瀏覽器裡沒有任何金鑰，也不需要輸入任何東西（以前要貼一把 GitHub token）。
    */
-  var WORKER = 'https://tw-stock-monitor-cron.sam19920516-923.workers.dev';
+  var WORKER = 'https://tw-stock-monitor-cron.samyeh.workers.dev';
   // 本機預覽要測公開網站這條路時，網址加 ?cloud=1
   var CLOUD = !LOCAL || /[?&]cloud=1\b/.test(location.search);
   try { localStorage.removeItem('gh_token'); } catch (e) {}     // 以前存在瀏覽器裡的 GitHub 金鑰，用不到了
