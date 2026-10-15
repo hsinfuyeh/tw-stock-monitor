@@ -17,6 +17,15 @@ import pandas as pd
 
 import store
 
+# 三大法人分開的榜：代號 -> (面板欄位, 由小到大排)。合計的 inst／instout 另外處理（下面）。
+INST_SPLIT = {"foreign": ("外資買超", False), "foreignout": ("外資買超", True),
+              "trust": ("投信買超", False), "trustout": ("投信買超", True),
+              "dealer": ("自營商買超", False), "dealerout": ("自營商買超", True)}
+# 每一張法人榜的脈絡（連買幾天…）要看哪一種法人的買賣超
+INST_COL = {"inst": "total_net", "instout": "total_net", "inst_both": "total_net",
+            "foreign": "foreign_net", "foreignout": "foreign_net", "trust": "trust_net", "trustout": "trust_net",
+            "dealer": "dealer_net", "dealerout": "dealer_net"}
+
 # 每張排行顯示幾檔（使用者要求：參考用的排行一律縮成 10 筆）
 LIST_N = 10
 
@@ -26,7 +35,9 @@ LIST_N = 10
 TAB_LABEL = {
     "amount": "成交金額", "gain": "漲最多", "loss": "跌最多", "volume": "量暴增",
     "high": "創 20 日新高", "low": "創 20 日新低", "calm": "波動小", "exdiv": "除權息",
-    "inst": "法人買", "instout": "法人賣", "inst_both": "外資投信一起買", "score": "綜合評分",
+    "inst": "三大法人買", "instout": "三大法人賣",
+    "foreign": "外資買", "foreignout": "外資賣", "trust": "投信買", "trustout": "投信賣",
+    "dealer": "自營商買", "dealerout": "自營商賣", "inst_both": "外資投信一起買", "score": "綜合評分",
     "screen": "體質篩選", "pos": "接近一年高點", "rev": "營收成長",
     "sue": "營收優於預期",
     "social_hot": "社群聲量最高", "social_surge": "社群聲量暴增",
@@ -53,10 +64,20 @@ SCREENS = [
     ("exdiv", "即將除權息",
      "未來 60 天內要除權息的。除權息當天股價會往下調整，"
      "那是發給股東的部分，不是下跌。", "fact"),
-    ("inst", "法人買最多",
+    ("inst", "三大法人合計買最多",
      "外資、投信、自營商今天買最多的（換算成平常成交量的比例，大小股票才能比）。"
      "過去統計方向是對的，但幅度小於手續費和稅。", "fact"),
-    ("instout", "法人賣最多", "外資、投信、自營商今天賣最多的。", "fact"),
+    ("instout", "三大法人合計賣最多", "外資、投信、自營商合計今天賣最多的。", "fact"),
+    ("foreign", "外資買最多",
+     "外資（不含外資自營商）今天買最多的，換算成平常成交量的比例。外資資金最大，常是權值股漲跌的主力。", "fact"),
+    ("foreignout", "外資賣最多", "外資（不含外資自營商）今天賣最多的。", "fact"),
+    ("trust", "投信買最多",
+     "投信今天買最多的，換算成平常成交量的比例。投信多半是國內基金，買賣通常會連續好幾天，中小型股比較看得出影響。", "fact"),
+    ("trustout", "投信賣最多", "投信今天賣最多的。", "fact"),
+    ("dealer", "自營商買最多",
+     "自營商今天買最多的（含自行買賣與避險）。自營商的買賣有很大一部分是發行權證之後的避險，"
+     "不一定代表看好，參考價值比外資、投信低。", "fact"),
+    ("dealerout", "自營商賣最多", "自營商今天賣最多的（含自行買賣與避險）。", "fact"),
     ("inst_both", "外資、投信今天一起買",
      "外資和投信今天都是買超的股票，依兩者合計買超（換算成平常成交量的比例）排序。"
      "兩種法人看法一致是事實，但這份名單還沒有檢驗過「之後會不會比較好」。", "fact"),
@@ -142,6 +163,10 @@ def run_screen(panel, key, limit=LIST_N):
         r = liq[liq["amt20"] >= 1e8].copy()
         r["annvol"] = r["sd60"] * np.sqrt(252) * 100
         return r.dropna(subset=["annvol"]).sort_values("annvol").head(limit), "annvol", "一年波動幅度"
+    if key in INST_SPLIT:
+        col, asc = INST_SPLIT[key]
+        r = liq.dropna(subset=[col])
+        return r.sort_values(col, ascending=asc).head(limit), col, col
     if key in ("inst", "instout"):
         # 這兩個原本只存在於 server.py 的路由裡，run_screen 會落到最後一行
         # 回傳空表 —— 靜態站因此產出了兩份 0 筆的法人榜，而且沒有錯誤訊息。

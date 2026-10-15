@@ -103,7 +103,7 @@ def panel(kind="common", full=False):
             # （單調性 +0.88，樣本外毛價差 +0.23%/5日），但效果小於交易成本，
             # 所以只當參考資訊呈現，不做成買賣訊號。
             try:
-                inst = store.q("SELECT date, code, foreign_net, trust_net, "
+                inst = store.q("SELECT date, code, foreign_net, trust_net, dealer_net, "
                                "total_net FROM {}inst".format(pfx))
                 inst["date"] = pd.to_datetime(inst["date"])
                 d = d.merge(inst, on=["date", "code"], how="left")
@@ -111,6 +111,9 @@ def panel(kind="common", full=False):
                     [np.inf, -np.inf], np.nan)
                 d["外資買超"] = (d["foreign_net"] / d["vol20"]).replace(
                     [np.inf, -np.inf], np.nan)
+                # 三大法人分開的排行榜（2026-10-16 使用者要求）：投信、自營商也各自換算成平常成交量的比例
+                d["投信買超"] = (d["trust_net"] / d["vol20"]).replace([np.inf, -np.inf], np.nan)
+                d["自營商買超"] = (d["dealer_net"] / d["vol20"]).replace([np.inf, -np.inf], np.nan)
             except Exception as e:
                 # 出聲。這裡靜默的話，法人買超／賣超兩個榜單會變成空的，
                 # 而畫面上只會顯示「今天沒有符合條件的標的」—— 看起來像
@@ -121,6 +124,7 @@ def panel(kind="common", full=False):
                 traceback.print_exc()
                 d["法人買超"] = np.nan
                 d["外資買超"] = np.nan
+                d["投信買超"] = d["自營商買超"] = np.nan
             # 併入估值 + 計算一年價格位置。
             # 這兩項支撐系統中唯一通過 Bonferroni 校正的兩條「排除規則」：
             #   排除殖利率最低 40% -> 剩餘池子中位數 +5.49%/年 (t=4.69)
@@ -577,7 +581,8 @@ SIGNAL_KEYS = ("sue", "pos", "rev")
 TAB_GROUPS_SPEC = [
     ("過去表現較好", ["sue", "pos", "rev"]),
     ("今日行情", ["amount", "gain", "loss", "volume", "high"]),
-    ("法人動向", ["inst", "instout", "inst_both"]),
+    ("法人動向", ["inst", "instout", "foreign", "foreignout", "trust", "trustout",
+                  "dealer", "dealerout", "inst_both"]),
     ("其他", ["calm", "exdiv"]),
     ("社群聲量", ["social_hot", "social_surge"]),
     ("過去表現較差", ["low", "score"]),

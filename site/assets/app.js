@@ -99,8 +99,7 @@
     ['history', '名單成績', 'history'],
     ['market', '大盤', 'market'],
     ['backtest', '回測報告', 'backtest'],
-    ['lists', '其他排行', 'lists', ['funnel']],
-    ['trades', '交易體檢', 'trades']
+    ['lists', '其他排行', 'lists', ['funnel']]
   ];
   // 本機（python server.py）才有後端：可以按鈕更新、用自訂參數回測
   var LOCAL = !/github\.io$/.test(location.hostname);

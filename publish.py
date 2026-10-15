@@ -224,9 +224,9 @@ def emit_screens(p):
                 if ek and ek in r:
                     d["extra"] = r[ek]
                 rows.append(d)
-            if key in ("inst", "instout", "inst_both"):
-                # 法人脈絡：連買幾天、近 20 天買賣天數、20 日累計、今天的量在一年裡的位置
-                ctx = screens.inst_context([r["code"] for r in rows], p["date"].max())
+            if key in screens.INST_COL:
+                # 法人脈絡：連買幾天、近 20 天買賣天數、20 日累計、今天的量在一年裡的位置（看這張榜對應的法人）
+                ctx = screens.inst_context([r["code"] for r in rows], p["date"].max(), screens.INST_COL[key])
                 for r in rows:
                     r["ctx"] = ctx.get(r["code"])
             out[key] = dict(key=key, title=title, desc=desc, cat=cat,
@@ -425,13 +425,6 @@ def active_index():
 
 
 PERF_WINDOWS = [("一週", 5), ("一個月", 20), ("一季", 60), ("半年", 120), ("一年", 250)]
-
-
-def emit_bench(bench):
-    """0050 總報酬指數 -> {dates: [...], px: [...]}（交易體檢頁用；四位有效數字就夠比報酬）。"""
-    b = bench.dropna()
-    return {"name": "0050（含配息）", "dates": [str(x)[:10] for x in b.index],
-            "px": [round(float(v), 4) for v in b.to_numpy()]}
 
 
 def perf_vs_bench(s, bench):
@@ -662,15 +655,6 @@ def build(limit=None, out=SITE):
     sizes["funnel"] = write(data / "funnel.json", fn)
     stable.write(data, *st)
     shadow.write(data, *sh)
-    # 交易體檢頁（site/trades.html，全部在瀏覽器裡算）要的兩份小檔：
-    #   bench.json        0050 總報酬指數（含配息），每筆交易跟「同一段期間抱 0050」比
-    #   stable/lists.json 每天名單的代號（前瞻快照），判斷某筆買進是不是照名單
-    try:
-        sizes["bench"] = write(data / "bench.json", emit_bench(bench))
-        sizes["lists"] = write(data / "stable" / "lists.json",
-                               {d: [r["code"] for r in s["rows"]] for d, s in sorted(stable.load_snaps().items())})
-    except Exception as e:
-        print("::warning::交易體檢頁的資料寫不出來：{}".format(e), flush=True)
     # 大盤頁（market.py）：附加資訊，算不出來不擋發佈（舊倉儲還沒有 market_index／margin_total 時也一樣）
     try:
         import market

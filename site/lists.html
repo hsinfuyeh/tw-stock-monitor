@@ -20,7 +20,8 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 function rowsTable(d, rows) {
   /* 每個榜單同一組欄位、同一組欄寬：代號、名稱、產業、收盤、今日、這個榜的指標、法人買超、日均成交額。
      法人買的榜單，指標本身就是法人買超，那一欄留「—」而不是整欄拿掉，欄位才對得齊。 */
-  var instList = d.extra === '法人買超' || d.extra === '同步買超';
+  var INST = ['法人買超', '同步買超', '外資買超', '投信買超', '自營商買超'];
+  var instList = INST.indexOf(d.extra) >= 0;
   return '<div class="scroll"><table class="ltable stk"><colgroup><col style="width:64px"><col>' +
     '<col style="width:92px"><col style="width:84px"><col style="width:78px"><col style="width:112px">' +
     '<col style="width:86px"><col style="width:92px"></colgroup><thead><tr><th>代號</th><th style="text-align:left">名稱</th>' +
@@ -36,7 +37,7 @@ function rowsTable(d, rows) {
          d.extra === 'posv' ? App.num(ex, 0) + '%' :
          d.extra === 'sue' ? App.num(ex, 1) + ' 倍' :
          d.extra === '_s' ? App.num(ex, 2, true) :
-         d.extra === '法人買超' || d.extra === '同步買超' ? App.pct(ex * 100, 1) :
+         instList ? App.pct(ex * 100, 1) :
          App.pct(ex, d.extra === 'yoy' ? 1 : 2));
       return '<tr><td><a href="stock?c=' + r.code + '"><strong>' + r.code +
         '</strong></a></td><td style="text-align:left"><a href="stock?c=' + r.code + '">' +
