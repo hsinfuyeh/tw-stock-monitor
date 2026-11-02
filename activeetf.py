@@ -486,7 +486,7 @@ def build():
             df["date"] = pd.to_datetime(df["date"])
             con.register("_tmp", df)
             exists = con.execute("SELECT COUNT(*) FROM information_schema.tables "
-                                 "WHERE table_name = ?", [tbl]).fetchone()[0]
+                                 "WHERE table_name = ?", [tbl]).fetchall()[0][0]
             if not exists:
                 con.execute("CREATE TABLE {} AS SELECT * FROM _tmp".format(tbl))
             else:
@@ -495,7 +495,7 @@ def build():
                 cols = [r[0] for r in con.execute("DESCRIBE {}".format(tbl)).fetchall()]
                 con.execute("INSERT INTO {} SELECT {} FROM _tmp".format(tbl, ", ".join(cols)))
             con.unregister("_tmp")
-        n = con.execute("SELECT COUNT(*) FROM {}".format(HOLD_TABLE)).fetchone()[0]
+        n = con.execute("SELECT COUNT(*) FROM {}".format(HOLD_TABLE)).fetchall()[0][0]
         con.execute("CHECKPOINT")
     finally:
         con.close()

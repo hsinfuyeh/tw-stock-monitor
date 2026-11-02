@@ -67,7 +67,7 @@ def write(df):
     con = duckdb.connect(str(DB))
     try:
         exists = con.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?",
-                             [TABLE]).fetchone()[0]
+                             [TABLE]).fetchall()[0][0]
         con.register("_tmp", df)
         if exists:
             dates = ", ".join("DATE '{}'".format(d.strftime("%Y-%m-%d")) for d in df["date"].unique())

@@ -116,7 +116,7 @@ def build(datasets=None, verbose=True):
             def _days(path):
                 c = duckdb.connect(str(path), read_only=True)
                 try:
-                    return c.execute("SELECT COUNT(DISTINCT date) FROM quotes").fetchone()[0]
+                    return c.execute("SELECT COUNT(DISTINCT date) FROM quotes").fetchall()[0][0]
                 except Exception:
                     return 0
                 finally:
@@ -193,7 +193,7 @@ def append(days, verbose=True, datasets=None):
 def write_derived(con, tbl, days, rows):
     """衍生表的增量寫入：先刪這幾天、再插入（重跑冪等）；表還不存在就建（舊倉儲第一次遇到）。"""
     exists = con.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?",
-                         [tbl]).fetchone()[0]
+                         [tbl]).fetchall()[0][0]
     if exists:
         isos = ", ".join("DATE '{}-{}-{}'".format(d[:4], d[4:6], d[6:]) for d in days)
         con.execute(f"DELETE FROM {tbl} WHERE date IN ({isos})")
@@ -224,7 +224,7 @@ def backfill_derived(verbose=True):
             con.execute(f"DROP TABLE IF EXISTS {tbl}")
             write_derived(con, tbl, days, rows)
             if verbose:
-                n = con.execute(f"SELECT COUNT(*), COUNT(DISTINCT date), MIN(date), MAX(date) FROM {tbl}").fetchone()
+                n = con.execute(f"SELECT COUNT(*), COUNT(DISTINCT date), MIN(date), MAX(date) FROM {tbl}").fetchall()[0]
                 print(f"  {tbl}: {n[0]:,} 列、{n[1]} 天（{n[2]} ~ {n[3]}）", flush=True)
         con.execute("CHECKPOINT")
     finally:
@@ -245,7 +245,7 @@ def summary():
     for t in ("quotes", "inst", "valuation", "margin"):
         try:
             r = con.execute(f"SELECT COUNT(*) n, MIN(date) a, MAX(date) b, "
-                            f"COUNT(DISTINCT date) d FROM {t}").fetchone()
+                            f"COUNT(DISTINCT date) d FROM {t}").fetchall()[0]
             out.append(f"  {t:<10} {r[0]:>9,} 列  {r[3]:>5} 天  {r[1]:%Y-%m-%d} ~ {r[2]:%Y-%m-%d}")
         except Exception:
             out.append(f"  {t:<10} (尚未建立)")

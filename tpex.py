@@ -299,7 +299,7 @@ def _write_days(con, ds, days):
     df["date"] = pd.to_datetime(df["date"])
     exists = con.execute(
         "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?", [tbl]
-    ).fetchone()[0]
+    ).fetchall()[0][0]
     con.register("_tmp", df)
     if not exists:
         con.execute("CREATE TABLE {} AS SELECT * FROM _tmp".format(tbl))
@@ -422,7 +422,7 @@ def summary():
         for t in list(TABLES.values()) + [EXR_TABLE]:
             try:
                 r = con.execute("SELECT COUNT(*), MIN(date), MAX(date), COUNT(DISTINCT date) "
-                                "FROM {}".format(t)).fetchone()
+                                "FROM {}".format(t)).fetchall()[0]
                 out.append("  {:<16} {:>9,} 列  {:>4} 天  {:%Y-%m-%d} ~ {:%Y-%m-%d}".format(
                     t, r[0], r[3], r[1], r[2]))
             except Exception:

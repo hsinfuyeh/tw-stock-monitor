@@ -166,7 +166,7 @@ def append(days):
     con = duckdb.connect(str(DB))
     try:
         exists = con.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?",
-                             [TABLE]).fetchone()[0]
+                             [TABLE]).fetchall()[0][0]
     finally:
         con.close()
     if not exists:
@@ -180,7 +180,7 @@ def append(days):
                 SELECT 1 FROM {TABLE} t WHERE t.ts = _tmp.ts AND t.code = _tmp.code AND t.subject = _tmp.subject)""")
             con.unregister("_tmp")
             con.execute("CHECKPOINT")
-        return con.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchone()[0]
+        return con.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchall()[0][0]
     finally:
         con.close()
 
@@ -191,7 +191,7 @@ def build(verbose=True):
     con = duckdb.connect(str(DB))
     try:
         try:
-            old = con.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchone()[0]
+            old = con.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchall()[0][0]
         except Exception:
             old = 0
         if old and len(df) < old * 0.9:

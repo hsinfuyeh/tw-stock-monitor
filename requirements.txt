@@ -2,6 +2,6 @@
 # 鎖上限只會在幾個月後變成裝不起來的理由。
 pandas>=2.2
 numpy>=2.0
-duckdb>=1.0
+duckdb>=1.0,<3
 requests>=2.31
 flask>=3.0
