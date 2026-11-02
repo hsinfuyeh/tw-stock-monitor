@@ -51,9 +51,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -69,7 +69,7 @@ jobs:
       # 換前綴等於讓舊快取失效，強制從新的 Release 種子重新開始。
       - name: 還原倉儲快取
         id: cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: |
             data
@@ -128,7 +128,7 @@ jobs:
       - name: 還原上次產出的網站
         id: sitecache
         if: steps.fetch.outputs.publish == 'true' && steps.fetch.outputs.light == 'true'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: site/data
           key: site-${{ steps.fetch.outputs.data_date }}-${{ hashFiles('*.py', 'requirements.txt', 'site/*.html', 'site/assets/**') }}-${{ github.run_id }}
@@ -149,20 +149,31 @@ jobs:
       # 跟上面還原時是同一個算式；site/data 是產出來的、不在算式裡。
       - name: 保存產出的網站
         if: steps.build.outcome == 'success' || steps.light.outputs.full == 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: site/data
           key: site-${{ steps.fetch.outputs.data_date }}-${{ hashFiles('*.py', 'requirements.txt', 'site/*.html', 'site/assets/**') }}-${{ github.run_id }}
 
       - if: steps.fetch.outputs.publish == 'true'
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
       - if: steps.fetch.outputs.publish == 'true'
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: site
+      # GitHub Pages 偶爾部署失敗（逾時、內部錯誤），資料都已經產好了，隔 30 秒再試一次通常就好。
+      # 兩次都失敗整個 job 才算失敗。步驟名稱網頁會顯示（app.js 的 failHtml 認「發佈到」）。
       - id: deploy
+        name: 發佈到 GitHub Pages
         if: steps.fetch.outputs.publish == 'true'
-        uses: actions/deploy-pages@v4
+        continue-on-error: true
+        uses: actions/deploy-pages@v5
+      - name: 等一下再重試發佈
+        if: steps.fetch.outputs.publish == 'true' && steps.deploy.outcome == 'failure'
+        run: sleep 30
+      - id: deploy2
+        name: 發佈到 GitHub Pages（重試）
+        if: steps.fetch.outputs.publish == 'true' && steps.deploy.outcome == 'failure'
+        uses: actions/deploy-pages@v5
 
       # 每日清單快照（PRD：每天存一份當日清單）。網站每次都是整個重新產生，
       # 快照只放在網站上會在下一次部署時消失，所以 commit 回 repo 的 snapshots/。
@@ -189,7 +200,7 @@ jobs:
         if: >-
           success() && (steps.fetch.outputs.changed == 'true'
           || steps.cache.outputs.cache-matched-key == '')
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: |
             data
@@ -223,5 +234,5 @@ jobs:
             echo ""
             cat ci_summary.md 2>/dev/null || echo "（沒有產生摘要，代表在抓資料那步就停了）"
             echo ""
-            echo "網址: ${{ steps.deploy.outputs.page_url }}"
+            echo "網址: ${{ steps.deploy.outputs.page_url || steps.deploy2.outputs.page_url }}"
           } >> "$GITHUB_STEP_SUMMARY"
