@@ -133,37 +133,29 @@
   function staleBanner(meta) {
     var bar = document.getElementById('updbar');
     if (!bar || !meta || !meta.data_date) return;
-    var last = new Date(meta.data_date + 'T00:00:00');
-    var now = new Date();
-    // 自動更新在台北 14:40 起每小時試一次，最後一次 19:10。
-    // 過了 20:00 當天資料還沒上來，才代表真的有問題 —— 在那之前跳橫幅，
-    // 只是在提醒一件排程馬上就會自己處理的事，會訓練人忽略這條橫幅。
-    var edge = new Date(now);
-    if (now.getHours() < 20) edge.setDate(edge.getDate() - 1);
-    edge.setHours(0, 0, 0, 0);
+    // 應該要有哪一天的資料：跟打開網頁時的自動更新同一套判斷（expectedData，台北時間），
+    // 只是當天的寬限到 17:30 —— 14:40 起打開網頁就會自動更新，那段時間跳「落後」，
+    // 只是在提醒一件馬上就會自己處理的事，會訓練人忽略這條橫幅。
     // 休市日（中秋、教師節、春節…）來自 TWSE 公布的開休市日期，由 publish.py 放進 meta.json。
-    // 只跳週末的話，連假會被當成「自動更新失敗」、一直叫人手動更新 —— 那幾天根本沒有資料。
-    var off = {};
+    // 只跳週末的話，連假會被當成「沒有更新」、一直叫人手動更新 —— 那幾天根本沒有資料。
+    var off = {}, t = twNow();
     (meta.holidays || []).forEach(function (h) { off[h] = 1; });
-    function ymd(x) {
-      return x.getFullYear() + '-' + ('0' + (x.getMonth() + 1)).slice(-2) + '-' + ('0' + x.getDate()).slice(-2);
-    }
-    var n = 0, d = new Date(last);
-    d.setDate(d.getDate() + 1);
-    while (d <= edge) {
-      if (d.getDay() !== 0 && d.getDay() !== 6 && !off[ymd(d)]) n++;
-      d.setDate(d.getDate() + 1);
+    var edge = isTradingDay(t.ymd, off) && t.min >= 17 * 60 + 30 ? t.ymd : prevTradingDay(t.ymd, off);
+    var n = 0, d = new Date(meta.data_date + 'T00:00:00Z');
+    for (var i = 0; i < 400; i++) {
+      d.setUTCDate(d.getUTCDate() + 1);
+      var s = d.toISOString().slice(0, 10);
+      if (s > edge) break;
+      if (isTradingDay(s, off)) n++;
     }
     if (n < 1) return;
     bar.removeAttribute('data-empty');
-    /* 走到這裡代表晚上 8 點過後當天資料還沒上來 —— 排程五次都沒成功，
-       或排程被停用（GitHub 對 60 天沒有 commit 的公開 repo 會自動停用排程）。
-       按「立即更新」直接更新（公開網站交給 Cloudflare Worker，見下方 runUpdate）。
-       排程被停用的話，要到 GitHub 的 Actions 頁重新啟用。 */
+    /* 網站沒有定時排程：資料只在有人打開網頁（自動）或按 ⟳ 時更新。
+       「立即更新」直接更新（公開網站交給 Cloudflare Worker，見下方 runUpdate）。 */
     bar.querySelector('.in').innerHTML =
       '<b>資料落後 ' + n + ' 個交易日</b><span>最新是 ' + esc(meta.data_date) +
-      '（已扣掉週末與證交所公布的休市日）。每個交易日收盤後會自動更新，' +
-      '晚上 8 點還沒更新代表自動更新沒有成功（颱風臨時停市除外），可以手動更新。</span>' + '<button class="updbtn" id="updgo" type="button">立即更新</button>';
+      '（已扣掉週末與證交所公布的休市日）。打開網頁時會自動更新，進度顯示在下方；' +
+      '如果一直沒有更新（颱風臨時停市除外），可以手動更新。</span>' + '<button class="updbtn" id="updgo" type="button">立即更新</button>';
     var go = document.getElementById('updgo');
     if (go) go.addEventListener('click', function () {
       go.disabled = true;
@@ -603,6 +595,7 @@
       staleBanner(meta);
       bindUpdateButton();
       autoRefresh(meta);
+      healthCheck(meta);
       if (LOCAL) watchUpdate();
       var r = render(meta);
       return Promise.resolve(r).then(function () { buildStamp(meta); });
@@ -710,19 +703,68 @@
   function runLink(run) {
     return run && run.url ? '<a class="updbtn" href="' + esc(run.url) + '" target="_blank" rel="noopener">看進度</a>' : '';
   }
+  function logLink(run) {
+    return run && run.url ? '<a class="updbtn" href="' + esc(run.url) + '" target="_blank" rel="noopener">看紀錄</a>' : '';
+  }
+
+  /* Worker 回的錯誤（{ kind, message }）-> 訊息列。kind 見 cloudflare/worker.js 的 explain()：
+     token／config 要有人去處理（例如金鑰過期），其他是 GitHub 暫時的狀況，晚點再試就好。 */
+  var ERR_TITLE = { token: 'GitHub 金鑰需要更新', config: '更新服務的設定有誤', rate: 'GitHub 暫時忙碌',
+                    github: 'GitHub 暫時連不上', worker: '更新服務出錯' };
+  function cloudErr(j) {
+    var e = new Error((j && (j.message || j.error)) || '');
+    e.kind = j && j.kind;
+    return e;
+  }
+  function errHtml(e) {
+    var msg = e.message;
+    if (!e.kind && (e.name === 'TypeError' || /fetch/i.test(msg))) msg = '連不上更新服務（Cloudflare Worker），請確認網路後再試。';
+    // 要有人動手的說明（例如換金鑰的步驟）整段留在畫面上，不收進 ⓘ（.keep，見 compact）
+    return '<b>' + (ERR_TITLE[e.kind] || '更新沒有送出') + '</b><span class="keep">' + esc(msg) + '</span>';
+  }
+
+  /* 失敗在哪一步 -> 白話的下一步。步驟名稱是 .github/workflows/update.yml 裡的 name。 */
+  function failHtml(run, title) {
+    var step = run.failed_step, hint;
+    if (run.conclusion === 'cancelled' || run.conclusion === 'timed_out') {
+      title = title || '這次更新被中止了';
+      hint = '可能是跑太久被 GitHub 停掉，或有人手動取消。再按一次右上角 ⟳ 即可。';
+    } else if (step === '抓取新資料') {
+      hint = '多半是證交所或櫃買中心的網站暫時連不上、回傳錯誤，晚點再按一次 ⟳ 通常就好。';
+    } else if (step && /Pages|發佈到/.test(step)) {
+      hint = 'GitHub Pages 暫時出問題（資料已經更新好了），晚點再按一次 ⟳。';
+    } else {
+      hint = '按「看紀錄」可以看到詳細原因。晚點再按一次 ⟳；一直失敗的話，把紀錄給維護的人看。';
+    }
+    return '<b>' + (title || '更新沒有成功') + (step ? '（失敗在「' + esc(step) + '」這一步）' : '') + '</b>' +
+      '<span class="keep">網站維持上一次成功的資料。' + hint + '</span>' + logLink(run);
+  }
 
   /* 問 Worker 目前的進度。since：這次觸發的時間，比它舊的執行不是我們這一次。
-     was：按下去時網站的產出時間（meta.built_at），跑完拿來確認網站真的換了。 */
-  function watchCloud(since, note, was) {
-    fetch(WORKER + '/status', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
-      var run = j && j.run;
-      if (!run || new Date(run.created_at) < since) {
-        return setTimeout(function () { watchCloud(since, note, was); }, 5000);
+     was：按下去時網站的產出時間（meta.built_at），跑完拿來確認網站真的換了。
+     最多盯 WATCH_MAX：平常 5–8 分鐘就跑完；排在補歷史（約 40 分鐘）後面的話就別一直轉圈。 */
+  var WATCH_MAX = 25 * 60e3;
+  function watchCloud(since, note, was, t0) {
+    t0 = t0 || Date.now();
+    function again(ms, run) {
+      if (Date.now() - t0 > WATCH_MAX) {
+        return msgbar('<b>這次更新比平常久</b><span>已經超過 25 分鐘，可能排在補歷史資料後面。' +
+          '晚點重新整理頁面看看。' + (note || '') + '</span>' + runLink(run), '');
       }
+      setTimeout(function () { watchCloud(since, note, was, t0); }, ms);
+    }
+    fetch(WORKER + '/status', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+      if (j && j.error) {
+        // 金鑰、設定這類問題再問幾次也一樣，直接講；GitHub 暫時的狀況就繼續等
+        if (j.kind === 'token' || j.kind === 'config') return msgbar(errHtml(cloudErr(j)), 'bad');
+        return again(15000);
+      }
+      var run = j && j.run;
+      if (!run || new Date(run.created_at) < since) return again(5000);
       if (run.status !== 'completed') {
         msgbar('<span class="spin"></span><b>正在更新資料…</b>' +
           '<span>大約 5–8 分鐘。可以關掉頁面，更新完再回來。' + (note || '') + '</span>' + runLink(run), 'busy');
-        return setTimeout(function () { watchCloud(since, note, was); }, 10000);
+        return again(10000, run);
       }
       if (run.conclusion === 'success') {
         // 跑成功不代表網站變了（例如這次被略過）：跟自動更新一樣，看 meta 的產出時間有沒有換
@@ -737,14 +779,24 @@
           var rb = document.getElementById('reloadbtn');
           if (rb) rb.addEventListener('click', hardReload);
         });
-      } else {
-        msgbar('<b>更新沒有成功（' + esc(run.conclusion || '') + '）</b>' +
-          '<span>多半是證交所當天的資料還沒發完，晚點再按一次即可。</span>' +
-          (run.url ? '<a class="updbtn" href="' + esc(run.url) + '" target="_blank" rel="noopener">看紀錄</a>' : ''),
-          'bad');
       }
-    }).catch(function () {
-      setTimeout(function () { watchCloud(since, note, was); }, 10000);
+      msgbar(failHtml(run), 'bad');
+    }).catch(function () { again(10000); });
+  }
+
+  /* 讀 PTT 算社群聲量（約 1 分鐘）。讀不到不擋更新：其他資料照常更新，社群聲量沿用上一次的。
+     回傳 { social, note }，social 讀不到是 null。 */
+  function collectSocial() {
+    msgbar('<span class="spin"></span><b>讀取社群聲量…</b><span>準備中</span>', 'busy');
+    return loadScript('assets/social.js').then(function () {
+      return window.Social.collect(WORKER, DATA + 'social_rules.json', function (txt) {
+        msgbar('<span class="spin"></span><b>讀取社群聲量…</b><span>' + esc(txt) +
+          '（約 1 分鐘，請不要關掉頁面）</span>', 'busy');
+      });
+    }).then(function (social) {
+      return { social: social, note: '（含 PTT ' + social.fetched + ' 篇文章的社群聲量）' };
+    }, function (e) {
+      return { social: null, note: '（這次沒有更新社群聲量：' + esc(e.message || String(e)) + '）' };
     });
   }
 
@@ -757,36 +809,46 @@
     }
     if (updating) return;
     updating = true;
-    var note = '', was = null;
-    fetch(DATA + 'meta.json', { cache: 'no-cache' }).then(function (r) { return r.json(); })
-      .then(function (m) { was = m.built_at; }).catch(function () {});
-    msgbar('<span class="spin"></span><b>讀取社群聲量…</b><span>準備中</span>', 'busy');
-    loadScript('assets/social.js').then(function () {
-      return window.Social.collect(WORKER, DATA + 'social_rules.json', function (txt) {
-        msgbar('<span class="spin"></span><b>讀取社群聲量…</b><span>' + esc(txt) +
-          '（約 1 分鐘，請不要關掉頁面）</span>', 'busy');
+    var note = '', was = null, sent = null;
+    msgbar('<span class="spin"></span><b>確認更新服務…</b>', 'busy');
+    // 先確認更新服務能不能用、有沒有更新正在跑、是不是剛更新過，再去讀 PTT：
+    // 金鑰過期或剛按過的話，不必先花一分鐘讀 PTT 才發現送不出去。
+    // 同時記下網站現在的產出時間（was），跑完拿來確認網站真的換了 —— 要在觸發之前拿到。
+    Promise.all([
+      fetch(DATA + 'meta.json', { cache: 'no-cache' }).then(function (r) { return r.json(); })
+        .catch(function () { return {}; }),
+      fetch(WORKER + '/status', { cache: 'no-store' }).then(function (r) { return r.json(); })
+    ]).then(function (x) {
+      was = x[0].built_at || null;
+      var st = x[1] || {}, run = st.run;
+      if (st.error) throw cloudErr(st);
+      if (run && run.status !== 'completed') return { state: 'busy', run: run };
+      var wait = run ? 300 - (Date.now() - Date.parse(run.created_at)) / 1000 : 0;
+      if (wait > 0) return { state: 'cooldown', wait: wait };
+      return collectSocial().then(function (c) {
+        note = c.note;
+        sent = c.social;
+        msgbar('<span class="spin"></span><b>送出更新要求…</b>', 'busy');
+        return humanToken().then(function (tok) {
+          var body = sent ? { social: { days: sent.days, articles: sent.articles } } : {};
+          if (tok) body.turnstile = tok;
+          return fetch(WORKER + '/update', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+          });
+        }).then(function (r) { return r.json(); });
       });
-    }).then(function (social) {
-      note = '（含 PTT ' + social.fetched + ' 篇文章的社群聲量）';
-      return social;
-    }, function (e) {
-      // PTT 讀不到不擋更新：其他資料照常更新，社群聲量沿用上一次的
-      note = '（這次沒有更新社群聲量：' + esc(e.message || String(e)) + '）';
-      return null;
-    }).then(function (social) {
-      msgbar('<span class="spin"></span><b>送出更新要求…</b>', 'busy');
-      return humanToken().then(function (tok) {
-        var body = social ? { social: { days: social.days, articles: social.articles } } : {};
-        if (tok) body.turnstile = tok;
-        return fetch(WORKER + '/update', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
-        });
-      }).then(function (r) { return r.json(); });
     }).then(function (j) {
       updating = false;
-      if (j.state === 'started') return watchCloud(new Date(Date.parse(j.since) - 60000), note, was);
+      if (j.state === 'started') {
+        // 社群聲量讀到了卻沒有送進去：真人驗證沒過（資料照樣更新），或內容太大
+        if (sent && !j.social) {
+          note = j.human ? '（這次沒有通過 Cloudflare 的真人驗證，只更新資料，社群聲量沿用上一次）'
+            : '（社群聲量資料太大沒有送出，沿用上一次）';
+        }
+        return watchCloud(new Date(Date.parse(j.since) - 60000), note, was);
+      }
       if (j.state === 'busy') {
-        // 已經有一次更新在跑（排程或別的裝置按的）：接著看它的進度
+        // 已經有一次更新在跑（別的裝置按的、或打開網頁時自動觸發的）：接著看它的進度
         return watchCloud(new Date(Date.parse(j.run.created_at) - 1000),
           '（已經有一次更新在進行，這次沒有另外觸發）', was);
       }
@@ -794,10 +856,10 @@
         return msgbar('<b>剛剛才更新過</b><span>兩次更新至少隔 5 分鐘，請在 ' +
           Math.ceil(j.wait / 60) + ' 分鐘後再按。</span>', 'ok');
       }
-      msgbar('<b>更新沒有送出</b><span>' + esc(j.message || '') + '</span>', 'bad');
+      msgbar(errHtml(cloudErr(j)), 'bad');
     }).catch(function (e) {
       updating = false;
-      msgbar('<b>更新沒有送出</b><span>' + esc(e.message) + '</span>', 'bad');
+      msgbar(errHtml(e), 'bad');
     });
   }
 
@@ -850,7 +912,7 @@
       if (Date.now() - last < AUTO_GAP) return;
       localStorage.setItem(AUTO_KEY, String(Date.now()));
     } catch (e) { /* 存不了就照樣觸發，Worker 那邊有冷卻 */ }
-    var since = new Date(Date.now() - 60000), was = meta.built_at;
+    var was = meta.built_at;
     msgbar('<span class="spin"></span><b>' + (behind ? '網站的資料是 ' + esc(meta.data_date) + '，正在自動更新到最新'
       : '今天的融資券應該公布了，正在自動更新名單') + '…</b><span>大約 5 分鐘，可以繼續瀏覽。</span>', 'busy');
     humanToken().then(function (tok) {
@@ -861,7 +923,9 @@
     }).then(function (r) { return r.json(); }).then(function (j) {
       if (j.state === 'started') return watchAuto(new Date(Date.parse(j.since) - 60000), was);
       if (j.state === 'busy') return watchAuto(new Date(Date.parse(j.run.created_at) - 1000), was);
-      hideMsg();                        // 冷卻中或出錯：這是自動的，不打擾使用者
+      // 金鑰過期、設定錯誤：不講的話網站會一直停在舊資料、沒有人知道為什麼（10/29 金鑰過期就是這樣）
+      if (j.state === 'error' && (j.kind === 'token' || j.kind === 'config')) return msgbar(errHtml(cloudErr(j)), 'bad');
+      hideMsg();                        // 冷卻中、GitHub 暫時的狀況：這是自動的，不打擾使用者
     }).catch(hideMsg);
   }
 
@@ -869,14 +933,26 @@
     var bar = document.getElementById('updmsg');
     if (bar) bar.setAttribute('data-empty', '1');
   }
+  function msgEmpty() {
+    var bar = document.getElementById('updmsg');
+    return !!bar && bar.hasAttribute('data-empty');
+  }
 
   /* 等這次自動更新跑完，再看網站真的變了沒有：證交所還沒發完的話，這次會略過、什麼都沒變 */
-  function watchAuto(since, was) {
+  function watchAuto(since, was, t0) {
+    t0 = t0 || Date.now();
+    function again(ms) {
+      if (Date.now() - t0 > WATCH_MAX) return hideMsg();
+      setTimeout(function () { watchAuto(since, was, t0); }, ms);
+    }
     fetch(WORKER + '/status', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
-      var run = j && j.run;
-      if (!run || new Date(run.created_at) < since || run.status !== 'completed') {
-        return setTimeout(function () { watchAuto(since, was); }, 10000);
+      if (j && j.error) {
+        if (j.kind === 'token' || j.kind === 'config') return msgbar(errHtml(cloudErr(j)), 'bad');
+        return again(15000);
       }
+      var run = j && j.run;
+      if (!run || new Date(run.created_at) < since || run.status !== 'completed') return again(10000);
+      if (run.conclusion !== 'success') return msgbar(failHtml(run, '自動更新沒有成功'), '');
       return fetch(DATA + 'meta.json', { cache: 'no-cache' }).then(function (r) { return r.json(); }).then(function (m) {
         if (m.built_at !== was) {
           msgbar('<b>已更新到 ' + esc(m.data_date) + ' 的資料</b><span>重新載入頁面就會看到。</span>' +
@@ -887,7 +963,51 @@
           msgbar('<b>證交所的資料還沒發布完</b><span>晚一點再打開網頁會自動再試，或按右上角 ⟳。</span>', '');
         }
       });
-    }).catch(function () { setTimeout(function () { watchAuto(since, was); }, 15000); });
+    }).catch(function () { again(15000); });
+  }
+
+  /* ---------- 打開網頁時的健康檢查 ----------
+   * 順便問一次 Worker：金鑰過期或快到期、上一次更新失敗、上一次更新有附加資料沒成功（meta.warnings），
+   * 都在這裡講 —— 不要等到有人按 ⟳ 失敗、或發現某一塊資料停了十天才知道。
+   * 只在訊息列空著的時候顯示（自動更新正在跑就交給它）。附加資料的警告按「知道了」之後，
+   * 同一版網站就不再出現。 */
+  var TOKEN_WARN_DAYS = 14, WARN_SEEN = 'warn_seen';
+  function warnHtml(meta) {
+    var w = meta.warnings;
+    return '<b>上一次更新有 ' + w.length + ' 項附加資料沒有成功</b><span class="keep">主要名單不受影響。' +
+      w.slice(0, 3).map(function (x) { return '・' + esc(x); }).join(' ') + (w.length > 3 ? ' …' : '') +
+      '</span><button class="updbtn" id="warnok" type="button">知道了</button>';
+  }
+  function showWarnings(meta) {
+    if (!meta.warnings || !meta.warnings.length || !msgEmpty()) return;
+    try { if (localStorage.getItem(WARN_SEEN) === meta.built_at) return; } catch (e) {}
+    msgbar(warnHtml(meta), '');
+    var b = document.getElementById('warnok');
+    if (b) b.addEventListener('click', function () {
+      try { localStorage.setItem(WARN_SEEN, meta.built_at); } catch (e) {}
+      hideMsg();
+    });
+  }
+  function healthCheck(meta) {
+    if (!CLOUD || !meta) return;
+    fetch(WORKER + '/status', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+      if (!msgEmpty()) return;
+      if (j.error) {
+        if (j.kind === 'token' || j.kind === 'config') msgbar(errHtml(cloudErr(j)), 'bad');
+        return;
+      }
+      if (j.token_days != null && j.token_days <= TOKEN_WARN_DAYS) {
+        return msgbar('<b>更新用的 GitHub 金鑰' + (j.token_days < 0 ? '已經過期' : '再 ' + j.token_days + ' 天到期') + '</b>' +
+          '<span class="keep">到期後網頁的更新會失敗。請到 GitHub 重新產生 tw-stock-monitor-cron 這把金鑰（Expiration 選 No expiration），' +
+          '再在 cloudflare 資料夾執行 npx wrangler secret put GITHUB_TOKEN。</span>', 'bad');
+      }
+      var run = j.run;
+      if (run && run.status === 'completed' && run.conclusion !== 'success' &&
+          Date.now() - Date.parse(run.created_at) < 86400e3) {
+        return msgbar(failHtml(run, '上一次更新沒有成功'), '');
+      }
+      showWarnings(meta);
+    }).catch(function () { showWarnings(meta); });
   }
 
   function bindUpdateButton() {

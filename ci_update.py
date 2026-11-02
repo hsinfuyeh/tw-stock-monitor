@@ -437,4 +437,6 @@ def no_new_day(cal, cutoff, last_ok, changed_any, holes_left, pending=None):
 
 
 if __name__ == "__main__":
+    import warnlog
+    warnlog.capture()          # 這次的警告記下來，publish 放進 meta.json 給網頁看
     sys.exit(main(ignore_gate="--ignore-gate" in sys.argv))

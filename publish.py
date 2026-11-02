@@ -44,6 +44,7 @@ import server
 import shadow
 import stable
 import stock_report
+import warnlog
 import webui
 from config import COST_ROUND_TRIP
 
@@ -650,7 +651,8 @@ def build(limit=None, out=SITE):
     sizes = {}
     # margin_same_day：當天的融資券進來了沒。網頁用它判斷「晚上 21:30 後要不要自動再更新一次」
     sizes["meta"] = write(data / "meta.json", dict(emit_meta(p_common, day_date),
-                                                  margin_same_day=st[0].get("margin_same_day")))
+                                                  margin_same_day=st[0].get("margin_same_day"),
+                                                  warnings=warnlog.load()))
     sizes["universe"] = write(data / "universe.json", emit_universe(p_otc is not None))
     sizes["funnel"] = write(data / "funnel.json", fn)
     stable.write(data, *st)
@@ -742,6 +744,7 @@ def social_only(out=SITE):
     write(data / "social_rules.json", social.rules())
     # 產出時間要換：前端用它當版本參數，不換的話瀏覽器會繼續拿快取裡的舊社群榜
     meta["built_at"] = now_tw()
+    meta["warnings"] = warnlog.load()          # 這次更新的警告（不是上一次完整產出的）
     write(data / "meta.json", meta)
     print("快速通道：只更新社群聲量（資料日期 {}，{}）  耗時 {:.0f} 秒".format(
         day_date, "、".join("{} {} 筆".format(k, len(v["rows"])) for k, v in sc.items()),

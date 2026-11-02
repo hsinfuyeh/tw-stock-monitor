@@ -31,6 +31,7 @@ site/data/
 
 # CI 每次執行產生的摘要
 ci_summary.md
+ci_warnings.json
 
 # 歷史回補的執行紀錄
 backfill_hist.log

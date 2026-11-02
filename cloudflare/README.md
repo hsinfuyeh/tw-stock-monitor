@@ -23,7 +23,7 @@ PTT 對 GitHub 雲端主機一律 403，從 GitHub 呼叫這個 Worker 代讀也
 到 GitHub → Settings → Developer settings → [Fine-grained tokens](https://github.com/settings/personal-access-tokens/new)：
 
 - Token name：`tw-stock-monitor-cron`
-- Expiration：最長 1 年（到期前要換一把，見下方）
+- Expiration：**No expiration**（不會過期。2026-10-29 金鑰過期，網頁更新停了好幾天才發現；這把金鑰只能觸發這一個 repo 的更新、讀進度，外流的風險有限。有設期限的話，剩 14 天時網頁會提醒）
 - Repository access：Only select repositories → `tw-stock-monitor`
 - Permissions → Repository permissions → **Actions: Read and write**（其他都不用開）
 
@@ -49,7 +49,8 @@ npx wrangler secret put GITHUB_TOKEN
 
 ### 4. 真人驗證 Turnstile（選用，2026-10-03 加入）
 
-更新入口是公開的，Turnstile 擋掉用程式一直打、送假社群聲量的人；一般瀏覽器不用做任何事。
+更新入口是公開的，Turnstile 擋掉送假社群聲量的人；一般瀏覽器不用做任何事。
+2026-11-02 起**沒通過也照樣更新資料**，只是不收那次送來的社群聲量（網頁會註明）：以前沒過就整個擋掉，真人也常因為被判成機器人而按不動。單純觸發更新有「在跑就不再觸發、5 分鐘冷卻」限住。
 
 1. Cloudflare 後台 → **Turnstile** → **Add widget**
    - Widget name：`tw-stock-monitor`
@@ -58,15 +59,17 @@ npx wrangler secret put GITHUB_TOKEN
 2. 建立後會看到兩把：
    - **Site Key**（公開的）：填進 `site/assets/app.js` 的 `TURNSTILE_SITEKEY`，commit 推上去，等網站更新完。
    - **Secret Key**（密鑰）：**網站換成新版之後**才在這個資料夾跑 `npx wrangler secret put TURNSTILE_SECRET`
-     貼上。順序反過來的話，舊網頁拿不到通行證，更新會被擋。
+     貼上。順序反過來的話，舊網頁拿不到通行證，那段時間的更新不會帶社群聲量。
 3. 要停用：`npx wrangler secret delete TURNSTILE_SECRET`（Worker 沒有密鑰就不檢查）。
 
-本機預覽（`localhost:5500?cloud=1`）不在 Hostname 裡，啟用後從本機預覽按 ⟳ 會被擋；本機用 `python server.py` 的更新不經過 Worker，不受影響。
+本機預覽（`localhost:5500?cloud=1`）不在 Hostname 裡，從本機預覽按 ⟳ 只會更新資料、不帶社群聲量；本機用 `python server.py` 的更新不經過 Worker，不受影響。
 
 ## 平常要看的
 
 - **更新紀錄**：GitHub → Actions → 更新資料並發佈。觸發者都是 `workflow_dispatch`；
   自動觸發的大部分會是「沒有發佈（已是最新／資料還沒齊）」的綠燈，這是正常的。
 - **觸發失敗的原因**：Cloudflare 後台 → Workers & Pages → `tw-stock-monitor-cron` → Logs。
-  網頁會顯示「更新沒有送出」＋ GitHub 的回應碼：`401`／`403` 代表金鑰過期或權限不對，照第 1、3 步換一把。
+  網頁會直接用中文說明（例如「GitHub 金鑰需要更新」＋換金鑰的步驟）；打開網頁時也會先檢查一次，
+  金鑰過期、快到期、上一次更新失敗（含失敗在哪一步）、上一次有附加資料沒抓到，都會顯示在上方訊息列。
+  金鑰過期或權限不對：照第 1、3 步換一把（第 1 步選 No expiration）。
 - **改了 worker.js 或 wrangler.toml**：在這個資料夾跑 `npx wrangler deploy`。

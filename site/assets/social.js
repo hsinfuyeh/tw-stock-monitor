@@ -72,11 +72,23 @@
   }
 
   /* ---------- 讀 PTT ---------- */
+  // 一頁最多等 20 秒：PTT 偶爾整頁卡住不回，沒有逾時的話「讀取社群聲量…」會一直轉圈、更新永遠送不出去
+  var PAGE_TIMEOUT = 20000;
   function getDoc(base, path) {
-    return fetch(base + '/ptt' + path, { cache: 'no-store' }).then(function (r) {
+    var ctl = window.AbortController ? new AbortController() : null;
+    var timer = ctl && setTimeout(function () { ctl.abort(); }, PAGE_TIMEOUT);
+    return fetch(base + '/ptt' + path, { cache: 'no-store', signal: ctl ? ctl.signal : undefined }).then(function (r) {
       if (!r.ok) { var e = new Error('PTT ' + r.status); e.status = r.status; throw e; }
       return r.text();
-    }).then(function (t) { return new DOMParser().parseFromString(t, 'text/html'); });
+    }, function (e) {
+      throw new Error(e && e.name === 'AbortError' ? 'PTT 超過 20 秒沒有回應' : 'PTT 連不上');
+    }).then(function (t) {
+      clearTimeout(timer);
+      return new DOMParser().parseFromString(t, 'text/html');
+    }, function (e) {
+      clearTimeout(timer);
+      throw e && e.name === 'AbortError' ? new Error('PTT 超過 20 秒沒有回應') : e;
+    });
   }
 
   // 台北日期（不管使用者的電腦在哪個時區）
