@@ -70,6 +70,38 @@ def usable_last_date():
         return None
 
 
+def _tier5_slow(d):
+    return d.groupby("date")["L"].transform(
+        lambda s: pd.qcut(s.rank(method="first"), 5, labels=False, duplicates="drop") + 1)
+
+
+def tier5(d):
+    """每天依 L 分五等（1–5），等於 _tier5_slow：每天各做一次 pd.qcut(L 的名次, 5)。
+
+    舊寫法一天叫一次 qcut，18 年 4,600 天、每份面板要 5–6 秒（產出網站時算 3 份）。
+    同一天的名次（method="first"）一定是 1..n，所以分等只跟「那天有幾檔（n）」和名次有關：
+    每種 n 用 pd.qcut 對 1..n 算一次對照表（同一個函式，結果逐位元相同），再一次查完。"""
+    L = d.groupby("date")["L"]
+    r = L.rank(method="first").to_numpy()
+    n = L.transform("count").to_numpy()
+    ok = ~np.isnan(r)
+    sizes = np.unique(n[ok]).astype(np.int64)
+    if not len(sizes) or sizes.min() < 2:
+        return _tier5_slow(d)                 # 一天只有 1 檔：交給原本的寫法處理
+    off = np.zeros(sizes.max() + 2, dtype=np.int64)
+    parts, pos = [], 0
+    for k in sizes:
+        off[k] = pos
+        parts.append(pd.qcut(pd.Series(np.arange(1, k + 1, dtype=float)), 5,
+                             labels=False, duplicates="drop").to_numpy(dtype=float) + 1)
+        pos += k
+    flat = np.concatenate(parts)
+    out = np.full(len(d), np.nan)
+    out[ok] = flat[off[n[ok].astype(np.int64)] + r[ok].astype(np.int64) - 1]
+    s = pd.Series(out, index=d.index, name="L")
+    return s if np.isnan(out).any() else s.astype(np.int64)
+
+
 def _check_fresh():
     """倉儲檔案變了就丟掉記憶體裡的面板。必須在 _lock 內呼叫。
 
@@ -198,9 +230,7 @@ def panel(kind="common", full=False):
                 d["tier"] = np.nan
             else:
                 d["L"] = likelihood.score(d)
-                d["tier"] = d.groupby("date")["L"].transform(
-                    lambda s: pd.qcut(s.rank(method="first"), 5,
-                                      labels=False, duplicates="drop") + 1)
+                d["tier"] = tier5(d)
             # 砍掉「只有行情、還沒有估值／法人」的那幾天（見 usable_last_date）
             cut = usable_last_date()
             if cut is not None:

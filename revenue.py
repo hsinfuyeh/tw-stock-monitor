@@ -166,7 +166,26 @@ def parse(content):
     return out
 
 
+_load_memo = {}
+
+
 def load(codes=None):
+    """見 _load。同一個程式裡原始檔沒變、交易日曆也一樣，就直接給上次的結果（複本）。
+
+    產出網站一次會叫 5 次（上市、ETF、上市完整版、上櫃四份面板，加上穩定強勢股的特徵），
+    每次都要重新解析 238 個月的網頁：雲端每次約 8 秒、本機 14 秒，幾乎全是重複工。"""
+    import ingest
+    files = tuple((p.name, p.stat().st_mtime_ns, p.stat().st_size) for p in sorted(DIR.glob("*.html.gz")))
+    key = (files, tuple(ingest.trading_calendar()), tuple(codes) if codes else None)
+    hit = _load_memo.get(key)
+    if hit is None:
+        hit = _load(codes)
+        _load_memo.clear()                 # 只留最新一份
+        _load_memo[key] = hit
+    return hit.copy()
+
+
+def _load(codes=None):
     """載入所有月報表，回傳長表。
 
     產出欄位：
