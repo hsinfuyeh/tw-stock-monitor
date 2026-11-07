@@ -13,7 +13,7 @@
   'use strict';
 
   var DAYS = 3;            // 讀最近幾天發的文章（推文還在長的範圍）
-  var PARALLEL = 4;        // 同時幾個請求。PTT 是別人的站，不要一次全打出去
+  var PARALLEL = 8;        // 同時幾個請求。PTT 是別人的站，不要一次全打出去（4 個時按 ⟳ 要等約 1 分鐘，2026-11-08 改 8）
   var MAX_ARTICLES = 400;  // 保險上限；股票板一天約 35–50 篇
 
   function esc(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
