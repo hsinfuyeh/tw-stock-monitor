@@ -1,4 +1,6 @@
 """TWSE 量化倉儲 — 全域設定"""
+import functools
+import threading
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -28,6 +30,21 @@ DATASETS = {
     "margin":   dict(path="/rwd/zh/marginTrading/MI_MARGN",
                      params={"selectType": "ALL"}),
 }
+
+# 同一個程式裡碰倉儲（DuckDB）的地方都要先拿這把鎖。ci_update.extras 讓上櫃、主動 ETF、集保、重大訊息
+# 同時抓（各打各的網站），但寫入要排隊：DuckDB 同一個檔案在同一個程式裡，有寫入連線開著時
+# 不能再開唯讀連線，兩個寫入同時 CHECKPOINT 也會出錯。可重入：鎖住的函式裡再呼叫 store.q 沒問題。
+DB_LOCK = threading.RLock()
+
+
+def db_locked(fn):
+    """整個函式在 DB_LOCK 裡執行。"""
+    @functools.wraps(fn)
+    def run(*a, **k):
+        with DB_LOCK:
+            return fn(*a, **k)
+    return run
+
 
 REQUEST_DELAY = 2.5      # 秒。TWSE 沒有公開速率限制，保守值。
 MAX_RETRY = 4

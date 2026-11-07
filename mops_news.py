@@ -26,7 +26,7 @@ import duckdb
 import pandas as pd
 import requests
 
-from config import DB, RAW
+from config import DB, RAW, db_locked
 
 URL = "https://mopsov.twse.com.tw/mops/web/ajax_t05st02"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36"
@@ -67,14 +67,16 @@ def parse(html):
     return out
 
 
-def fetch(day, tries=4):
-    """一個查詢日的全部公告；抓不到回傳 None（下次再試）。"""
+def fetch(day, tries=3, timeout=30):
+    """一個查詢日的全部公告；抓不到回傳 None（下次再試）。
+    觀測站從 GitHub 的美國主機連線常常很慢（2026-11-04 抓 3 天花了 196 秒，本機一次 0.6 秒）：
+    舊版一次等 60 秒、試 4 次，最壞要 5 分鐘。現在 30 秒、3 次；抓不到的下次更新會再補。"""
     roc = day.year - 1911
     data = dict(encodeURIComponent=1, step=1, step00=0, firstin=1, off=1, TYPEK="all",
                 year=roc, month="{:02d}".format(day.month), day="{:02d}".format(day.day))
     for i in range(tries):
         try:
-            r = requests.post(URL, data=data, headers={"User-Agent": UA}, timeout=60)
+            r = requests.post(URL, data=data, headers={"User-Agent": UA}, timeout=timeout)
             if r.status_code == 200:
                 rows = parse(r.content.decode("utf-8", "replace"))
                 if rows is not None:
@@ -160,6 +162,7 @@ def _rows(files):
     return df.dropna(subset=["ts"])[["ts", "date", "code", "name", "subject"]]
 
 
+@db_locked
 def append(days):
     """只把這幾個查詢日的公告加進表（已經在表裡的跳過）。每天的更新用，不必每次讀全部 6,800 個檔。
     表還不存在就整個重建。回傳表裡的總筆數。"""
@@ -185,6 +188,7 @@ def append(days):
         con.close()
 
 
+@db_locked
 def build(verbose=True):
     """從原始檔整個重建表。原始檔不完整時（例如冷啟動只帶了倉儲、沒帶原始檔）不准把表變小很多。"""
     df = load()

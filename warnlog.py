@@ -11,6 +11,7 @@ FILE 每次 capture() 都重新開始，所以只會有「這一次更新」的�
 """
 import json
 import sys
+import threading
 
 FILE = "ci_warnings.json"
 PREFIX = "::warning::"
@@ -22,13 +23,15 @@ class _Tee:
 
     def __init__(self, stream, sink):
         self._s, self._sink, self._buf = stream, sink, ""
+        self._lock = threading.Lock()      # 附加資料是好幾個執行緒同時在印
 
     def write(self, text):
-        self._buf += text
-        while "\n" in self._buf:
-            line, self._buf = self._buf.split("\n", 1)
-            self._sink(line)
-        return self._s.write(text)
+        with self._lock:
+            self._buf += text
+            while "\n" in self._buf:
+                line, self._buf = self._buf.split("\n", 1)
+                self._sink(line)
+            return self._s.write(text)
 
     def flush(self):
         return self._s.flush()

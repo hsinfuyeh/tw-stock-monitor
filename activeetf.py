@@ -37,7 +37,7 @@ import pandas as pd
 import requests
 
 import ingest
-from config import DB, RAW, REQUEST_DELAY, UA
+from config import DB, RAW, REQUEST_DELAY, UA, db_locked
 
 DIR = RAW / "active_etf"
 HOLD_TABLE, META_TABLE = "active_holdings", "active_meta"
@@ -460,6 +460,7 @@ def update(n_days=DEFAULT_DAYS, budget=None, verbose=True, seconds=None):
         return 0
 
 
+@db_locked
 def build():
     """把 raw/active_etf/ 的每一份快照寫進兩張表：同一個 (ETF, 持股日) 以原始檔為準，
     表裡其他日子保留。

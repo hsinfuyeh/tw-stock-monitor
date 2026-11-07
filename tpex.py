@@ -34,7 +34,7 @@ import requests
 
 import ingest
 import parse
-from config import DB, RAW, REQUEST_DELAY, MAX_RETRY, UA
+from config import DB, RAW, REQUEST_DELAY, MAX_RETRY, UA, db_locked
 
 BASE = "https://www.tpex.org.tw"
 DIR = RAW / "tpex"
@@ -354,6 +354,7 @@ def update(n_days=DEFAULT_DAYS, budget=None, verbose=True, seconds=None):
         missing = sorted((d for d in days if not all(have(ds, d) for ds in DATASETS)),
                          reverse=True)
         todo = missing[:budget] if budget is not None else missing
+        @db_locked
         def flush(ds_days, exr_months=()):
             """把這幾天寫進資料庫（重跑冪等）。分批寫：下載中途斷掉時，
             已經抓到的日子也已經在表裡，不必等重跑完才看得到。"""

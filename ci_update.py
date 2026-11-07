@@ -72,22 +72,38 @@ def backfill_mode():
 
 
 def extras():
-    """上櫃與主動式 ETF（只供查詢）。不在閘門裡：它們是附加資訊，缺了不該擋住發佈；
-    兩個 update 都不會丟例外。回傳上櫃寫入的交易日數。"""
+    """上櫃、主動式 ETF、集保、重大訊息（附加資訊）。不在閘門裡：缺了不該擋住發佈；
+    四個 update 都不會丟例外。回傳上櫃寫入的交易日數。
+
+    四個來源是不同的網站，同時抓：以前一個等一個，上櫃約 45 秒、主動 ETF 約 80 秒、集保 3 秒、
+    重大訊息 30 秒到 3 分多（觀測站對美國主機慢），加起來 2.5–5.5 分鐘；同時抓只要等最慢的那個。
+    寫進倉儲的地方都有 config.DB_LOCK 排隊，每個網站自己還是照原本的間隔慢慢抓。"""
+    import concurrent.futures as cf
     import tpex
     import activeetf
+    import tdcc                   # 集保股權分散表：只有最新一週、沒有歷史，每次有機會就收
+    import mops_news              # 重大訊息（公司事件、第 12 輪）：抓最近幾天
+    ingest.trading_calendar()     # 先問好交易日曆（會記住），不要讓上櫃和主動 ETF 同時去抓
     if backfill_mode():
         # 上櫃要 60 天才產得出個股頁（算波動），目標 300 天；櫃買約 20 秒一天
-        n_otc = tpex.update(seconds=BACKFILL_OTC_SEC)
-        activeetf.update(budget=None, seconds=BACKFILL_ETF_SEC)
+        jobs = [lambda: tpex.update(seconds=BACKFILL_OTC_SEC),
+                lambda: activeetf.update(budget=None, seconds=BACKFILL_ETF_SEC)]
     else:
-        n_otc = tpex.update(budget=DAILY_OTC_DAYS)
-        activeetf.update(budget=DAILY_ETF_REQ)
+        jobs = [lambda: tpex.update(budget=DAILY_OTC_DAYS),
+                lambda: activeetf.update(budget=DAILY_ETF_REQ)]
+    jobs += [tdcc.update, mops_news.update]
+    with cf.ThreadPoolExecutor(max_workers=len(jobs)) as ex:
+        futs = [ex.submit(j) for j in jobs]
+    n_otc = 0
+    for i, f in enumerate(futs):
+        try:
+            r = f.result()
+        except Exception as e:      # update 本身不丟例外；真的丟了也只當附加資料失敗
+            log("::warning::附加資料第 {} 項更新失敗（不影響網站主線）：{}".format(i + 1, e))
+            r = None
+        if i == 0:
+            n_otc = r or 0
     log("上櫃寫入 {} 個交易日".format(n_otc))
-    import tdcc                   # 集保股權分散表：只有最新一週、沒有歷史，每次有機會就收
-    tdcc.update()
-    import mops_news              # 重大訊息（公司事件、第 12 輪）：抓最近幾天
-    mops_news.update()
     return n_otc
 
 

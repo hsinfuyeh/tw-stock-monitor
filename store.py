@@ -7,7 +7,7 @@ import sys, time
 import pandas as pd
 import duckdb
 import ingest, parse
-from config import DB, DATASETS
+from config import DB, DATASETS, db_locked
 
 TABLES = dict(mi_index="quotes", t86="inst", bwibbu="valuation", margin="margin")
 # 從同一份原始檔衍生的表：表名 -> (來源資料集, 解析函式)。不另外抓，跟著來源一起寫。
@@ -231,6 +231,7 @@ def backfill_derived(verbose=True):
         con.close()
 
 
+@db_locked
 def q(sql, params=None):
     con = duckdb.connect(str(DB), read_only=True)
     try:

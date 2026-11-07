@@ -28,7 +28,7 @@ import duckdb
 import pandas as pd
 import requests
 
-from config import DB, RAW, UA
+from config import DB, RAW, UA, db_locked
 
 URL = "https://opendata.tdcc.com.tw/getOD.ashx?id=1-5"
 DIR = RAW / "tdcc"
@@ -60,6 +60,7 @@ def stored_dates():
     return sorted(p.name[:8] for p in DIR.glob("*.csv.gz"))
 
 
+@db_locked
 def write(df):
     """寫進倉儲（同一個資料日期先刪再插，重跑冪等）。"""
     if df.empty:

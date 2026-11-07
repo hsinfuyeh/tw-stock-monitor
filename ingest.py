@@ -5,7 +5,7 @@
   * 不可變歸檔：原始 JSON 原封不動 gzip 存檔，解析錯了不必重抓。
   * universe 從每日快照建構，不從「今天的清單」回補 -> 避免存活者偏誤。
 """
-import gzip, json, sys, time
+import gzip, json, sys, threading, time
 import requests
 from config import BASE, UA, RAW, DATASETS, REQUEST_DELAY, MAX_RETRY, BACKFILL_START
 
@@ -60,7 +60,25 @@ def holidays(years=None):
     return sorted(set(out))
 
 
+_cal_lock = threading.Lock()
+_cal_memo = {}
+
+
 def trading_calendar(start=BACKFILL_START, end=None):
+    """見 _trading_calendar。同一個程式裡 5 分鐘內再問就直接回答：一次更新會問 3–4 次，
+    每次都要重抓當月、再等 2.5 秒；附加資料同時抓時也不會好幾個執行緒一起抓。"""
+    import datetime as dt
+    key = (start, end or dt.date.today().strftime("%Y%m%d"))
+    with _cal_lock:
+        hit = _cal_memo.get(key)
+        if hit and time.monotonic() - hit[0] < 300:
+            return list(hit[1])
+        days = _trading_calendar(*key)
+        _cal_memo[key] = (time.monotonic(), list(days))
+        return days
+
+
+def _trading_calendar(start=BACKFILL_START, end=None):
     """用 FMTQIK（每月市場統計）建交易日曆 — 每月 1 次請求就能拿到該月所有交易日。
     絕對不要用「連續日期」去推，休市日會全部算進去。"""
     import datetime as dt
@@ -99,7 +117,11 @@ def trading_calendar(start=BACKFILL_START, end=None):
         m += 1
         if m == 13: y, m = y + 1, 1
     days = sorted(set(d for d in days if start <= d <= end))
-    cache.write_text(json.dumps(days))
+    # 先寫暫存檔再換名：ci_update.extras 會有好幾個執行緒同時讀這個檔，
+    # 讀到寫一半的檔會當成沒有快取，從 2008 年起每個月重抓一次
+    tmp = cache.with_name(cache.name + ".tmp")
+    tmp.write_text(json.dumps(days))
+    tmp.replace(cache)
     return days
 
 
