@@ -96,6 +96,7 @@
   var NAV = [
     ['./', '首頁', 'home'],
     ['short', '今日名單', 'short'],
+    ['live', '盤中排行', 'live'],
     ['history', '名單成績', 'history'],
     ['market', '大盤', 'market'],
     ['backtest', '回測報告', 'backtest'],
@@ -1069,6 +1070,7 @@
     get: get, esc: esc, num: num, pct: pct, cls: cls, yi: yi, qs: qs, luck: luck,
     tip: tip, pager: pager, boot: boot, searchbox: searchbox,
     otherTabs: otherTabs, listBadge: listBadge, local: LOCAL, initSearch: initSearch,
+    worker: WORKER, twNow: twNow, hardReload: hardReload,
     glossary: function () { return GLOSSARY; }
   };
 })();

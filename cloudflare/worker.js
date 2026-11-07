@@ -25,6 +25,9 @@
  *    只放行股票板的列表頁與文章頁，其他路徑一律 404 —— 這不是通用的代理。
  *    不登入、不帶任何帳號，只帶「已滿 18 歲」的確認。
  *
+ * 3. 盤中漲跌幅排行（GET /live）
+ *    上市股票＋ETF 的即時報價（證交所 mis.twse.com.tw），網頁的「盤中排行」頁拿去排漲跌幅。見下方 live()。
+ *
  * Secret：GITHUB_TOKEN —— Fine-grained token，只給這個 repo 的 Actions: Read and write。
  *         TURNSTILE_SECRET —— Turnstile 小工具的密鑰（選用，設了才檢查真人驗證）。
  * 部署與設定步驟見 cloudflare/README.md。
@@ -66,9 +69,10 @@ export default {
       if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(req) });
       if (req.method === "GET" && path.startsWith("/ptt/")) return await pttRelay(req, path.slice(4));
       if (req.method === "GET" && path === "/status") return json(req, await latestRun(env, true));
+      if (req.method === "GET" && path === "/live") return await live(req);
       if (req.method === "POST" && path === "/update") return await update(req, env);
       return new Response(
-        "tw-stock-monitor：網頁更新按鈕的後端、代讀 PTT 股票板。\n",
+        "tw-stock-monitor：網頁更新按鈕的後端、代讀 PTT 股票板、盤中即時報價。\n",
         { headers: { "content-type": "text/plain; charset=utf-8" } });
     } catch (e) {
       // 任何沒料到的錯誤也要回帶 CORS 的 JSON：否則瀏覽器只看得到「Failed to fetch」，不知道是哪裡壞了
@@ -243,6 +247,112 @@ async function human(req, env, token) {
   } catch (e) {
     return { ok: false, why: "連不上 Cloudflare 驗證服務" };
   }
+}
+
+/* ---------- 盤中漲跌幅排行（GET /live）----------
+ * 上市股票＋ETF 的即時報價，網頁拿去排漲跌幅。證交所的即時報價（mis.twse.com.tw，約 5 秒更新、免費、
+ * 不用帳號）不允許網頁直接呼叫（沒有 CORS），所以由這裡代讀。
+ * 一次要查約 1,300 檔、分 14 批：結果暫存 LIVE_TTL 秒，很多人同時看也只會打證交所一輪 ——
+ * 證交所對查太頻繁的來源會暫時封鎖。
+ * 名單來自網站的 universe.json（不接受網頁指定代號，這不是通用的報價代理）。 */
+const UNIVERSE_URL = "https://hsinfuyeh.github.io/tw-stock-monitor/data/universe.json";
+const MIS_URL = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp";
+const MIS_BATCH = 100;           // 一批 100 檔（網址約 1,500 字元，實測 0.1 秒）
+const LIVE_TTL = 30;             // 開盤時暫存 30 秒；收盤後 10 分鐘
+let liveMemo = { until: 0, body: null };
+let liveInflight = null;        // 暫存過期時剛好很多人同時要：只抓一輪，大家等同一份
+let uniMemo = { until: 0, list: null };
+
+function twMinutes() {
+  const d = new Date(Date.now() + 8 * 3600e3);
+  return { ymd: d.toISOString().slice(0, 10).replace(/-/g, ""), min: d.getUTCHours() * 60 + d.getUTCMinutes(), wd: d.getUTCDay() };
+}
+
+/* 上市股票＋所有 ETF（櫃買掛牌的 ETF 也算，查不到上市就改查上櫃）。半天換一次。 */
+async function liveUniverse() {
+  if (uniMemo.list && Date.now() < uniMemo.until) return uniMemo.list;
+  const r = await fetch(UNIVERSE_URL, { cf: { cacheTtl: 3600 } });
+  if (!r.ok) throw new Error("讀不到股票清單（" + r.status + "）");
+  const list = (await r.json()).filter(x => x.kind === "上市股" || /ETF/.test(x.kind))
+    .map(x => ({ code: x.code, name: x.name, etf: /ETF/.test(x.kind) ? 1 : 0 }));
+  uniMemo = { until: Date.now() + 12 * 3600e3, list };
+  return list;
+}
+
+async function misBatch(ex, codes) {
+  const q = codes.map(c => ex + "_" + c + ".tw").join("|");
+  const r = await fetch(MIS_URL + "?json=1&delay=0&ex_ch=" + encodeURIComponent(q), {
+    headers: { "User-Agent": "Mozilla/5.0 (compatible; tw-stock-monitor/1.0)", "Referer": "https://mis.twse.com.tw/stock/index.jsp" },
+  });
+  if (!r.ok) throw new Error("證交所即時報價回應 " + r.status);
+  const j = await r.json();
+  return j.msgArray || [];
+}
+
+function num(s) {
+  const v = parseFloat(s);
+  return isFinite(v) && v > 0 ? v : null;
+}
+
+/* 一檔的即時報價 -> [代號, 名稱, 是否 ETF, 價格, 漲跌%, 成交量(張), 開, 高, 低, 昨收, 漲跌停(1/-1/0)]。
+   最新成交價（z）在兩次撮合之間常是「-」：今天有成交過的話，改用最佳買價（漲停時只有買價）或賣價（跌停時只有賣價）。
+   今天還沒成交的回 null，不排名。 */
+function liveRow(q, u) {
+  const y = num(q.y), h = num(q.h);
+  if (!y || !h) return null;
+  let p = num(q.z);
+  if (!p) p = num((q.b || "").split("_")[0]) || num((q.a || "").split("_")[0]);
+  if (!p) return null;
+  const up = num(q.u), dn = num(q.w);
+  const lim = up && p >= up ? 1 : (dn && p <= dn ? -1 : 0);
+  return [u.code, q.n || u.name, u.etf, p, Math.round((p - y) / y * 10000) / 100, parseInt(q.v, 10) || 0,
+          num(q.o), h, num(q.l), y, lim];
+}
+
+async function liveBuild() {
+  const uni = await liveUniverse();
+  const byCode = new Map(uni.map(u => [u.code, u]));
+  const codes = uni.map(u => u.code);
+  const quotes = [];
+  // 一次最多 4 批同時查，不要一口氣打 14 個請求給證交所
+  for (let i = 0; i < codes.length; i += MIS_BATCH * 4) {
+    const part = [];
+    for (let k = i; k < Math.min(i + MIS_BATCH * 4, codes.length); k += MIS_BATCH) part.push(codes.slice(k, k + MIS_BATCH));
+    (await Promise.all(part.map(c => misBatch("tse", c)))).forEach(a => quotes.push(...a));
+  }
+  const got = new Set(quotes.map(q => q.c));
+  const miss = uni.filter(u => u.etf && !got.has(u.code)).map(u => u.code);
+  for (let k = 0; k < miss.length; k += MIS_BATCH) quotes.push(...await misBatch("otc", miss.slice(k, k + MIS_BATCH)));
+  let date = "", time = "";
+  const rows = [];
+  for (const q of quotes) {
+    const u = byCode.get(q.c);
+    if (!u) continue;
+    if ((q.d || "") > date) date = q.d;
+    if (q.d === date && (q.t || "") > time) time = q.t;
+    const row = liveRow(q, u);
+    if (row) rows.push(row);
+  }
+  return { date, time, at: new Date().toISOString(), total: uni.length, rows };
+}
+
+async function live(req) {
+  if (liveMemo.body && Date.now() < liveMemo.until) return liveResponse(req, liveMemo.body);
+  if (!liveInflight) {
+    liveInflight = liveBuild().then(d => {
+      const t = twMinutes();
+      const open = t.wd >= 1 && t.wd <= 5 && t.min >= 8 * 60 + 30 && t.min <= 13 * 60 + 40;
+      liveMemo = { until: Date.now() + (open ? LIVE_TTL : 600) * 1000, body: JSON.stringify(d) };
+      return liveMemo.body;
+    }).finally(() => { liveInflight = null; });
+  }
+  return liveResponse(req, await liveInflight);
+}
+
+function liveResponse(req, body) {
+  return new Response(body, {
+    headers: Object.assign({ "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }, cors(req)),
+  });
 }
 
 /* ---------- PTT ---------- */

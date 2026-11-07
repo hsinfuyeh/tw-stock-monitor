@@ -1,0 +1,191 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script>/* 在 body 渲染前就套用主題，避免切換時閃一下白底 */
+(function(){try{var t=localStorage.getItem('theme');
+if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:wght@400;500&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<title>盤中排行</title>
+<style>
+.lvbar{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;margin-bottom:16px}
+.lvbar .grp{display:flex;gap:6px;align-items:center;font-size:13.5px;color:var(--mut)}
+.chip.on{background:var(--pillbg);color:var(--pillfg);border-color:var(--pillbg)}
+.chip{cursor:pointer;padding:6px 14px}
+.breadth{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:14px;margin:0 0 18px;font-variant-numeric:tabular-nums}
+.breadth b{font-weight:600}
+.lvgrid{display:grid;grid-template-columns:1fr 1fr;gap:28px}
+.lvgrid>div{min-width:0}
+.lvgrid h2{margin:0 0 6px}
+.lvgrid table{font-size:14px}
+.lvgrid td{padding:8px 8px;vertical-align:middle}
+.lvgrid td.rk{color:var(--faint);width:28px;font-variant-numeric:tabular-nums}
+.lvgrid .cd{color:var(--faint);font-size:12px;margin-left:6px;font-variant-numeric:tabular-nums}
+.lvgrid .tg{font-size:11px;border:1px solid currentColor;border-radius:4px;padding:0 4px;margin-left:6px;vertical-align:1px}
+.lvgrid .tg.etf{color:var(--faint)}
+.lvmore{margin-top:10px}
+.lvst{display:inline-flex;align-items:center;gap:8px}
+.lvst i{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--faint)}
+.lvst i.live{background:var(--up);animation:lvp 1.6s infinite}
+@keyframes lvp{50%{opacity:.3}}
+/* 兩張表並排要約 1,000px；再窄就上下排 */
+@media (max-width:1060px){.lvgrid{grid-template-columns:1fr;gap:22px}}
+/* 手機：代號換到名稱下一行、表頭的「（張）」拿掉、名稱可以換行，五欄才放得下 */
+@media (max-width:560px){.lvgrid td,.lvgrid th{padding:7px 3px}.lvgrid table{font-size:13px}
+.lvgrid td.nm{white-space:normal}.lvgrid .cd{display:block;margin-left:0}.lvgrid .u{display:none}
+.lvgrid td.rk{width:18px}.lvgrid .tg{margin-left:4px}}
+</style>
+</head><body>
+<div class="wrap" id="app"></div>
+<script src="assets/app.js"></script>
+<script>
+/* 盤中排行：上市股票＋ETF 當下的漲跌幅排行。報價由 Cloudflare Worker 的 /live 代讀證交所即時報價
+ * （約 5 秒更新一次的來源，Worker 暫存 30 秒），開盤時間每 30 秒自動重抓。
+ * 只是「現在漲跌多少」的事實，不是預測，也沒有經過回測 —— 今天漲最多的，明天不一定還會漲。
+ * 本機測試 Worker：網址加 ?worker=http://localhost:8787 */
+var LV = { data: null, scope: 'all', minVol: 500, n: 20, timer: null, loading: false };
+var REFRESH = 30e3;
+var WORKER = App.worker;
+(function () {
+  var m = /[?&]worker=([^&]+)/.exec(location.search);
+  if (m && App.local) WORKER = decodeURIComponent(m[1]);
+  try {
+    var s = JSON.parse(localStorage.getItem('live_pref') || '{}');
+    if (s.scope) LV.scope = s.scope;
+    if (s.minVol != null) LV.minVol = s.minVol;
+  } catch (e) {}
+})();
+function savePref() {
+  try { localStorage.setItem('live_pref', JSON.stringify({ scope: LV.scope, minVol: LV.minVol })); } catch (e) {}
+}
+
+/* 現在是不是交易時段（台北時間，週一到週五 8:30–13:35；8:30–9:00 是試撮）。休市日由資料日期判斷。 */
+function session() {
+  var t = App.twNow(), w = new Date(t.ymd + 'T00:00:00Z').getUTCDay();
+  var wk = w >= 1 && w <= 5;
+  return { ymd: t.ymd.replace(/-/g, ''), pre: wk && t.min >= 8 * 60 + 30 && t.min < 9 * 60,
+           open: wk && t.min >= 9 * 60 && t.min <= 13 * 60 + 35 };
+}
+function statusText(d) {
+  var s = session(), dd = d.date ? d.date.slice(0, 4) + '-' + d.date.slice(4, 6) + '-' + d.date.slice(6) : '';
+  if (d.date !== s.ymd) return ['', '今天還沒開盤或休市，以下是 ' + dd + ' 的收盤'];
+  if (s.pre) return ['live', '盤前試撮中（9:00 開盤），資料時間 ' + d.time + '，每 30 秒自動更新'];
+  if (s.open && d.time < '13:30:00') return ['live', '盤中，資料時間 ' + d.time + '，每 30 秒自動更新'];
+  return ['', '已收盤，以下是 ' + dd + ' 的收盤'];
+}
+
+function rows() {
+  var d = LV.data;
+  return d.rows.filter(function (r) {
+    return (LV.scope === 'all' || (LV.scope === 'etf') === !!r[2]) && r[5] >= LV.minVol;
+  });
+}
+/* 價格照證交所的寫法：50 元以下兩位小數，以上去掉多餘的 0（603、87.9、5225） */
+function price(p) {
+  return p < 50 ? p.toFixed(2) : String(+p.toFixed(2));
+}
+function table(list) {
+  if (!list.length) return '<p class="mut" style="font-size:14px">沒有符合條件的股票。</p>';
+  return '<table><thead><tr><th></th><th>股票</th><th>成交價</th><th>漲跌幅</th><th>成交量<span class="u">（張）</span></th></tr></thead><tbody>' +
+    list.map(function (r, i) {
+      var tag = r[10] === 1 ? '<span class="tg up">漲停</span>' : r[10] === -1 ? '<span class="tg dn">跌停</span>' : '';
+      return '<tr><td class="rk">' + (i + 1) + '</td>' +
+        '<td class="nm"><a href="stock?c=' + encodeURIComponent(r[0]) + '">' + App.esc(r[1]) + '</a>' +
+        (r[2] ? '<span class="tg etf">ETF</span>' : '') + tag + '<span class="cd">' + App.esc(r[0]) + '</span></td>' +
+        '<td>' + price(r[3]) + '</td><td>' + App.pct(r[4], 2) + '</td>' +
+        '<td>' + Number(r[5]).toLocaleString() + '</td></tr>';
+    }).join('') + '</tbody></table>';
+}
+function render() {
+  var d = LV.data, box = document.getElementById('lvbody');
+  if (!d || !box) return;
+  var all = rows();
+  var up = all.slice().sort(function (a, b) { return b[4] - a[4] || b[5] - a[5]; }).filter(function (r) { return r[4] > 0; });
+  var dn = all.slice().sort(function (a, b) { return a[4] - b[4] || b[5] - a[5]; }).filter(function (r) { return r[4] < 0; });
+  // 漲跌家數用全部（不套成交量門檻）：看的是整體氣氛
+  var base = d.rows.filter(function (r) { return LV.scope === 'all' || (LV.scope === 'etf') === !!r[2]; });
+  var nUp = 0, nDn = 0, nFl = 0, lu = 0, ld = 0;
+  base.forEach(function (r) {
+    if (r[4] > 0) nUp++; else if (r[4] < 0) nDn++; else nFl++;
+    if (r[10] === 1) lu++; else if (r[10] === -1) ld++;
+  });
+  var st = statusText(d);
+  document.getElementById('lvstat').innerHTML = '<span class="lvst"><i class="' + st[0] + '"></i>' + App.esc(st[1]) + '</span>';
+  box.innerHTML =
+    '<div class="breadth"><span>上漲 <b class="up">' + nUp + '</b> 家</span><span>下跌 <b class="dn">' + nDn + '</b> 家</span>' +
+    '<span>平盤 <b>' + nFl + '</b> 家</span><span>漲停 <b class="up">' + lu + '</b></span><span>跌停 <b class="dn">' + ld + '</b></span>' +
+    '<span class="mut">（' + (LV.scope === 'etf' ? 'ETF' : LV.scope === 'stock' ? '上市股票' : '上市股票＋ETF') + '，今天有成交的 ' + base.length + ' 檔）</span></div>' +
+    '<div class="lvgrid"><div><h2>漲幅排行</h2>' + table(up.slice(0, LV.n)) + '</div>' +
+    '<div><h2>跌幅排行</h2>' + table(dn.slice(0, LV.n)) + '</div></div>' +
+    (Math.max(up.length, dn.length) > LV.n ? '<button class="btn lvmore" id="lvmore" type="button">顯示更多</button>' : '');
+  var more = document.getElementById('lvmore');
+  if (more) more.addEventListener('click', function () { LV.n += 30; render(); });
+}
+
+function load(manual) {
+  if (LV.loading) return;
+  LV.loading = true;
+  var btn = document.getElementById('lvre');
+  if (btn) btn.disabled = true;
+  fetch(WORKER + '/live', { cache: 'no-store' }).then(function (r) {
+    if (!r.ok) throw new Error('更新服務回應 ' + r.status);
+    return r.json();
+  }).then(function (d) {
+    if (!d || !d.rows) throw new Error((d && (d.message || d.error)) || '回傳的資料格式不對');
+    LV.data = d;
+    render();
+  }).catch(function (e) {
+    var msg = /fetch/i.test(e.message) ? '連不上更新服務（Cloudflare Worker），請確認網路後再試。' : e.message;
+    var el = document.getElementById(LV.data ? 'lvstat' : 'lvbody');
+    if (el) el.innerHTML = '<span class="up">讀不到即時報價：' + App.esc(msg) + '</span>' + (LV.data ? '（下面是上一次的資料）' : '');
+  }).then(function () {
+    LV.loading = false;
+    if (btn) btn.disabled = false;
+    schedule();
+  });
+}
+/* 只在交易時段、而且頁面在前景時自動更新：切到別的分頁就停，回來馬上補抓一次 */
+function schedule() {
+  clearTimeout(LV.timer);
+  var s = session();
+  if ((s.open || s.pre) && document.visibilityState === 'visible') LV.timer = setTimeout(load, REFRESH);
+}
+document.addEventListener('visibilitychange', function () {
+  if (document.visibilityState === 'visible' && (session().open || session().pre)) load();
+  else clearTimeout(LV.timer);
+});
+
+App.boot('live', function () {
+  var vols = [[0, '不限'], [100, '100 張'], [500, '500 張'], [1000, '1,000 張'], [5000, '5,000 張']];
+  document.getElementById('app').innerHTML =
+    '<h1 style="font-size:30px;letter-spacing:-.03em;font-weight:500;margin:0 0 4px">盤中排行</h1>' +
+    '<div class="meta" id="lvstat">讀取即時報價…</div>' +
+    '<div class="card">' +
+    '<div class="lvbar"><div class="grp chips" id="lvscope">' +
+    [['all', '全部'], ['stock', '上市股票'], ['etf', 'ETF']].map(function (x) {
+      return '<button type="button" class="chip' + (LV.scope === x[0] ? ' on' : '') + '" data-v="' + x[0] + '">' + x[1] + '</button>';
+    }).join('') + '</div>' +
+    '<label class="grp">成交量至少 <select class="snap" id="lvvol">' + vols.map(function (v) {
+      return '<option value="' + v[0] + '"' + (LV.minVol === v[0] ? ' selected' : '') + '>' + v[1] + '</option>';
+    }).join('') + '</select></label>' +
+    '<button class="btn" id="lvre" type="button">重新整理</button></div>' +
+    '<div id="lvbody"><p class="mut">讀取中…</p></div>' +
+    '<p class="keep" style="font-size:13px;color:var(--mut);margin:20px 0 0">這是當下漲跌多少的事實排行，不是買賣建議，也沒有經過回測：' +
+    '今天漲最多的，明天不一定還會漲。成交量太少的股票，一兩筆成交就能漲停或跌停，所以預設只看成交量 500 張以上的。' +
+    '報價來自證交所即時資訊，約有幾十秒的延遲。</p></div>';
+  document.getElementById('lvscope').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-v]');
+    if (!b) return;
+    LV.scope = b.getAttribute('data-v');
+    [].forEach.call(this.querySelectorAll('button'), function (x) { x.classList.toggle('on', x === b); });
+    LV.n = 20; savePref(); render();
+  });
+  document.getElementById('lvvol').addEventListener('change', function () {
+    LV.minVol = +this.value; LV.n = 20; savePref(); render();
+  });
+  document.getElementById('lvre').addEventListener('click', function () { load(true); });
+  load();
+});
+</script>
+</body></html>
