@@ -7,7 +7,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:wght@400;500&display=swap">
 <link rel="stylesheet" href="assets/style.css">
-<title>今日名單</title>
+<title>建議名單</title>
 <style>
 .pscore td{font-variant-numeric:tabular-nums}
 .pscore td.hi{color:var(--fg);font-weight:500}
@@ -96,7 +96,7 @@ App.boot('short', function (meta) {
   return Promise.all([App.get('stable/today.json'), App.get('stable/backtest.json').catch(function () { return null; })])
   .then(function (res) {
     var T = res[0], B = res[1];
-    document.title = '今日名單 · ' + T.date;
+    document.title = '建議名單 · ' + T.date;
     var notes = [];
     var rn = Stable.riskNote(T), mn = Stable.marginNote(T);
     if (rn) notes.push(bar('', 'warn', '<b>' + rn + '</b>'));
@@ -110,7 +110,7 @@ App.boot('short', function (meta) {
       : '回測（2008–2025）<b>沒有</b>通過淘汰關卡，名單照常列出，但請當成參考。';
 
     document.getElementById('app').innerHTML =
-      '<h1 style="font-size:30px;letter-spacing:-.03em;font-weight:500;margin:0 0 4px">今日名單</h1>' +
+      '<h1 style="font-size:30px;letter-spacing:-.03em;font-weight:500;margin:0 0 4px">建議名單</h1>' +
       '<div class="meta">' + App.esc(T.date) + ' 收盤後 ｜ 穩定強勢股 ' + T.rows.length + ' 檔 ｜ 看的是接下來 10 個交易日</div>' +
       notes.join('') +
 
@@ -127,7 +127,10 @@ App.boot('short', function (meta) {
       '<p class="note" style="margin-top:0">分數 85 ＝ 這一項贏過今天穩定池裡 85% 的股票。總分是 9 項的平均，權重一律相同；' +
       '卡片上的「動能／穩定／籌碼與營收」是各 3 項的平均。滑到指標名稱上看說明。</p>' +
       fold('展開 9 項分數表（可以左右滑）', scoreTable(T)) + '</div>' +
-      '<div class="card"><h2>今天刷掉了誰</h2>' + funnel(T) + '</div>';
+      '<div class="card"><h2>今天刷掉了誰</h2>' + funnel(T) + '</div>' +
+      // 名單成績、回測報告不在導覽列（2026-11-08 使用者要求），入口固定放這裡
+      '<p class="keep" style="font-size:14px;margin:8px 0 0">這份名單過去的表現：<a href="history">名單成績</a>（每天實際列出來的名單後來怎樣）・' +
+      '<a href="backtest">回測報告</a>（2008 年起的歷史回測）</p>';
     App.pager(document.getElementById('app'));
   });
 });

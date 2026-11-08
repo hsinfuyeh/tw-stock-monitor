@@ -294,7 +294,14 @@ function num(s) {
   return isFinite(v) && v > 0 ? v : null;
 }
 
-/* 一檔的即時報價 -> [代號, 名稱, 是否 ETF, 價格, 漲跌%, 成交量(張), 開, 高, 低, 昨收, 漲跌停(1/-1/0)]。
+/* 五檔掛單量（「12_799_1141_」）加總成張數；沒有掛單是「-」或空字串 -> 0 */
+function bookVol(s) {
+  return (s || "").split("_").reduce((t, x) => t + (parseInt(x, 10) || 0), 0);
+}
+
+/* 一檔的即時報價 -> [代號, 名稱, 是否 ETF, 價格, 漲跌%, 成交量(張), 開, 高, 低, 昨收, 漲跌停(1/-1/0),
+                      最佳五檔委買(張), 委賣(張), 漲停價, 跌停價]。
+   後四欄是 2026-11-08 加的（盤中排行的漲停鎖住／打開、委買委賣比），網頁照位置讀，只能往後加。
    最新成交價（z）在兩次撮合之間常是「-」：今天有成交過的話，改用最佳買價（漲停時只有買價）或賣價（跌停時只有賣價）。
    今天還沒成交的回 null，不排名。 */
 function liveRow(q, u) {
@@ -306,7 +313,7 @@ function liveRow(q, u) {
   const up = num(q.u), dn = num(q.w);
   const lim = up && p >= up ? 1 : (dn && p <= dn ? -1 : 0);
   return [u.code, q.n || u.name, u.etf, p, Math.round((p - y) / y * 10000) / 100, parseInt(q.v, 10) || 0,
-          num(q.o), h, num(q.l), y, lim];
+          num(q.o), h, num(q.l), y, lim, bookVol(q.g), bookVol(q.f), up, dn];
 }
 
 async function liveBuild() {
@@ -314,6 +321,12 @@ async function liveBuild() {
   const byCode = new Map(uni.map(u => [u.code, u]));
   const codes = uni.map(u => u.code);
   const quotes = [];
+  // 加權指數（tse_t00）另外查一次：[現值, 昨收, 開, 高, 低]，網頁放在漲跌家數旁邊
+  let index = null;
+  try {
+    const t = (await misBatch("tse", ["t00"]))[0];
+    if (t && num(t.z) && num(t.y)) index = [num(t.z), num(t.y), num(t.o), num(t.h), num(t.l)];
+  } catch (e) { /* 指數查不到不影響排行 */ }
   // 一次最多 4 批同時查，不要一口氣打 14 個請求給證交所
   for (let i = 0; i < codes.length; i += MIS_BATCH * 4) {
     const part = [];
@@ -328,12 +341,13 @@ async function liveBuild() {
   for (const q of quotes) {
     const u = byCode.get(q.c);
     if (!u) continue;
-    if ((q.d || "") > date) date = q.d;
-    if (q.d === date && (q.t || "") > time) time = q.t;
+    // 換到較新的日期時時間要跟著重設：不然舊日期的 13:30 會留下來，量比被當成整天、狀態寫成「已收盤」
+    if ((q.d || "") > date) { date = q.d; time = q.t || ""; }
+    else if (q.d === date && (q.t || "") > time) time = q.t;
     const row = liveRow(q, u);
     if (row) rows.push(row);
   }
-  return { date, time, at: new Date().toISOString(), total: uni.length, rows };
+  return { date, time, at: new Date().toISOString(), total: uni.length, index, rows };
 }
 
 async function live(req) {

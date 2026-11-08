@@ -150,6 +150,57 @@ def emit_universe(include_otc=True):
                  kind=server._kind_of(r)) for _, r in u.iterrows()]
 
 
+LIVE_REF_COLS = ["v20", "h20", "l20", "h52", "l52"]
+
+
+def emit_live_ref(uni_rows):
+    """盤中排行（live.html）要的每檔參考值：產業、20 日均量（張）、前 20 日與一年的最高、最低價。
+
+    盤中看的是「今天跟平常比」，所以參考值要算到昨天為止。這份檔是收盤後產出的，資料日期 D：
+      第一組 —— 算到 D（含）為止：給 D 的下一個交易日盤中用
+      第二組 —— 算到 D 的前一個交易日：網頁讀到的即時報價就是 D 當天（收盤後、還沒換日）時用，
+                不然今天自己的最高價會被算進「前高」，永遠不會有人創新高
+    範圍跟 Worker 的 /live 一樣：上市股票＋所有 ETF。高低點用原始價格（沒有還原除權息），
+    除息後一年內的「一年新低」會偏多，網頁上有寫。"""
+    import store
+    import barrier
+    want = {r["code"]: r["kind"] for r in uni_rows if r["kind"] == "上市股" or "ETF" in r["kind"]}
+    frames, have = [], set()
+    for t in ("quotes", "tpex_quotes"):         # 上市優先；櫃買掛牌的 ETF 才去上櫃表找
+        try:
+            q = store.q("""SELECT date, code, high, low, volume FROM {t}
+                           WHERE date >= (SELECT MAX(date) FROM {t}) - INTERVAL 400 DAY""".format(t=t))
+        except Exception:
+            continue
+        q = q[q["code"].isin(set(want) - have)]
+        have |= set(q["code"])
+        frames.append(q)
+    q = pd.concat(frames, ignore_index=True).sort_values(["code", "date"])
+    q["date"] = pd.to_datetime(q["date"])
+    q = q[q["volume"] > 0]                       # 沒成交的日子沒有高低價
+    cal = sorted(q["date"].unique())
+    d, d_prev = cal[-1], cal[-2]
+    ind = {c: barrier.IND_NAME.get(v) for c, v in barrier.industry_map().items()}
+
+    def pack(g):
+        g = g.tail(250)
+        t20 = g.tail(20)
+        if not len(t20):
+            return [None] * 5
+        rnd = lambda x: None if pd.isna(x) else round(float(x), 2)
+        full = len(t20) >= 20                   # 上市不到 20 天的新股不算「20 日」新高新低（幾乎天天創新高）
+        return [int(round(t20["volume"].mean() / 1000)) if len(t20) >= 5 else None,
+                rnd(t20["high"].max()) if full else None, rnd(t20["low"].min()) if full else None,
+                rnd(g["high"].max()) if len(g) >= 60 else None, rnd(g["low"].min()) if len(g) >= 60 else None]
+
+    rows = {}
+    for code, g in q.groupby("code", sort=False):
+        kind = want[code]
+        rows[str(code)] = [ind.get(code) if kind == "上市股" else kind,
+                           pack(g), pack(g[g["date"] < d])]
+    return dict(date=str(d)[:10], prev=str(d_prev)[:10], cols=LIVE_REF_COLS, rows=rows)
+
+
 def emit_funnel(pfull):
     day, dt_ = screens._latest(pfull)
     prev = screens._prev_close(pfull, dt_)
@@ -653,7 +704,13 @@ def build(limit=None, out=SITE):
     sizes["meta"] = write(data / "meta.json", dict(emit_meta(p_common, day_date),
                                                   margin_same_day=st[0].get("margin_same_day"),
                                                   warnings=warnlog.load()))
-    sizes["universe"] = write(data / "universe.json", emit_universe(p_otc is not None))
+    uni_rows = emit_universe(p_otc is not None)
+    sizes["universe"] = write(data / "universe.json", uni_rows)
+    # 盤中排行的參考值（量比、新高新低、產業）：算不出來只是那幾張榜空著，不擋發佈
+    try:
+        sizes["live_ref"] = write(data / "live_ref.json", emit_live_ref(uni_rows))
+    except Exception as e:
+        print("::warning::盤中排行的參考值算不出來（量比、新高新低、產業榜會空著）：{}".format(e), flush=True)
     sizes["funnel"] = write(data / "funnel.json", fn)
     stable.write(data, *st)
     shadow.write(data, *sh)
