@@ -259,7 +259,35 @@ def test_shadow(check):
             os.environ["SHADOW_DEMO"] = saved[2]
 
 
+def test_selfcheck(check):
+    print("\n名單自我檢查（stable.check）")
+    import stable
+
+    def today(universe=297, pool=25, rows=10, inputs=None):
+        ins = {c: universe for c in stable.EXCLUDE_INPUTS}
+        ins.update(inputs or {})
+        return {"rows": [{"parts": {f: 70 for f, *_ in stable.FACTORS}}] * rows,
+                "counts": {"universe": universe, "pool": pool, "excluded": {}, "inputs": ins}}
+
+    bt = {"all": {"days": 100}}
+
+    def passes(t):
+        try:
+            stable.check(t, bt)
+            return True
+        except stable.Inconsistent:
+            return False
+
+    # 2026-11：市場大震盪，前 300 名有 256 檔被「波動太大」刷掉、池子剩 25 檔 —— 資料是好的，要照樣發佈
+    check("穩定池只有 25 檔但資料齊全 -> 通過（市場波動大不是資料缺值）", passes(today(pool=25)))
+    check("穩定池 0 檔、名單空的 -> 通過（全部被規則刷掉也是真實市況）", passes(today(pool=0, rows=0)))
+    check("前 300 名只有 120 檔有完整資料 -> 擋下（行情可能沒進來）", not passes(today(universe=120)))
+    check("排除規則的輸入整欄缺值 -> 擋下（規則會安靜地失效）", not passes(today(inputs={"n_gap20": 0})))
+    check("穩定池有股票、名單卻是空的 -> 擋下", not passes(today(pool=40, rows=0)))
+
+
 def run(check):
+    test_selfcheck(check)
     test_backfill(check)
     test_shadow(check)
     test_labels(check)

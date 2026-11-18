@@ -52,6 +52,8 @@ EXCLUDE = [
     ("x_spike", "曾經爆量"), ("x_ret60", "60 日已漲太多"), ("x_margin", "融資暴增"),
     ("x_locked", "一字漲跌停"),
 ]
+# 排除規則用到的欄位（exclusions）。缺值一律不排除，所以整欄缺值時規則會安靜地失效 —— check 要看
+EXCLUDE_INPUTS = ["atrp14", "n_limit20", "n_gap20", "n_spike20", "ret60", "margin5"]
 PERIODS = [("2008–2018", "2008-01-01", "2018-12-31"),
            ("2019–2025", "2019-01-01", "2025-12-31"),
            ("2026", "2026-01-01", "2026-12-31")]
@@ -599,11 +601,14 @@ def today_list(d, date=None, risk=None, cfg=CFG, extra=None):
                                 for g, fs in GROUPS],
                      "checks": checks(r, flags, risk), "spark": spark(d, r["code"], date),
                      "why": reasons(r, pr)})
-    n_uni = int(universe(day, cfg).sum())
-    ex = exclusions(day, cfg)[universe(day, cfg)]
+    uni = universe(day, cfg)
+    n_uni = int(uni.sum())
+    ex = exclusions(day, cfg)[uni]
     counts = {k: int(ex[k].sum()) for k, _ in EXCLUDE}
-    counts["risk"] = int((universe(day, cfg) & pool & flagged).sum())
-    return rows, {"universe": n_uni, "pool": int(pool_live.sum()), "excluded": counts}
+    counts["risk"] = int((uni & pool & flagged).sum())
+    # 排除規則的輸入各有幾檔有值（給 check 判斷資料有沒有進來）
+    inputs = {c: int(day.loc[uni, c].notna().sum()) for c in EXCLUDE_INPUTS}
+    return rows, {"universe": n_uni, "pool": int(pool_live.sum()), "excluded": counts, "inputs": inputs}
 
 
 def recent_lists(d, n_days=30, cfg=CFG):
@@ -796,12 +801,23 @@ class Inconsistent(Exception):
 
 
 def check(today, bt):
-    """跟 shortterm.check 同一個理由：某個因子的輸入整欄缺值時，排序會安靜地少一個因子。"""
+    """跟 shortterm.check 同一個理由：某個因子的輸入整欄缺值時，排序會安靜地少一個因子。
+
+    檢查的是「資料有沒有進來」，不是穩定池的大小。舊版穩定池少於 30 檔就擋，但排除規則是
+    「缺值不排除」，資料缺的時候池子只會變大；池子小是市場在大震盪、多數股票波動超標
+    （2026-11 前 300 名有 256 檔被「波動太大」刷掉、池子剩 25–33 檔），那是真實的市況。
+    舊版因此連續一週擋下整個網站的發佈。池子小照樣發佈，網頁會註明。"""
     bad = []
-    if not today["rows"]:
-        bad.append("今天的名單是空的")
-    if today["counts"]["pool"] < 30:
-        bad.append("穩定池只有 {} 檔，排除規則可能有資料缺值".format(today["counts"]["pool"]))
+    c = today["counts"]
+    need = int(CFG["universe_n"] * 0.8)
+    if c["universe"] < need:
+        bad.append("成交額前 {} 名只有 {} 檔有完整的股價、60 日漲幅與波動資料（應該接近 {}），"
+                   "行情可能沒進來".format(CFG["universe_n"], c["universe"], CFG["universe_n"]))
+    for col, n in (c.get("inputs") or {}).items():
+        if c["universe"] and n == 0:
+            bad.append("排除規則的輸入 {} 今天整欄缺值，那條規則會安靜地失效".format(col))
+    if not today["rows"] and c["pool"] > 0:
+        bad.append("穩定池有 {} 檔，名單卻是空的".format(c["pool"]))
     parts = [r["parts"] for r in today["rows"]]
     for f, name, *_ in FACTORS:
         if f == "f_sue":

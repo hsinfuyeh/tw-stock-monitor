@@ -101,6 +101,16 @@ App.boot('short', function (meta) {
     var rn = Stable.riskNote(T), mn = Stable.marginNote(T);
     if (rn) notes.push(bar('', 'warn', '<b>' + rn + '</b>'));
     if (mn) notes.push(bar('', 'warn', mn));
+    // 穩定池很小：市場大震盪、多數股票波動超標（2026-11 前 300 名有 256 檔被「波動太大」刷掉）。
+    // 這是真實的市況、照樣發佈（stable.check），但要讓人知道名單是從很少的股票裡挑的。
+    var C = T.counts || {};
+    if (C.pool < 40) {
+      var avg = B && B.overall && B.overall.pool_n;
+      var ex = C.excluded || {};
+      notes.push(bar('', 'warn', '<b>今天市場波動大，穩定池只有 ' + C.pool + ' 檔</b>' +
+        (avg ? '（過去平均約 ' + Math.round(avg) + ' 檔）' : '') + '：成交額前 300 名裡有 ' + (ex.x_atr || 0) +
+        ' 檔因為「波動太大」、' + (ex.x_gap || 0) + ' 檔因為「常跳空」被刷掉，名單是從比平常少很多的股票裡挑出來的，看的時候把這個背景考慮進去。'));
+    }
     var verdict = T.passed
       ? '回測（2008–2025）通過淘汰關卡：名單的「' + App.tip('中減倒') + '」比穩定池隨便挑多 ' +
         (B && B.all ? App.num(B.all.diff, 1) + ' 個百分點（' + App.tip('t 值') + ' ' + App.num(B.all.t, 1) +
