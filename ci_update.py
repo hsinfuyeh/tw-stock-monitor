@@ -237,9 +237,11 @@ def revenue_fingerprint():
             raw = gzip.decompress(f.read_bytes())
         except Exception:
             raw = f.read_bytes()
-        # 公開資訊觀測站的網頁帶著產生時間（<!--00:00:09-->），每抓一次都不一樣：不拿掉的話
-        # 39 次有 35 次被判成「營收變了」，自動更新每次都完整重建、快速通道幾乎走不到（2026-11 發現）
-        h.update(REV_NOISE.sub(b"", raw))
+        # 比的是解析出來的營收數字，不是網頁原文：公開資訊觀測站的網頁帶著產生時間（<!--00:00:09-->），
+        # 網站重新產生頁面時就會變。比原文的話 39 次有 35 次被判成「營收變了」，自動更新每次都完整重建、
+        # 快速通道幾乎走不到（2026-11 發現）。解析不出東西（格式變了）才退回比去掉註解的原文。
+        rows = revenue.parse(raw)
+        h.update(repr(sorted(rows)).encode() if rows else REV_NOISE.sub(b"", raw))
     return [f.name for f in files], h.hexdigest()
 
 

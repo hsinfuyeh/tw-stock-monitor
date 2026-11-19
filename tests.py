@@ -614,6 +614,25 @@ def test_revenue_fingerprint():
         shutil.rmtree(tmp)
     check("只差網頁產生時間 -> 判成沒變", a == b)
     check("營收數字改了 -> 判成有變", a != c)
+    # 解析得出營收的真實格式：比的是數字，排版（空白、屬性）不同但數字一樣也算沒變
+    real = ("<html><!--00:00:09--><table><tr><th>公司代號</th><th>公司名稱</th><th>當月營收</th><th>上月營收</th>"
+            "<th>去年當月營收</th></tr><tr align=right><td>2330</td><td>台積電</td><td>300,000</td>"
+            "<td>290,000</td><td>250,000</td></tr></table></html>").encode("cp950")
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        revenue.DIR = tmp
+        f = tmp / "202610.html.gz"
+        f.write_bytes(gzip.compress(real))
+        a = ci_update.revenue_fingerprint()
+        f.write_bytes(gzip.compress(real.replace(b"00:00:09", b"13:45:51").replace(b"<td>300,000", b"<td class=x> 300,000 ")))
+        b = ci_update.revenue_fingerprint()
+        f.write_bytes(gzip.compress(real.replace(b"300,000", b"300,001")))
+        c = ci_update.revenue_fingerprint()
+    finally:
+        revenue.DIR = old
+        shutil.rmtree(tmp)
+    check("真實格式：產生時間與排版不同、數字一樣 -> 判成沒變", a == b)
+    check("真實格式：營收數字改了 -> 判成有變", a != c)
 
 
 def test_publish_selfcheck():
