@@ -123,7 +123,9 @@ def load_tagged(cal):
     import store
     try:
         news = store.q("SELECT ts, date, code, name, subject FROM mops_news")
-    except Exception:
+    except Exception as e:
+        # 以前這裡安靜回傳 None，燈號就變成「資料還沒有」、沒有任何紀錄。現在印警告（會進網頁的 meta.warnings）
+        print("::warning::公司事件讀不到重大訊息（燈號這次顯示「資料還沒有」）：{}".format(str(e)[:120]), flush=True)
         return None
     return tag(news, cal)
 
@@ -145,6 +147,8 @@ def lamp(code, tagged, cal, asof, window=10):
     """今日名單卡片的「公司事件」燈號：近 window 個交易日內有沒有重大負面公告。"""
     if tagged is None:
         return {"name": "公司事件", "val": "資料還沒有", "ok": None}
+    if isinstance(tagged, Exception):
+        return {"name": "公司事件", "val": "這次讀取失敗", "ok": None}
     cal = pd.DatetimeIndex(sorted(cal))
     i = cal.searchsorted(pd.Timestamp(asof), side="right") - 1
     lo = cal[max(0, i - window + 1)]

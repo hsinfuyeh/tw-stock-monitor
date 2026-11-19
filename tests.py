@@ -425,6 +425,21 @@ def test_events():
     check("排除窗口：事件那天起算 5 個交易日（含當天），之前與之後都不算、別家不受影響",
           hit == list(days[10:15]), str([str(x)[:10] for x in hit]))
 
+    # 讀不到重大訊息：要印警告（進網頁的 meta.warnings），不能安靜地讓燈號消失
+    import contextlib, io
+    import store
+    real_q = store.q
+    store.q = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("表不存在"))
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            got = events.load_tagged(pd.DatetimeIndex([]))
+    finally:
+        store.q = real_q
+    check("公司事件：讀不到重大訊息 -> 回傳 None 並印警告", got is None and "::warning::公司事件" in buf.getvalue())
+    lp = events.lamp("2330", RuntimeError("x"), pd.DatetimeIndex([]), "2026-11-19")
+    check("公司事件：算不出來 -> 燈號顯示讀取失敗（灰色），不是消失", lp["val"] == "這次讀取失敗" and lp["ok"] is None)
+
 
 def test_tdcc():
     print("\n集保股權分散表")

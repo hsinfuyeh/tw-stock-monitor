@@ -711,12 +711,20 @@ def build(limit=None, out=SITE):
     stable_hist = st[4] or {}
     # 公司事件（第 12 輪的重大訊息分類，只顯示）：今日名單卡片多一個燈號、個股頁多一張卡。
     # 不影響名單的排序與成績 —— 要拿來排除得先通過第 12 輪的研究（shadow.py）。
+    # 只是灰色的參考資訊：出錯不能擋下整個網站（以前分類或燈號一出錯，整次發佈就失敗），
+    # 燈號改顯示「這次讀取失敗」、個股頁不放事件卡，並印警告讓網頁看得到。
     import events
     cal_all = pd.DatetimeIndex(sorted(feat["date"].unique()))
-    tagged = events.load_tagged(cal_all)
-    for r in st[0]["rows"]:
-        r["checks"].append(events.lamp(r["code"], tagged, cal_all, st[0]["date"]))
-    ev_by_code = events.by_code(tagged, st[0]["date"])
+    try:
+        tagged = events.load_tagged(cal_all)
+        lamps = [events.lamp(r["code"], tagged, cal_all, st[0]["date"]) for r in st[0]["rows"]]
+        ev_by_code = events.by_code(tagged, st[0]["date"])
+    except Exception as e:
+        print("::warning::公司事件算不出來（燈號顯示讀取失敗，名單不受影響）：{}".format(str(e)[:120]), flush=True)
+        lamps = [events.lamp(r["code"], e, cal_all, st[0]["date"]) for r in st[0]["rows"]]
+        ev_by_code = {}
+    for r, lp in zip(st[0]["rows"], lamps):
+        r["checks"].append(lp)
     # 影子名單（shadow.py）：新的排除條件跟名單並行測試。沒有登記任何影子名單時幾乎不花時間。
     # 出錯不擋發佈：影子名單是研究用的，正式名單不能因為它停擺。
     try:
