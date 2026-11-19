@@ -195,6 +195,10 @@ def main(check_only=False, if_older=None):
             news = RAW / "mops_news"         # 重大訊息原始檔（倉儲的 mops_news 表從這裡重建）
             if news.exists():
                 t.add(str(news), arcname="raw/mops_news")
+            # 交易日曆與休市日的快取（幾十 KB）：沒有的話冷啟動要從 2008 年起逐月重抓 227 個月，
+            # 2026-10-16 那次冷啟動因此多花了十幾分鐘。當月份 ingest 一定會重抓，帶舊的也不會停住。
+            for f in sorted(RAW.glob("_calendar*.json")) + sorted(RAW.glob("_holidays_*.json")):
+                t.add(str(f), arcname="raw/" + f.name)
         size = tar.stat().st_size / 1e6
         print("上傳 {:.0f} MB（會覆蓋舊的）…".format(size))
         r = sh("gh", "release", "upload", TAG, str(tar), "--clobber")

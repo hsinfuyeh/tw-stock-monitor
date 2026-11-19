@@ -568,6 +568,63 @@ def test_social():
         (social.PTT_DIR, social.TH_DIR, social._names, social.SNAP_FILE, social.LOCAL_FILE) = saved
 
 
+def test_revenue_fingerprint():
+    """月營收的「有沒有變」：網頁的產生時間不算變（2026-11 之前 39 次有 35 次被誤判成變了）。"""
+    print("\n月營收指紋（ci_update.revenue_fingerprint）")
+    import gzip, shutil, tempfile
+    from pathlib import Path
+    import ci_update
+    import revenue
+    page = b"<html><!--00:00:09--><table><tr><td>2330</td><td>300,000</td></tr></table></html>"
+    tmp = Path(tempfile.mkdtemp())
+    old = revenue.DIR
+    try:
+        revenue.DIR = tmp
+        f = tmp / "202610.html.gz"
+        f.write_bytes(gzip.compress(page))
+        a = ci_update.revenue_fingerprint()
+        f.write_bytes(gzip.compress(page.replace(b"00:00:09", b"13:45:51")))
+        b = ci_update.revenue_fingerprint()
+        f.write_bytes(gzip.compress(page.replace(b"300,000", b"300,001")))
+        c = ci_update.revenue_fingerprint()
+    finally:
+        revenue.DIR = old
+        shutil.rmtree(tmp)
+    check("只差網頁產生時間 -> 判成沒變", a == b)
+    check("營收數字改了 -> 判成有變", a != c)
+
+
+def test_publish_selfcheck():
+    """發佈前的自我檢查：真實的極端行情不能擋下整站，資料真的缺才擋。"""
+    print("\n發佈自我檢查（publish.selfcheck）")
+    import pandas as pd
+    import funnel
+    import publish
+    day = pd.DataFrame({"date": pd.Timestamp("2025-04-09"), "code": ["A", "B"], "amt20": 1e9,
+                        "div_yield": 3.0, "pos252": 0.2, "yoy": 5.0, "hi20": 100.0, "lo20": 50.0,
+                        "foreign_net": -10.0, "trust_net": -5.0})
+    fd = {"steps": [{"key": k, "name": k, "removed": 1} for k, *_ in funnel.LAYERS],
+          "passed": 1, "total": 2}
+    full = {"amount": {"rows": [1]}, "gain": {"rows": [1]}, "high": {"rows": [1]},
+            "low": {"rows": [1]}, "inst_both": {"rows": [1]}, "exdiv": {"rows": []}}
+
+    def passes(p, sd):
+        try:
+            publish.selfcheck(p, fd, sd)
+            return True
+        except publish.Inconsistent:
+            return False
+
+    # 2025-04-07～09 關稅暴跌：沒有股票創 20 日新高，外資投信也沒有一起買
+    crash = dict(full, high={"rows": []}, inst_both={"rows": []})
+    check("大跌那天新高榜、外資投信一起買是空的 -> 照樣發佈", passes(day, crash))
+    check("反彈期間新低榜是空的 -> 照樣發佈", passes(day, dict(full, low={"rows": []})))
+    check("排名榜（今天漲最多）空了 -> 擋下", not passes(day, dict(full, gain={"rows": []})))
+    check("新高榜空了而且 hi20 整欄缺值 -> 擋下（資料沒進來）",
+          not passes(day.assign(hi20=float("nan")), dict(full, high={"rows": []})))
+    check("法人資料整欄缺值 -> 擋下", not passes(day.assign(trust_net=float("nan")), full))
+
+
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")   # Windows 主控台預設 cp950，印不出 −
     print("=" * 66)
@@ -587,6 +644,8 @@ if __name__ == "__main__":
     test_inst_context()
     test_social()
     test_framework(nd)
+    test_publish_selfcheck()
+    test_revenue_fingerprint()
     import tests_short
     tests_short.run(check)
     import tests_stable

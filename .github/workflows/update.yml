@@ -48,7 +48,12 @@ permissions:
 
 jobs:
   update:
-    runs-on: ubuntu-latest
+    # 固定版本：ubuntu-latest 在 2026-10 從 24.04 換成 26.04，換的時候不會先通知。要升級時改這裡
+    runs-on: ubuntu-26.04
+    # 程式裡沒帶時區的 date.today()（交易日曆、重大訊息、上櫃、月營收…）在 UTC 主機上會比台北晚 8 小時；
+    # 統一用台北時間。明確換算時區的寫法（timezone.utc + 8 小時）不受影響。
+    env:
+      TZ: Asia/Taipei
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
@@ -58,7 +63,8 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - run: pip install -r requirements.txt
+      # constraints.txt 鎖住確切版本（2026-10-23 DuckDB 自己升到 2.0 改了行為，上櫃與集保停了十天）
+      - run: pip install -r requirements.txt -c constraints.txt
 
       # 倉儲快取（壓實後約 271 MB）。還原與保存拆開：
       # 只有資料真的變了才存新的一份，否則一天五次排程會堆出一堆一樣的快取。
@@ -108,6 +114,49 @@ jobs:
             exit 1
           fi
 
+      # 新版程式（或套件版本）第一次跑的時候，先跑一次完整測試（約 2 分鐘），沒過就不更新、不發佈。
+      # 同一版程式測過就記下來（快取鍵是程式與版本檔的雜湊），之後不重跑，平常的更新不會變慢。
+      # 放在抓新資料之前：測試會讀倉儲，用的是上一次的倉儲，不受這次抓到什麼影響。
+      - name: 這版程式測過了嗎
+        id: tested
+        uses: actions/cache/restore@v6
+        with:
+          path: .tested
+          key: tested-${{ hashFiles('*.py', 'requirements.txt', 'constraints.txt') }}
+      - name: 測試（新版程式第一次跑）
+        if: steps.tested.outputs.cache-hit != 'true'
+        run: python tests.py
+      - name: 記下這版測過了
+        if: steps.tested.outputs.cache-hit != 'true'
+        run: mkdir -p .tested && date -u > .tested/ok
+      - if: steps.tested.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: .tested
+          key: tested-${{ hashFiles('*.py', 'requirements.txt', 'constraints.txt') }}
+
+      # 上一次更新抓到了「只能抓當天」的檔、卻在發佈前被擋下時（倉儲快取沒存），那些檔只在 Release 的備份裡。
+      # 快取還原之後，把備份裡有、手上沒有的檔補回來（不覆蓋）：主動式 ETF 的表每次都從全部原始檔重寫
+      # （activeetf.build），下面抓資料時就會一起寫進去；集保有補到檔就重建表。失敗不影響這次更新。
+      - name: 從備份補回只能抓當天的原始檔
+        if: steps.cache.outputs.cache-matched-key != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/bk
+          for a in active_etf tdcc; do
+            before=$(find raw/$a -type f 2>/dev/null | wc -l)
+            if gh release download warehouse-seed --pattern "$a.tar.gz" --dir /tmp/bk --clobber 2>/dev/null; then
+              tar xzf "/tmp/bk/$a.tar.gz" --skip-old-files
+              after=$(find raw/$a -type f | wc -l)
+              echo "$a：從備份補回 $((after - before)) 個檔"
+              if [ "$a" = tdcc ] && [ "$after" -gt "$before" ]; then python -c "import tdcc; tdcc.rebuild()"; fi
+            else
+              echo "$a：沒有備份可以補"
+            fi
+          done
+
       - name: 抓取新資料
         id: fetch
         env:
@@ -131,8 +180,8 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: site/data
-          key: site-${{ steps.fetch.outputs.data_date }}-${{ hashFiles('*.py', 'requirements.txt', 'site/*.html', 'site/assets/**') }}-${{ github.run_id }}
-          restore-keys: site-${{ steps.fetch.outputs.data_date }}-${{ hashFiles('*.py', 'requirements.txt', 'site/*.html', 'site/assets/**') }}-
+          key: site-${{ steps.fetch.outputs.data_date }}-${{ hashFiles('*.py', 'requirements.txt', 'constraints.txt', 'site/*.html', 'site/assets/**') }}-${{ github.run_id }}
+          restore-keys: site-${{ steps.fetch.outputs.data_date }}-${{ hashFiles('*.py', 'requirements.txt', 'constraints.txt', 'site/*.html', 'site/assets/**') }}-
 
       # 快速通道失敗（例如快取內容不完整）就退回完整產出，不讓這次更新失敗
       - name: 只更新社群聲量（快速通道）
@@ -152,7 +201,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: site/data
-          key: site-${{ steps.fetch.outputs.data_date }}-${{ hashFiles('*.py', 'requirements.txt', 'site/*.html', 'site/assets/**') }}-${{ github.run_id }}
+          key: site-${{ steps.fetch.outputs.data_date }}-${{ hashFiles('*.py', 'requirements.txt', 'constraints.txt', 'site/*.html', 'site/assets/**') }}-${{ github.run_id }}
 
       - if: steps.fetch.outputs.publish == 'true'
         uses: actions/configure-pages@v6
@@ -209,8 +258,10 @@ jobs:
 
       # 主動式 ETF 持股（約 2 MB）每次有新資料就另外備份：群益、國泰只能抓當天，
       # 種子一週才更新一次，快取被清掉時最多會掉一週、而且補不回來。失敗不影響這次更新。
+      # 只要「抓取新資料」成功就備份，不管後面發佈有沒有被自我檢查擋下：2026-11-10～17 發佈被擋的那幾次，
+      # 持股其實抓到了，卻因為整次失敗沒有備份、也沒進快取，那幾天就永久沒了。
       - name: 備份錯過就補不回來的原始檔（主動式 ETF 持股、集保）
-        if: success() && steps.fetch.outputs.changed == 'true'
+        if: always() && steps.fetch.outcome == 'success' && steps.fetch.outputs.changed == 'true'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}

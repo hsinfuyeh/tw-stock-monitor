@@ -156,10 +156,8 @@
       '（已扣掉週末與證交所公布的休市日）。打開網頁時會自動更新，進度顯示在下方；' +
       '如果一直沒有更新（颱風臨時停市除外），可以手動更新。</span>' + '<button class="updbtn" id="updgo" type="button">立即更新</button>';
     var go = document.getElementById('updgo');
-    if (go) go.addEventListener('click', function () {
-      go.disabled = true;
-      runUpdate();             // 本機打自己的後端，公開網站交給 Cloudflare Worker
-    });
+    // 不停用按鈕：runUpdate 自己會擋重複觸發；停用的話失敗一次就再也按不了
+    if (go) go.addEventListener('click', runUpdate);   // 本機打自己的後端，公開網站交給 Cloudflare Worker
   }
 
   /* 本機更新進度。更新要重建資料庫再重新產生網頁（合計約 5-8 分鐘），
@@ -710,6 +708,12 @@
      token／config 要有人去處理（例如金鑰過期），其他是 GitHub 暫時的狀況，晚點再試就好。 */
   var ERR_TITLE = { token: 'GitHub 金鑰需要更新', config: '更新服務的設定有誤', rate: 'GitHub 暫時忙碌',
                     github: 'GitHub 暫時連不上', worker: '更新服務出錯' };
+  function jsonOf(r) {
+    return r.json().catch(function () {
+      throw cloudErr({ kind: 'worker', message: '更新服務回應 ' + r.status + '，內容不是預期的格式' +
+        '（可能是 Cloudflare 暫時故障），過幾分鐘再試。' });
+    });
+  }
   function cloudErr(j) {
     var e = new Error((j && (j.message || j.error)) || '');
     e.kind = j && j.kind;
@@ -742,17 +746,18 @@
   /* 問 Worker 目前的進度。since：這次觸發的時間，比它舊的執行不是我們這一次。
      was：按下去時網站的產出時間（meta.built_at），跑完拿來確認網站真的換了。
      最多盯 WATCH_MAX：平常 5–8 分鐘就跑完；排在補歷史（約 40 分鐘）後面的話就別一直轉圈。 */
+  // 進度訊息裡的 note（例如「真人驗證沒過，社群聲量沿用上一次」）是這次更新的重點，span 標 .keep 不收進 ⓘ
   var WATCH_MAX = 25 * 60e3;
   function watchCloud(since, note, was, t0) {
     t0 = t0 || Date.now();
     function again(ms, run) {
       if (Date.now() - t0 > WATCH_MAX) {
-        return msgbar('<b>這次更新比平常久</b><span>已經超過 25 分鐘，可能排在補歷史資料後面。' +
+        return msgbar('<b>這次更新比平常久</b><span class="keep">已經超過 25 分鐘，可能排在補歷史資料後面。' +
           '晚點重新整理頁面看看。' + (note || '') + '</span>' + runLink(run), '');
       }
       setTimeout(function () { watchCloud(since, note, was, t0); }, ms);
     }
-    fetch(WORKER + '/status', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+    fetch(WORKER + '/status', { cache: 'no-store' }).then(jsonOf).then(function (j) {
       if (j && j.error) {
         // 金鑰、設定這類問題再問幾次也一樣，直接講；GitHub 暫時的狀況就繼續等
         if (j.kind === 'token' || j.kind === 'config') return msgbar(errHtml(cloudErr(j)), 'bad');
@@ -762,18 +767,18 @@
       if (!run || new Date(run.created_at) < since) return again(5000);
       if (run.status !== 'completed') {
         msgbar('<span class="spin"></span><b>正在更新資料…</b>' +
-          '<span>大約 5–8 分鐘。可以關掉頁面，更新完再回來。' + (note || '') + '</span>' + runLink(run), 'busy');
+          '<span class="keep">大約 5–8 分鐘。可以關掉頁面，更新完再回來。' + (note || '') + '</span>' + runLink(run), 'busy');
         return again(10000, run);
       }
       if (run.conclusion === 'success') {
         // 跑成功不代表網站變了（例如這次被略過）：跟自動更新一樣，看 meta 的產出時間有沒有換
         return fetch(DATA + 'meta.json', { cache: 'no-cache' }).then(function (r) { return r.json(); }).then(function (m) {
           if (was && m.built_at === was) {
-            msgbar('<b>這次沒有發佈新版</b><span>證交所的資料可能還沒發布完，晚一點再按一次。' + (note || '') + '</span>' +
+            msgbar('<b>這次沒有發佈新版</b><span class="keep">證交所的資料可能還沒發布完，晚一點再按一次。' + (note || '') + '</span>' +
               runLink(run), '');
             return;
           }
-          msgbar('<b>更新完成</b><span>重新載入頁面看最新資料。' + (note || '') + '</span>' +
+          msgbar('<b>更新完成</b><span class="keep">重新載入頁面看最新資料。' + (note || '') + '</span>' +
             '<button class="updbtn" id="reloadbtn" type="button">重新載入</button>', 'ok');
           var rb = document.getElementById('reloadbtn');
           if (rb) rb.addEventListener('click', hardReload);
@@ -800,14 +805,22 @@
   }
 
   var updating = false;
+  var manual = false;      // 按過 ⟳：訊息列交給手動這條（watchCloud），自動更新的 watchAuto 就停手，不要兩個搶
   function runUpdate() {
     if (!CLOUD) {                      // 本機：叫自己的後端做
       msgbar('<span class="spin"></span><b>開始更新…</b>', 'busy');
-      fetch('api/update', { method: 'POST' }).then(function () { watchUpdate(); });
+      fetch('api/update', { method: 'POST' }).then(function (r) {
+        if (!r.ok) throw new Error('本機的更新後端沒有開（回應 ' + r.status + '）。要用 python server.py 啟動，' +
+          '只用 http.server 預覽時不能更新。');
+        watchUpdate();
+      }).catch(function (e) {
+        msgbar('<b>更新沒有開始</b><span class="keep">' + esc(e.message) + '</span>', 'bad');
+      });
       return;
     }
     if (updating) return;
     updating = true;
+    manual = true;
     var note = '', was = null, sent = null;
     msgbar('<span class="spin"></span><b>確認更新服務…</b>', 'busy');
     // 先確認更新服務能不能用、有沒有更新正在跑、是不是剛更新過，再去讀 PTT：
@@ -816,7 +829,7 @@
     Promise.all([
       fetch(DATA + 'meta.json', { cache: 'no-cache' }).then(function (r) { return r.json(); })
         .catch(function () { return {}; }),
-      fetch(WORKER + '/status', { cache: 'no-store' }).then(function (r) { return r.json(); })
+      fetch(WORKER + '/status', { cache: 'no-store' }).then(jsonOf)
     ]).then(function (x) {
       was = x[0].built_at || null;
       var st = x[1] || {}, run = st.run;
@@ -834,7 +847,7 @@
           return fetch(WORKER + '/update', {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
           });
-        }).then(function (r) { return r.json(); });
+        }).then(jsonOf);
       });
     }).then(function (j) {
       updating = false;
@@ -901,7 +914,8 @@
   }
 
   function autoRefresh(meta) {
-    if (!CLOUD || !meta || !meta.data_date) return;
+    // 本機預覽（?cloud=1）不自動觸發：本機的資料通常是舊的，一打開就會去觸發線上真的更新。要測請手動按 ⟳
+    if (!CLOUD || LOCAL || !meta || !meta.data_date) return;
     var exp = expectedData(meta);
     var behind = meta.data_date < exp.date;
     var noMargin = meta.data_date === exp.date && exp.margin && meta.margin_same_day === false;
@@ -919,7 +933,7 @@
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(tok ? { auto: true, turnstile: tok } : { auto: true })
       });
-    }).then(function (r) { return r.json(); }).then(function (j) {
+    }).then(jsonOf).then(function (j) {
       if (j.state === 'started') return watchAuto(new Date(Date.parse(j.since) - 60000), was);
       if (j.state === 'busy') return watchAuto(new Date(Date.parse(j.run.created_at) - 1000), was);
       // 金鑰過期、設定錯誤：不講的話網站會一直停在舊資料、沒有人知道為什麼（10/29 金鑰過期就是這樣）
@@ -939,12 +953,13 @@
 
   /* 等這次自動更新跑完，再看網站真的變了沒有：證交所還沒發完的話，這次會略過、什麼都沒變 */
   function watchAuto(since, was, t0) {
+    if (manual) return;
     t0 = t0 || Date.now();
     function again(ms) {
       if (Date.now() - t0 > WATCH_MAX) return hideMsg();
       setTimeout(function () { watchAuto(since, was, t0); }, ms);
     }
-    fetch(WORKER + '/status', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+    fetch(WORKER + '/status', { cache: 'no-store' }).then(jsonOf).then(function (j) {
       if (j && j.error) {
         if (j.kind === 'token' || j.kind === 'config') return msgbar(errHtml(cloudErr(j)), 'bad');
         return again(15000);
@@ -989,7 +1004,7 @@
   }
   function healthCheck(meta) {
     if (!CLOUD || !meta) return;
-    fetch(WORKER + '/status', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+    fetch(WORKER + '/status', { cache: 'no-store' }).then(jsonOf).then(function (j) {
       if (!msgEmpty()) return;
       if (j.error) {
         if (j.kind === 'token' || j.kind === 'config') msgbar(errHtml(cloudErr(j)), 'bad');

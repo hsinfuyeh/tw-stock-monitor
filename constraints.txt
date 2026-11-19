@@ -1,0 +1,25 @@
+# 雲端（GitHub Actions）實際安裝的確切版本：pip install -r requirements.txt -c constraints.txt
+#
+# requirements.txt 只寫下限，每次更新都會裝到當下最新版 —— 2026-10-23 DuckDB 升 2.0 改了行為，
+# 上櫃與集保寫入失敗十天沒人發現。這裡鎖住「目前線上穩定在跑、測試也在同樣版本下跑過」的組合，
+# 套件不會再自己升級。要升級時：改這裡 -> 本機用同樣版本跑 python tests.py -> 推上去
+# （workflow 對新版程式會先跑一次完整測試，沒過就不發佈）。
+#
+# 2026-11-19 取自 run 44322979647（Python 3.12、ubuntu-26.04）。
+blinker==1.9.0
+certifi==2026.10.23
+charset_normalizer==3.5.2
+click==8.5.1
+duckdb==2.0.0
+flask==3.1.3
+idna==3.20
+itsdangerous==2.2.0
+jinja2==3.1.6
+markupsafe==3.0.4
+numpy==2.5.5
+pandas==3.1.1
+python-dateutil==4.0.0
+requests==2.34.2
+tzdata==2026.6
+urllib3==2.8.0
+werkzeug==3.1.9

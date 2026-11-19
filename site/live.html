@@ -53,10 +53,12 @@ function savePref() {
 }
 
 /* ---------- 時段 ---------- */
-/* 現在是不是交易時段（台北時間，週一到週五 8:30–13:35；8:30–9:00 是試撮）。休市日由資料日期判斷。 */
+/* 現在是不是交易時段（台北時間，週一到週五 8:30–13:35；8:30–9:00 是試撮）。
+   休市日（meta.json 的 holidays）不算：不然平日休市整個早上還是每 30 秒問一次更新服務。 */
+var OFF = {};
 function session() {
   var t = App.twNow(), w = new Date(t.ymd + 'T00:00:00Z').getUTCDay();
-  var wk = w >= 1 && w <= 5;
+  var wk = w >= 1 && w <= 5 && !OFF[t.ymd];
   return { ymd: t.ymd.replace(/-/g, ''), pre: wk && t.min >= 8 * 60 + 30 && t.min < 9 * 60,
            open: wk && t.min >= 9 * 60 && t.min <= 13 * 60 + 35 };
 }
@@ -351,8 +353,11 @@ function load(manual) {
   var btn = document.getElementById('lvre');
   if (btn) btn.disabled = true;
   fetch(WORKER + '/live', { cache: 'no-store' }).then(function (r) {
-    if (!r.ok) throw new Error('更新服務回應 ' + r.status);
-    return r.json();
+    // 出錯時更新服務也回 JSON（{ message: 中文原因 }），讀出來顯示；讀不到才只講狀態碼
+    return r.json().catch(function () { return null; }).then(function (d) {
+      if (!r.ok) throw new Error((d && d.message) || '更新服務回應 ' + r.status);
+      return d;
+    });
   }).then(function (d) {
     if (!d || !d.rows) throw new Error((d && (d.message || d.error)) || '回傳的資料格式不對');
     LV.data = d;
@@ -378,7 +383,8 @@ document.addEventListener('visibilitychange', function () {
   else clearTimeout(LV.timer);
 });
 
-App.boot('live', function () {
+App.boot('live', function (meta) {
+  ((meta && meta.holidays) || []).forEach(function (h) { OFF[h] = 1; });
   LV.key = BYKEY[App.qs('s')] ? App.qs('s') : 'gain';
   document.title = '盤中排行 · ' + BYKEY[LV.key][1];
   var vols = [[0, '不限'], [100, '100 張'], [500, '500 張'], [1000, '1,000 張'], [5000, '5,000 張']];

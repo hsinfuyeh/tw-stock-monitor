@@ -377,6 +377,38 @@ class Inconsistent(Exception):
     """產出的內容自相矛盾，不該發佈。"""
 
 
+# 附加資料（只供查詢、不擋發佈）最多可以比網站的資料日期晚幾天（日曆天），超過就印警告 ->
+# 進 meta.warnings、網頁看得到。各模組自己失敗時會印警告，但「抓到 0 筆」「靜靜停在某一天」不會：
+# 2026-10-23 起上櫃與集保寫不進去，十天沒人發現。這裡不管原因，直接看結果。
+# 集保每週公布一次，所以放寬。長假時網站的資料日期本身也停著，不會誤報。
+FRESHNESS = [("tpex_quotes", "上櫃行情", 5), ("active_holdings", "主動式 ETF 持股", 5),
+             ("mops_news", "重大訊息", 5), ("margin", "融資券", 5), ("holders", "集保股權分散表", 16)]
+
+
+def freshness(day_date):
+    import store
+    d0 = pd.Timestamp(day_date)
+    for table, label, limit in FRESHNESS:
+        try:
+            m = store.q("SELECT MAX(date) AS m FROM {}".format(table))["m"].iloc[0]
+        except Exception as e:
+            print("::warning::{}讀不到（{}），這一塊可能停止更新了".format(label, str(e)[:60]), flush=True)
+            continue
+        if m is None or pd.isna(m):
+            print("::warning::{}一筆資料都沒有".format(label), flush=True)
+            continue
+        lag = (d0 - pd.Timestamp(m)).days
+        if lag > limit:
+            print("::warning::{}最新只到 {}，比網站的資料日期（{}）晚 {} 天，可能停止更新了".format(
+                label, str(m)[:10], str(d0)[:10], lag), flush=True)
+
+
+# 符合條件才列的榜（screens.run_screen）：可以是空的，但用到的欄位不能整欄缺值。
+# 除權息是另外的資料源（upcoming_exdiv），沒有面板欄位可查。
+CONDITIONAL_SCREENS = {"exdiv": (), "high": ("hi20",), "low": ("lo20",),
+                       "inst_both": ("foreign_net", "trust_net")}
+
+
 def selfcheck(p, funnel_data, screens_data):
     """寫檔前的後置檢查：產出的東西站不站得住腳。
 
@@ -418,12 +450,18 @@ def selfcheck(p, funnel_data, screens_data):
     if funnel_data["passed"] == funnel_data["total"]:
         bad.append("候選名單等於全部股票，等於沒有篩選")
 
-    # 3. 每個榜單都要有內容
+    # 3. 每個榜單都要有內容。「符合條件才列」的榜在真實行情下可能一檔都沒有：大跌那天沒有股票創新高、
+    #    反彈期間沒有股票創新低（2025-04 關稅暴跌就連著好幾天），那是事實不是故障 —— 跟 2026-11
+    #    穩定池誤擋整站一週是同一類錯。這幾張改成檢查它們用到的輸入有沒有進來。
     for k, v in screens_data.items():
         if v.get("error"):
             bad.append("榜單 {} 產生失敗：{}".format(k, v["error"][:60]))
-        elif not v["rows"] and k != "exdiv":     # 除權息可能真的沒有事件
+        elif not v["rows"] and k not in CONDITIONAL_SCREENS:
             bad.append("榜單 {} 是空的".format(k))
+    for k, cols in CONDITIONAL_SCREENS.items():
+        for col in cols:
+            if k in screens_data and (col not in day.columns or not int(day[col].notna().sum())):
+                bad.append("榜單 {} 的輸入 {}：最新一日整欄缺值".format(k, col))
 
     if bad:
         raise Inconsistent(
@@ -748,6 +786,12 @@ def build(limit=None, out=SITE):
     ok, skip, stot = _emit_stocks(jobs)
     sizes["stocks"] = stot
 
+    freshness(day_date)
+    # meta.json 一開始就寫了，之後產出階段才印的警告（大盤頁、社群規則…）要補進去
+    m = json.loads((data / "meta.json").read_text(encoding="utf-8"))
+    m["warnings"] = warnlog.load()
+    write(data / "meta.json", m)
+
     # 原子換檔：舊的先改名、新的換上去、再刪掉舊的。中間只有毫秒級的空窗。
     old = final.parent / "_data_old"
     if old.exists():
@@ -809,6 +853,8 @@ def social_only(out=SITE):
 
 
 if __name__ == "__main__":
+    if os.environ.get("GITHUB_ACTIONS"):
+        warnlog.capture(append=True)   # 接在 ci_update 的警告後面；本機不記（沒有 ci_update 的那份）
     if "--social-only" in sys.argv:
         social_only()
     else:

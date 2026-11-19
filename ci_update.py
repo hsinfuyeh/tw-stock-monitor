@@ -16,7 +16,9 @@
     所以三張核心表沒有同一天的資料就不發佈，直接以成功狀態結束，
     晚一點再按一次即可。寧可晚幾小時，也不要publish 一份半套的名單。
 """
+import datetime as dt
 import os
+import re
 import sys
 
 import ingest
@@ -41,6 +43,11 @@ BACKFILL_ETF_SEC = 8 * 60
 def _d(v):
     """日期只顯示到日，不要拖著 00:00:00 的尾巴。"""
     return str(v)[:10] if v is not None else "（無）"
+
+
+def tw_today():
+    """台北的今天（CI 主機是 UTC，date.today() 會差 8 小時）。"""
+    return (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=8)).date()
 
 
 def log(msg):
@@ -213,6 +220,10 @@ def check_revenue():
     return len(ms), (ms[-1] if ms else None)
 
 
+# 網頁裡每次都會變、跟營收無關的部分：HTML 註解（產生時間）
+REV_NOISE = re.compile(rb"<!--.*?-->", re.S)
+
+
 def revenue_fingerprint():
     """月營收原始檔的指紋：有哪些月份、最近三個月的內容。比的是解壓後的內容 ——
     重抓的檔案就算內容一樣，gzip 檔頭的時間也會變。"""
@@ -223,9 +234,12 @@ def revenue_fingerprint():
     h = hashlib.sha1()
     for f in files[-3:]:
         try:
-            h.update(gzip.decompress(f.read_bytes()))
+            raw = gzip.decompress(f.read_bytes())
         except Exception:
-            h.update(f.read_bytes())
+            raw = f.read_bytes()
+        # 公開資訊觀測站的網頁帶著產生時間（<!--00:00:09-->），每抓一次都不一樣：不拿掉的話
+        # 39 次有 35 次被判成「營收變了」，自動更新每次都完整重建、快速通道幾乎走不到（2026-11 發現）
+        h.update(REV_NOISE.sub(b"", raw))
     return [f.name for f in files], h.hexdigest()
 
 
@@ -320,6 +334,12 @@ def main(ignore_gate=False):
     set_output("data_date", _d(last_ok))      # 網站快取的鍵（見 workflow 的「還原上次產出的網站」）
 
     cal = ingest.trading_calendar()          # 當月一定重抓，否則日曆會停住
+    # 日曆是「有哪些交易日要抓」的唯一依據：證交所的月統計抓不到當月時，日曆就少了這個月，
+    # 下面會判成「沒有新的交易日」，綠燈、網站安靜停住。每個月第一週一定有交易日，8 號之後還沒有就講。
+    today = tw_today()
+    if today.day >= 8 and cal and cal[-1][:6] < today.strftime("%Y%m"):
+        log("::warning::交易日曆沒有 {} 月的資料（最後一天 {}），證交所的月統計可能抓不到；"
+            "這段期間不會有新的交易日寫進來".format(today.strftime("%Y-%m"), cal[-1]))
     cutoff = last_ok.strftime("%Y%m%d") if last_ok is not None else "00000000"
     # 倉儲讀不到（理論上不會：沒有倉儲時 workflow 會先下載種子）就只看最近幾天，不要從 2008 抓起
     todo = days_to_fetch(cal, cutoff) if last_ok is not None else cal[-LOOKBACK:]
@@ -347,6 +367,11 @@ def main(ignore_gate=False):
     if not ready and not ignore_gate:
         detail = "；".join("{} {}".format(d, why(lack)) for d, lack in missing.items())
         log("資料不齊，新的交易日這次不寫。{}".format(detail))
+        # 證交所當天晚上就會發完；前天以前的還不齊，代表那天的某張表可能永遠不會來，網站會一直卡在那天之前
+        late = (today - dt.datetime.strptime(todo[0], "%Y%m%d").date()).days
+        if late >= 2:
+            log("::warning::{} 的資料到現在（{} 天後）還不齊：{}。網站會停在那天之前，"
+                "可能要手動處理".format(todo[0], late, detail))
         return no_new_day(cal, cutoff, last_ok, changed_any, holes_left, pending=(todo[0], detail))
     if not ready:
         log("--ignore-gate：仍然繼續。")

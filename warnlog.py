@@ -5,16 +5,17 @@ GitHub 的執行紀錄裡，沒有人會去翻。2026-10-23 起上櫃與集保�
 整整十天沒人發現，就是因為這樣。
 
     ci_update.py  開頭呼叫 capture()：之後所有模組 print 出來的 ::warning:: 都會記進 FILE
-    publish.py    產出 meta.json 時呼叫 load()，放進 warnings
+    publish.py    開頭呼叫 capture(append=True) 接著記（產出階段的警告也要看得到：上櫃面板、
+                  大盤頁、影子名單…），產出 meta.json 時呼叫 load() 放進 warnings
 
-FILE 每次 capture() 都重新開始，所以只會有「這一次更新」的警告。
+ci_update 的 capture() 每次重新開始，所以只會有「這一次更新」的警告。::error:: 也收。
 """
 import json
 import sys
 import threading
 
 FILE = "ci_warnings.json"
-PREFIX = "::warning::"
+PREFIXES = ("::warning::", "::error::")
 MAX = 20                  # 網頁只是提醒，不需要整份紀錄
 
 
@@ -40,25 +41,27 @@ class _Tee:
         return getattr(self._s, name)
 
 
-def capture():
-    got = []
+def capture(append=False):
+    got = load() if append else []
 
     def sink(line):
-        i = line.find(PREFIX)
-        if i < 0 or len(got) >= MAX:
+        hit = [(line.find(x), x) for x in PREFIXES if x in line]
+        if not hit or len(got) >= MAX:
             return
-        got.append(line[i + len(PREFIX):].strip()[:300])
+        i, pre = min(hit)
+        got.append(line[i + len(pre):].strip()[:300])
         try:
             with open(FILE, "w", encoding="utf-8") as f:
                 json.dump(got, f, ensure_ascii=False)
         except OSError:
             pass
 
-    try:
-        with open(FILE, "w", encoding="utf-8") as f:
-            json.dump([], f)
-    except OSError:
-        pass
+    if not append:
+        try:
+            with open(FILE, "w", encoding="utf-8") as f:
+                json.dump([], f)
+        except OSError:
+            pass
     sys.stdout = _Tee(sys.stdout, sink)
     sys.stderr = _Tee(sys.stderr, sink)
 

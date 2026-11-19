@@ -62,13 +62,25 @@ function json(req, obj, status) {
 // 那幾秒內同時按下的人會看到「上一次是很久以前」而各自再觸發一次。
 let lastDispatchAt = 0;
 
+// /status 暫存 STATUS_TTL 秒：每個打開網頁的人問一次、盯進度的每 5–10 秒問一次，而這個網址是公開的 ——
+// 沒有暫存的話，有人一直打就能用光 GitHub API 每小時 5,000 次的額度，之後更新全部失敗。
+const STATUS_TTL = 10;
+let statusMemo = { until: 0, body: null };
+async function statusCached(env) {
+  if (statusMemo.body && Date.now() < statusMemo.until) return statusMemo.body;
+  const body = await latestRun(env, true);
+  // 錯誤也暫存（金鑰過期時一直重問也沒用），只是短一點
+  statusMemo = { until: Date.now() + (body.error ? 5 : STATUS_TTL) * 1000, body };
+  return body;
+}
+
 export default {
   async fetch(req, env) {
     try {
       const path = new URL(req.url).pathname;
       if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(req) });
       if (req.method === "GET" && path.startsWith("/ptt/")) return await pttRelay(req, path.slice(4));
-      if (req.method === "GET" && path === "/status") return json(req, await latestRun(env, true));
+      if (req.method === "GET" && path === "/status") return json(req, await statusCached(env));
       if (req.method === "GET" && path === "/live") return await live(req);
       if (req.method === "POST" && path === "/update") return await update(req, env);
       return new Response(
@@ -219,6 +231,7 @@ async function update(req, env) {
   const r = await dispatch(env, inputs);
   if (!r.ok) return json(req, { state: "error", kind: r.kind, message: r.error }, 502);
   lastDispatchAt = Date.now();
+  statusMemo = { until: 0, body: null };            // 剛觸發：下一次 /status 要看到新的執行
   const out = { state: "started", social: !!inputs.social, since: new Date().toISOString() };
   if (!hv.ok) out.human = hv.why;
   return json(req, out);
@@ -256,12 +269,17 @@ async function human(req, env, token) {
  * 證交所對查太頻繁的來源會暫時封鎖。
  * 名單來自網站的 universe.json（不接受網頁指定代號，這不是通用的報價代理）。 */
 const UNIVERSE_URL = "https://hsinfuyeh.github.io/tw-stock-monitor/data/universe.json";
+const META_URL = "https://hsinfuyeh.github.io/tw-stock-monitor/data/meta.json";
 const MIS_URL = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp";
 const MIS_BATCH = 100;           // 一批 100 檔（網址約 1,500 字元，實測 0.1 秒）
 const LIVE_TTL = 30;             // 開盤時暫存 30 秒；收盤後 10 分鐘
+const LIVE_BACKOFF = 45;         // 證交所出錯後暫停幾秒才再查（被封鎖時越打越久）
+const LIVE_WAIT = 20000;         // 別人正在查時最多等幾毫秒
 let liveMemo = { until: 0, body: null };
-let liveInflight = null;        // 暫存過期時剛好很多人同時要：只抓一輪，大家等同一份
+let liveBusyUntil = 0;           // 這個執行個體裡有請求正在向證交所查（到這個時間為止）
+let liveFail = { until: 0, msg: "" };
 let uniMemo = { until: 0, list: null };
+let offMemo = { until: 0, set: null };
 
 function twMinutes() {
   const d = new Date(Date.now() + 8 * 3600e3);
@@ -350,17 +368,54 @@ async function liveBuild() {
   return { date, time, at: new Date().toISOString(), total: uni.length, index, rows };
 }
 
+/* 休市日（網站 meta.json 的 holidays，證交所公布的）。讀不到就只看星期幾。半天換一次。 */
+async function holidays() {
+  if (offMemo.set && Date.now() < offMemo.until) return offMemo.set;
+  try {
+    const r = await fetch(META_URL, { cf: { cacheTtl: 3600 } });
+    if (r.ok) offMemo = { until: Date.now() + 12 * 3600e3, set: new Set((await r.json()).holidays || []) };
+  } catch (e) { /* 讀不到就當沒有休市日 */ }
+  return offMemo.set || new Set();
+}
+
+/* 很多人同時看：只讓一個請求去查證交所，其他的等它把結果放進 liveMemo。
+   不能讓別的請求直接等「正在查」的那個 promise —— Cloudflare 不允許一個請求等另一個請求建立的非同步工作，
+   建立它的請求一結束（例如使用者關掉頁面），等的人就永遠等不到。2026-11 盤中排行因此整個卡死、一直回 500。
+   所以這裡各自用計時器輪流看 liveMemo，等不到就自己查。
+   證交所出錯：暫停 LIVE_BACKOFF 秒不再查（被封鎖時越打越久），這段時間有舊資料就給舊的。 */
 async function live(req) {
-  if (liveMemo.body && Date.now() < liveMemo.until) return liveResponse(req, liveMemo.body);
-  if (!liveInflight) {
-    liveInflight = liveBuild().then(d => {
-      const t = twMinutes();
-      const open = t.wd >= 1 && t.wd <= 5 && t.min >= 8 * 60 + 30 && t.min <= 13 * 60 + 40;
-      liveMemo = { until: Date.now() + (open ? LIVE_TTL : 600) * 1000, body: JSON.stringify(d) };
-      return liveMemo.body;
-    }).finally(() => { liveInflight = null; });
+  const fresh = () => liveMemo.body && Date.now() < liveMemo.until;
+  if (fresh()) return liveResponse(req, liveMemo.body);
+  const t0 = Date.now();
+  while (Date.now() < liveBusyUntil && Date.now() - t0 < LIVE_WAIT) {
+    await new Promise(ok => setTimeout(ok, 300));
+    if (fresh()) return liveResponse(req, liveMemo.body);
   }
-  return liveResponse(req, await liveInflight);
+  if (Date.now() < liveFail.until) return liveError(req, liveFail.msg);
+  liveBusyUntil = Date.now() + LIVE_WAIT;
+  try {
+    const d = await liveBuild();
+    // 證交所在非交易時段也會回上一個交易日的收盤；一筆都沒有就是出錯了，不能當成「0 檔」暫存起來
+    if (!d.rows.length || !d.date) throw new Error("證交所沒有回傳任何報價");
+    const t = twMinutes();
+    const ymd = t.ymd.slice(0, 4) + "-" + t.ymd.slice(4, 6) + "-" + t.ymd.slice(6);
+    const open = t.wd >= 1 && t.wd <= 5 && !(await holidays()).has(ymd) &&
+                 t.min >= 8 * 60 + 30 && t.min <= 13 * 60 + 40;
+    liveMemo = { until: Date.now() + (open ? LIVE_TTL : 600) * 1000, body: JSON.stringify(d) };
+    liveFail = { until: 0, msg: "" };
+    return liveResponse(req, liveMemo.body);
+  } catch (e) {
+    liveFail = { until: Date.now() + LIVE_BACKOFF * 1000, msg: (e && e.message) || String(e) };
+    return liveError(req, liveFail.msg);
+  } finally {
+    liveBusyUntil = 0;
+  }
+}
+
+/* 查不到：有舊資料就給舊的（網頁看資料時間就知道是舊的），沒有才回錯誤 */
+function liveError(req, msg) {
+  if (liveMemo.body) return liveResponse(req, liveMemo.body);
+  return json(req, { state: "error", kind: "twse", message: "讀不到證交所的即時報價：" + msg + "，" + LIVE_BACKOFF + " 秒後再試。" }, 502);
 }
 
 function liveResponse(req, body) {
